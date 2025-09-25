@@ -65,3 +65,10 @@ Provision a reproducible Python workspace for GraphRAG that operators can bootst
 - Critical compatibility requirements: Do not modify managed service endpoints; maintain reproducible installation and ensure validation scripts succeed without exposing secrets.
 
 The epic should maintain system integrity while delivering a reliable, bootstrapped workspace for operators preparing to ingest and retrieve with GraphRAG."
+
+### Story Override Workflow
+- Default rule: do not create the next story while the previous one is not marked `Done`.
+- When an override is unavoidable (e.g., downstream scheduling pressure), run `python -m cli.stories --override-incomplete --stories-dir docs/stories --new-story <new_story_path> --reason "<why>"` to:
+  - Log actor, timestamp, prior story id, and reason into `docs/bmad/story-overrides.md`.
+  - Inject a risk acknowledgement note under `## Dev Notes` in the new story document.
+- Overrides require Product Owner awareness and QA follow-up; ensure the `reason` captures mitigating actions and link back to the prior story in status meetings.

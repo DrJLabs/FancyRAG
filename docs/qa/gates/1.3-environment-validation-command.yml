@@ -6,35 +6,35 @@ reviewer: Quinn (QA)
 updated: 2025-09-25
 top_issues:
   - id: TECH-301
-    severity: high
-    summary: Missing dependency detection gaps
+    severity: low
+    summary: Maintain dependency mapping alignment
 waiver: null
 
 risk_summary:
   totals:
     critical: 0
-    high: 2
-    medium: 1
-    low: 1
+    high: 0
+    medium: 0
+    low: 4
   highest:
     id: TECH-301
-    score: 6
-    title: Missing dependency detection gaps
+    score: 3
+    title: Maintain dependency mapping alignment
   recommendations:
-    must_fix:
-      - Maintain explicit module mapping and redaction tests when updating dependencies.
+    sustain:
+      - Keep diagnostics module mapping and redaction regression tests in CI smoke suite.
     monitor:
       - Watch for dependency rename drift and ensure `.gitignore` remains intact.
 
 test_design:
-  scenarios_total: 9
+  scenarios_total: 10
   by_level:
     unit: 4
-    integration: 5
+    integration: 6
     e2e: 0
   by_priority:
     p0: 4
-    p1: 5
+    p1: 6
     p2: 0
     p3: 0
   coverage_gaps: []
@@ -50,6 +50,6 @@ qa_decision:
   reviewer: Quinn (QA)
   date: 2025-09-25
   rationale: |
-    Risk mitigations, test design, traceability, and NFR coverage all satisfied. Diagnostics workflow ready for release pending PO approval (recorded).
+    Risk mitigations, test design (including lockfile-degraded path), traceability, and NFR coverage all satisfied. Diagnostics workflow ready for release pending PO approval (recorded).
   follow_up:
-    - Monitor dependency mapping (TECH-301) during future upgrades.
+    - Monitor dependency mapping and redaction patterns during future upgrades.

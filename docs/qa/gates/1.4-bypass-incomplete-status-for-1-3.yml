@@ -1,0 +1,56 @@
+schema: qa.gate/1.0
+story: 1.4
+gate: PASS
+status_reason: Guardrails updated; overrides now logged with risk acknowledgements and coverage validated.
+reviewer: Quinn (QA)
+updated: 2025-09-25
+top_issues:
+  - id: TECH-402
+    severity: low
+    summary: Monitor repeated override note formatting
+waiver: null
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 0
+    low: 3
+  highest:
+    id: TECH-401
+    score: 2
+    title: Enforce CLI guard in automation
+  recommendations:
+    sustain:
+      - Keep guard unit/integration tests in CI smoke stage.
+    monitor:
+      - Review override log during sprint ceremonies; ensure reasons avoid sensitive data.
+
+test_design:
+  scenarios_total: 6
+  by_level:
+    unit: 3
+    integration: 3
+    e2e: 0
+  by_priority:
+    p0: 2
+    p1: 4
+    p2: 0
+    p3: 0
+  coverage_gaps:
+    - Documentation lint remains manual until automation added.
+
+traceability:
+  matrix: docs/qa/assessments/1.4-trace-20250925.md
+
+nfr:
+  assessment: docs/qa/assessments/1.4-nfr-20250925.md
+
+qa_decision:
+  status: PASS
+  reviewer: Quinn (QA)
+  date: 2025-09-25
+  rationale: |
+    Guard prevents silent bypass, captures override context, and documentation + tests cover ACs. Residual risks are low and mitigated via monitoring.
+  follow_up:
+    - Automate markdown lint for override workflow references when tooling available.

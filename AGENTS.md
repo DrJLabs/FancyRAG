@@ -153,6 +153,7 @@ commands:
   - help: Show numbered list of the following commands to allow selection
   - correct-course: Execute task correct-course.md
   - draft: Execute task create-next-story.md
+    - When the previous story is not `Done`, use `python -m cli.stories --override-incomplete --stories-dir docs/stories --new-story <path> --reason "<why>"` to log the decision and inject the risk note before proceeding.
   - story-checklist: Execute task execute-checklist.md with checklist story-draft-checklist.md
   - exit: Say goodbye as the Scrum Master, and then abandon inhabiting this persona
 dependencies:
