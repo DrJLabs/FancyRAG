@@ -2,7 +2,7 @@
 
 ## Functional Requirements
 - **FR1:** Provide a reproducible virtual environment install of `neo4j-graphrag[openai,qdrant]` with dependency verification.
-- **FR2:** Configure OpenAI generation defaults to `gpt-4o-mini` with optional override to `gpt-4.1-mini`; embeddings default to `text-embedding-3-small` (1536 dimensions).
+- **FR2:** Configure OpenAI generation defaults to `gpt-4.1-mini` with documented fallback to `gpt-4o-mini`; embeddings default to `text-embedding-3-small` (1536 dimensions).
 - **FR3:** Provision Neo4j database `graphrag` with a least-privilege user scoped to that database and required APOC procedures.
 - **FR4:** Provision Qdrant collection `grag_main_v1` sized to 1536 dimensions, cosine distance, and matching payload schema.
 - **FR5:** Use `SimpleKGPipeline` (or successor KG builder) to write pilot entities and relations into Neo4j with validation queries.

@@ -18,7 +18,7 @@ Neo4j GraphRAG (Python package) now ships first-party utilities for knowledge-gr
 ## Requirements
 ### Functional
 - **FR1:** Provide a reproducible virtual environment install of `neo4j-graphrag[openai,qdrant]` with dependency verification.
-- **FR2:** Configure OpenAI generation defaults to `gpt-4o-mini` (128K context) with optional override to `gpt-4.1-mini`; embeddings default to `text-embedding-3-small` (1536 dimensions).
+- **FR2:** Configure OpenAI generation defaults to `gpt-4.1-mini` (48K context) with documented fallback to `gpt-4o-mini`; embeddings default to `text-embedding-3-small` (1536 dimensions).
 - **FR3:** Provision Neo4j database `graphrag` with a least-privilege user scoped to that database and required APOC procedures.
 - **FR4:** Provision Qdrant collection `grag_main_v1` sized to 1536 dimensions, cosine distance, and matching payload schema.
 - **FR5:** Use `SimpleKGPipeline` (or successor KG builder) to write pilot entities and relations into Neo4j with validation queries.
@@ -73,7 +73,7 @@ Neo4j GraphRAG (Python package) now ships first-party utilities for knowledge-gr
 
 ### Epic 2 — Models & Vectors
 **Goal:** Ensure LLM and embedding models are configured, tested, and guarded for production-like reliability.
-- Set `OPENAI_MODEL=gpt-4o-mini`; allow override to `gpt-4.1-mini` for extended context scenarios.
+- Set `OPENAI_MODEL=gpt-4.1-mini`; document fallback to `gpt-4o-mini` for throughput or latency emergencies.
 - Validate embeddings return 1536-length vectors; document guardrails for batch sizes and retries.
 - Capture cost/latency expectations for each model variant.
 

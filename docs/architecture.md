@@ -170,7 +170,7 @@ graph LR
 
 ## External APIs
 ### OpenAI API
-- **Purpose:** Text generation (`gpt-4o-mini`, optional `gpt-4.1-mini`) and embeddings (`text-embedding-3-small`).
+- **Purpose:** Text generation (`gpt-4.1-mini` baseline, fallback `gpt-4o-mini`) and embeddings (`text-embedding-3-small`).
 - **Documentation:** https://platform.openai.com/docs
 - **Base URL(s):** `https://api.openai.com/v1`
 - **Authentication:** Bearer token via `OPENAI_API_KEY`.
@@ -267,4 +267,3 @@ dev → staging → prod
   - **Secrets Handling:** Never log raw API keys or passwords; redact before logging.
   - **Driver Lifecycle:** Use context managers for Neo4j sessions and close Qdrant clients gracefully.
   - **Retry Limits:** Cap OpenAI retries to protect against cost overruns; log token usage per request.
-
