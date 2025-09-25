@@ -30,6 +30,7 @@ EOF
 # Test hook: when set, skip real import and simulate success/failure outcome.
 TEST_IMPORT="${BOOTSTRAP_TEST_IMPORT:-}"
 
+# log outputs a formatted "[LEVEL] message" line; if LEVEL is "ERROR" the message is written to stderr.
 log() {
   local level="$1"; shift
   if [[ "$level" == "ERROR" ]]; then
@@ -39,6 +40,7 @@ log() {
   fi
 }
 
+# usage prints usage information for the bootstrap script, including options for --venv-path, --force, and -h/--help.
 usage() {
   cat <<USAGE
 Usage: scripts/bootstrap.sh [--venv-path PATH] [--force]
@@ -50,6 +52,7 @@ Options:
 USAGE
 }
 
+# fail_trap logs an error and troubleshooting tips if the script exits with a non-zero status, then exits with the captured return code.
 fail_trap() {
   local rc=$?
   if [[ $rc -ne 0 ]]; then
@@ -61,6 +64,7 @@ fail_trap() {
 
 trap fail_trap EXIT
 
+# parse_args parses command-line options and sets VENV_PATH, FORCE_RECREATE, or prints usage/help; unknown or malformed options are logged and cause the script to exit.
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -90,6 +94,7 @@ parse_args() {
   done
 }
 
+# require_python locates a usable Python 3.12 interpreter (honoring BOOTSTRAP_PYTHON_BIN and BOOTSTRAP_ASSUME_PY312) and echoes its path, or exits non-zero if no suitable interpreter is found.
 require_python() {
   if [[ -n "$CUSTOM_PYTHON_BIN" ]]; then
     if [[ ! -x "$CUSTOM_PYTHON_BIN" ]]; then
@@ -153,12 +158,14 @@ require_python() {
   return 1
 }
 
+# activate_venv activates the Python virtual environment at the given path by sourcing its activate script.
 activate_venv() {
   local venv_path="$1"
   # shellcheck disable=SC1090
   source "$venv_path/bin/activate"
 }
 
+# main orchestrates bootstrapping of a Python 3.12 virtual environment for the repository: it resolves a suitable Python interpreter, creates or reuses the venv (optionally recreating it), activates the environment, installs runtime dependencies (unless skipped), generates a requirements.lock, and validates package import before printing next-step instructions.
 main() {
   parse_args "$@"
 
