@@ -32,9 +32,34 @@ graph TD
 |------------|---------|-------------------------------------------|-----------|
 | 2025-09-24 | 0.1     | Seeded architecture overview shard        | Codex CLI |
 | 2025-09-25 | 0.2     | Documented environment configuration workflow | James      |
+| 2025-09-25 | 0.3     | Added workspace diagnostics guidance       | James      |
 
 ## Environment Configuration
 - Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh` and before executing CLI commands.
 - Populate the placeholders with environment-specific values: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`, optional `gpt-4.1-mini`), `OPENAI_EMBEDDING_MODEL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `QDRANT_URL`, and `QDRANT_API_KEY`.
 - Keep `.env` git-ignored; never commit real credentials or paste secrets into shared channels.
 - Ensure the values align with managed service endpoints (Neo4j Bolt URI and Qdrant HTTPS URL) documented in the architecture.
+
+## Workspace Verification
+- After bootstrapping and populating `.env`, validate the environment with `PYTHONPATH=src python -m cli.diagnostics workspace --write-report` (or add `--verify` when running `scripts/bootstrap.sh`).
+- The diagnostics command imports `neo4j_graphrag`, `neo4j`, `qdrant_client`, `openai`, `structlog`, and `pytest`, failing fast when dependencies are missing or misconfigured.
+- A structured report is written to `artifacts/environment/versions.json` capturing Python runtime, package versions (via `importlib.metadata`), the SHA-256 of `requirements.lock`, and the current git commit for audit trails.
+- Output is redacted automatically—no environment variables or secrets are persisted—allowing the report to be shared with operators and CI systems.
+- Rerun diagnostics whenever dependencies change (`pip install`/`pip-compile` updates) or prior to releasing automation changes so drift is detected early.
+- Sample report payload:
+  ```json
+  {
+    "generated_at": "2025-09-25T15:20:20Z",
+    "python": {"version": "3.12.3", "executable": ".venv/bin/python"},
+    "packages": [
+      {"module": "neo4j_graphrag", "distribution": "neo4j-graphrag", "version": "1.10.0"},
+      {"module": "neo4j", "distribution": "neo4j", "version": "5.28.2"},
+      {"module": "qdrant_client", "distribution": "qdrant-client", "version": "1.15.1"},
+      {"module": "openai", "distribution": "openai", "version": "1.109.1"},
+      {"module": "structlog", "distribution": "structlog", "version": "24.4.0"},
+      {"module": "pytest", "distribution": "pytest", "version": "8.4.2"}
+    ],
+    "lockfile": {"sha256": "<64-char hex>", "path": "requirements.lock", "exists": true},
+    "git": {"sha": "f4b0f87c"}
+  }
+  ```

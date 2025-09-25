@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_VENV=".venv"
 VENV_PATH="$DEFAULT_VENV"
 FORCE_RECREATE=0
+RUN_DIAGNOSTICS=0
 SKIP_INSTALL="${BOOTSTRAP_SKIP_INSTALL:-0}"
 CUSTOM_PYTHON_BIN="${BOOTSTRAP_PYTHON_BIN:-}"
 # Test hook: allow CI/tests to bypass local interpreter check when shimmed python is provided.
@@ -43,11 +44,12 @@ log() {
 # usage prints usage information for the bootstrap script, including options for --venv-path, --force, and -h/--help.
 usage() {
   cat <<USAGE
-Usage: scripts/bootstrap.sh [--venv-path PATH] [--force]
+Usage: scripts/bootstrap.sh [--venv-path PATH] [--force] [--verify]
 
 Options:
   --venv-path PATH   Override virtual environment directory (default: .venv)
   --force            Recreate the virtual environment if it already exists
+  --verify           Run workspace diagnostics after provisioning to capture versions.json
   -h, --help         Show this help message
 USAGE
 }
@@ -79,6 +81,9 @@ parse_args() {
         ;;
       --force)
         FORCE_RECREATE=1
+        ;;
+      --verify)
+        RUN_DIAGNOSTICS=1
         ;;
       -h|--help)
         usage
@@ -267,11 +272,29 @@ PY
   fi
 
   log INFO "Bootstrap complete."
+
+  if [[ $RUN_DIAGNOSTICS -eq 1 ]]; then
+    if [[ "$SKIP_INSTALL" == "1" ]]; then
+      log WARN "Skipping diagnostics run because BOOTSTRAP_SKIP_INSTALL=1"
+    else
+      log INFO "Running workspace diagnostics (python -m cli.diagnostics workspace)..."
+      local diagnostics_env
+      if [[ -n "${PYTHONPATH:-}" ]]; then
+        diagnostics_env="$REPO_ROOT/src:$PYTHONPATH"
+      else
+        diagnostics_env="$REPO_ROOT/src"
+      fi
+      PYTHONPATH="$diagnostics_env" \
+        python -m cli.diagnostics workspace --root "$REPO_ROOT" --output "$REPO_ROOT/artifacts/environment/versions.json"
+    fi
+  fi
+
   cat <<NEXT
 Next steps:
   1. Activate the environment: source "$venv_display/bin/activate"
   2. Populate environment variables using the upcoming .env template story.
-  3. Run project commands (ingest, vectors, search) from within the activated environment.
+  3. Validate the workspace: PYTHONPATH=src python -m cli.diagnostics workspace --write-report
+  4. Run project commands (ingest, vectors, search) from within the activated environment.
 NEXT
 }
 
