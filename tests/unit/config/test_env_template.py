@@ -75,6 +75,11 @@ def test_env_template_placeholders_are_safe():
 
 
 def test_env_template_models_document_optional_upgrade():
+    """
+    Verify the environment template documents the expected default and optional fallback OpenAI models.
+    
+    Asserts that the ENV_TEMPLATE's OPENAI_MODEL default includes "gpt-4.1-mini" and that the template mentions "gpt-4o-mini" as an optional fallback.
+    """
     contents = ENV_TEMPLATE.read_text()
     model_line = next((line for line in contents.splitlines() if line.startswith("OPENAI_MODEL")), "")
     assert "gpt-4.1-mini" in model_line, "Default model should be gpt-4.1-mini"
@@ -95,6 +100,11 @@ def test_env_template_endpoint_guidance():
 
 
 def test_documentation_references_env_template_workflow():
+    """
+    Verify the documentation describes the env template workflow, model guidance, and secret-commit warnings.
+    
+    Asserts that the overview instructs copying the env template (contains "copy" or "cp " and both ".env.example" and ".env"), documents both "gpt-4o-mini" and "gpt-4.1-mini" as baseline/fallback models, and warns against committing secrets (contains "never commit" or "do not commit").
+    """
     contents = DOC_OVERVIEW.read_text().lower()
     assert (
         ("copy" in contents or "cp " in contents)
