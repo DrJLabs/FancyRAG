@@ -6,7 +6,7 @@ DEFAULT_VENV=".venv"
 VENV_PATH="$DEFAULT_VENV"
 FORCE_RECREATE=0
 SKIP_INSTALL="${BOOTSTRAP_SKIP_INSTALL:-0}"
-CUSTOM_PYTHON_BIN="${BOOTSTRAP_PYTHON_BIN:-}" 
+CUSTOM_PYTHON_BIN="${BOOTSTRAP_PYTHON_BIN:-}"
 # Test hook: allow CI/tests to bypass local interpreter check when shimmed python is provided.
 ASSUME_PY312="${BOOTSTRAP_ASSUME_PY312:-0}"
 PACKAGES=(
@@ -17,7 +17,16 @@ PACKAGES=(
   "structlog>=24,<25"
   "pytest>=8,<9"
 )
-TEST_LOCK_CONTENT=$'# Generated in test mode (no packages installed)\nneo4j-graphrag==0.9.0\nneo4j==5.23.0\nqdrant-client==1.10.4\nopenai==1.40.3\nstructlog==24.1.0\npytest==8.3.2\n'
+TEST_LOCK_CONTENT=$(cat <<'EOF'
+# Generated in test mode (no packages installed)
+neo4j-graphrag==0.9.0
+neo4j==5.23.0
+qdrant-client==1.10.4
+openai==1.40.3
+structlog==24.1.0
+pytest==8.3.2
+EOF
+)
 # Test hook: when set, skip real import and simulate success/failure outcome.
 TEST_IMPORT="${BOOTSTRAP_TEST_IMPORT:-}"
 
