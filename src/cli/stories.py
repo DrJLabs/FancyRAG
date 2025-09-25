@@ -12,6 +12,8 @@ from typing import Iterable, Optional
 
 
 DEFAULT_STORY_DIR = Path("docs") / "stories"
+
+
 def override_log_path() -> Path:
     env_override = os.getenv("BMAD_STORY_OVERRIDE_LOG")
     if env_override:
@@ -33,7 +35,7 @@ class StoryValidationError(RuntimeError):
 def _discover_stories(stories_dir: Path, exclude: Optional[Path] = None) -> list[Path]:
     if not stories_dir.exists():
         raise StoryValidationError(f"Stories directory not found: {stories_dir}")
-    stories = sorted(stories_dir.glob("*.md"))
+    stories = sorted(stories_dir.glob("*.md"), key=_story_sort_key)
     if exclude is not None:
         stories = [path for path in stories if path.resolve() != exclude.resolve()]
     return stories
@@ -42,15 +44,30 @@ def _discover_stories(stories_dir: Path, exclude: Optional[Path] = None) -> list
 def _read_status(story_path: Path) -> str:
     status_heading = "## Status"
     with story_path.open("r", encoding="utf-8") as handle:
-        lines = [line.rstrip("\n") for line in handle]
-    for idx, line in enumerate(lines):
-        if line.strip() == status_heading and idx + 1 < len(lines):
-            return lines[idx + 1].strip()
+        in_status_section = False
+        for line in handle:
+            stripped_line = line.strip()
+            if stripped_line == status_heading:
+                in_status_section = True
+                continue
+            if in_status_section and stripped_line:
+                return stripped_line
     raise StoryValidationError(f"Unable to determine status for {story_path}")
 
 
 def _story_identifier(story_path: Path) -> str:
-    return story_path.stem.split(".")[0:2][0] if "." not in story_path.stem else ".".join(story_path.stem.split(".")[0:2])
+    return ".".join(story_path.stem.split(".")[:2])
+
+
+def _story_sort_key(story_path: Path) -> tuple:
+    identifier = _story_identifier(story_path)
+    numeric_parts: list[int] = []
+    for part in identifier.split("."):
+        if part.isdigit():
+            numeric_parts.append(int(part))
+        else:
+            break
+    return (*numeric_parts, identifier, story_path.name)
 
 
 def _load_latest_story(stories_dir: Path, *, exclude: Optional[Path] = None) -> StoryInfo:

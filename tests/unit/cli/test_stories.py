@@ -1,6 +1,7 @@
-import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
+
+import textwrap
 
 import pytest
 
@@ -91,3 +92,16 @@ def test_guard_creates_story_if_missing(tmp_path, monkeypatch):
     contents = new_story.read_text(encoding="utf-8")
     assert "## Dev Notes" in contents
     assert "override" in contents.lower()
+
+
+def test_load_latest_story_orders_numerically(tmp_path):
+    stories_dir = tmp_path / "docs" / "stories"
+    stories_dir.mkdir(parents=True)
+    _write_story(stories_dir, "1.9.prev.md", "Done")
+    newer_story = _write_story(stories_dir, "1.10.prev.md", "In Progress")
+
+    latest = stories._load_latest_story(stories_dir)
+
+    assert latest.path == newer_story
+    assert latest.identifier == "1.10"
+    assert latest.status == "In Progress"
