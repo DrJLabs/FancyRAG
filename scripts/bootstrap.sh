@@ -218,6 +218,11 @@ main() {
     log INFO "Installing runtime dependencies"
     python -m pip install "${PACKAGES[@]}"
 
+    log INFO "Verifying installed package integrity (pip check)"
+    if ! python -m pip check >/dev/null 2>&1; then
+      log WARN "pip check reported dependency issues; review above logs."
+    fi
+
     log INFO "Writing dependency lockfile to requirements.lock"
     if command -v pip-compile >/dev/null 2>&1; then
       local req_in="$REPO_ROOT/.bootstrap-requirements.in"
@@ -228,6 +233,24 @@ main() {
       done
       if ! pip-compile "$req_in" --output-file "$lockfile" --quiet </dev/null; then
         log WARN "pip-compile failed; falling back to pip freeze."
+        python -m pip freeze --exclude-editable > "$lockfile"
+      fi
+      rm -f "$req_in"
+    elif python - <<'PY' >/dev/null 2>&1
+import importlib.util
+import sys
+
+sys.exit(0 if importlib.util.find_spec("piptools") else 1)
+PY
+    then
+      local req_in="$REPO_ROOT/.bootstrap-requirements.in"
+      log INFO "piptools module detected; generating lockfile via python -m piptools"
+      : > "$req_in"
+      for pkg in "${PACKAGES[@]}"; do
+        printf '%s\n' "$pkg" >> "$req_in"
+      done
+      if ! python -m piptools compile "$req_in" --output-file "$lockfile" --quiet </dev/null; then
+        log WARN "piptools compile failed; falling back to pip freeze."
         python -m pip freeze --exclude-editable > "$lockfile"
       fi
       rm -f "$req_in"
