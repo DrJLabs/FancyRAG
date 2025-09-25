@@ -35,10 +35,22 @@ class OpenAISettings:
 
     @property
     def is_chat_override(self) -> bool:
+        """
+        Indicates whether a non-default chat model is configured.
+        
+        Returns:
+            True if `chat_model` is different from DEFAULT_CHAT_MODEL, False otherwise.
+        """
         return self.chat_model != DEFAULT_CHAT_MODEL
 
     @property
     def allowed_chat_models(self) -> frozenset[str]:
+        """
+        Get the set of chat model identifiers allowed by the application.
+        
+        Returns:
+            frozenset[str]: Allowed chat model identifiers.
+        """
         return ALLOWED_CHAT_MODELS
 
     @classmethod
@@ -48,7 +60,23 @@ class OpenAISettings:
         *,
         actor: Optional[str] = None,
     ) -> "OpenAISettings":
-        """Load settings from environment with strict validation."""
+        """
+        Load OpenAI configuration from the given environment mapping or the process environment, applying validation and overrides.
+        
+        Parameters:
+            env (Optional[Mapping[str, str]]): Optional mapping of environment variables to read; if omitted, os.environ is used.
+            actor (Optional[str]): Optional actor name to record; if omitted, the value is taken from the environment variable GRAPH_RAG_ACTOR, then USER, then "unknown".
+        
+        Description:
+            Reads OPENAI_MODEL, OPENAI_EMBEDDING_MODEL, and OPENAI_EMBEDDING_DIMENSIONS (and GRAPH_RAG_ACTOR for actor hint). Validates that the selected chat model is allowed and that any embedding-dimensions override is a positive integer. Records informational logs for overrides and error logs for invalid values.
+        
+        Returns:
+            OpenAISettings: An instance populated with the resolved chat model, embedding model, default embedding dimensions, any embedding-dimensions override, and the resolved actor name.
+        
+        Raises:
+            ValueError: If OPENAI_MODEL is not in the allowed models.
+            ValueError: If OPENAI_EMBEDDING_DIMENSIONS is not a valid positive integer when provided.
+        """
 
         source = env or os.environ
         actor_name = actor or source.get(_ENV_ACTOR_HINT) or os.environ.get("USER") or "unknown"
@@ -114,6 +142,12 @@ class OpenAISettings:
         )
 
     def expected_embedding_dimensions(self) -> int:
+        """
+        Return the effective embedding vector dimensionality for these settings.
+        
+        Returns:
+            The embedding dimension to use: the `embedding_dimensions_override` value if set, otherwise `embedding_dimensions`.
+        """
         return self.embedding_dimensions_override or self.embedding_dimensions
 
 

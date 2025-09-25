@@ -6,6 +6,19 @@ from cli.utils import ensure_embedding_dimensions
 
 
 def _settings(override: int | None = None) -> OpenAISettings:
+    """
+    Construct OpenAISettings for pytest, optionally overriding the embedding dimensions.
+    
+    If `override` is provided, the environment used to load settings will include
+    OPENAI_EMBEDDING_DIMENSIONS set to that value.
+    
+    Parameters:
+        override (int | None): Embedding dimension to inject into the environment; when
+            None the environment is unchanged.
+    
+    Returns:
+        OpenAISettings: Settings loaded from the constructed environment.
+    """
     env = {}
     if override is not None:
         env["OPENAI_EMBEDDING_DIMENSIONS"] = str(override)

@@ -12,6 +12,18 @@ FALLBACK_MODEL = "gpt-4o-mini"
 
 
 def test_playbook_exists_and_has_expected_models():
+    """
+    Validate the OpenAI telemetry playbook exists and that its models and alerts conform to expected thresholds and metadata.
+    
+    Checks performed:
+    - PLAYBOOK_PATH exists and loads as YAML with schema == 1.
+    - metadata.last_reviewed is present and not older than 183 days.
+    - Both BASELINE_MODEL and FALLBACK_MODEL are defined under "models" and include numeric fields:
+      latency_ms_p95, token_prompt_per_minute, token_completion_per_minute, cost_usd_per_1k_prompt_tokens, cost_usd_per_1k_completion_tokens.
+    - alerts.latency_p95 exists and its threshold_ms entries for the baseline and fallback models match each model's latency_ms_p95.
+    - alerts.token_usage_spike exists and threshold_percent_over_baseline is a positive number.
+    - latency_p95 alert includes a panel_uid for Grafana linkage.
+    """
     assert PLAYBOOK_PATH.exists(), "OpenAI telemetry playbook missing; alerts cannot be automated."
     data = yaml.safe_load(PLAYBOOK_PATH.read_text(encoding="utf-8"))
 
