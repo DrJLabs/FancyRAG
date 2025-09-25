@@ -1,0 +1,40 @@
+name: "Feature Request"
+description: "Suggest an enhancement or new capability"
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea that will improve Neo4j GraphRAG? Let us know!
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Provide a concise description of the proposed feature.
+      placeholder: Describe the problem and the desired outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why do we need this feature? Who benefits from it?
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements & Acceptance Criteria
+      description: List specific requirements, user stories, or acceptance criteria.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Share any alternative solutions or workarounds you have evaluated.
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Screenshots, diagrams, references, or links.
