@@ -1,0 +1,11 @@
+"""Configuration utilities for Neo4j GraphRAG."""
+
+from .settings import OpenAISettings, DEFAULT_CHAT_MODEL, FALLBACK_CHAT_MODELS, DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS
+
+__all__ = [
+    "OpenAISettings",
+    "DEFAULT_CHAT_MODEL",
+    "FALLBACK_CHAT_MODELS",
+    "DEFAULT_EMBEDDING_MODEL",
+    "DEFAULT_EMBEDDING_DIMENSIONS",
+]

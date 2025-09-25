@@ -27,6 +27,7 @@ REQUIRED_KEYS = {
 
 SAFE_PLACEHOLDER_PREFIX = "YOUR_"
 ALLOWED_NON_PLACEHOLDER_VALUES = {
+    "gpt-4.1-mini",
     "gpt-4o-mini",
     "text-embedding-3-small",
 }
@@ -76,8 +77,8 @@ def test_env_template_placeholders_are_safe():
 def test_env_template_models_document_optional_upgrade():
     contents = ENV_TEMPLATE.read_text()
     model_line = next((line for line in contents.splitlines() if line.startswith("OPENAI_MODEL")), "")
-    assert "gpt-4o-mini" in model_line, "Default model should be gpt-4o-mini"
-    assert re.search(r"gpt-4\.1-mini", contents), "Template should mention optional gpt-4.1-mini override"
+    assert "gpt-4.1-mini" in model_line, "Default model should be gpt-4.1-mini"
+    assert re.search(r"gpt-4o-mini", contents), "Template should document gpt-4o-mini fallback"
 
 
 def test_env_template_endpoint_guidance():
@@ -100,5 +101,5 @@ def test_documentation_references_env_template_workflow():
         and ".env.example" in contents
         and ".env" in contents
     ), "Overview must instruct copying env template"
-    assert "gpt-4o-mini" in contents and "gpt-4.1-mini" in contents, "Docs should document model defaults"
+    assert "gpt-4o-mini" in contents and "gpt-4.1-mini" in contents, "Docs should document baseline and fallback models"
     assert ("never commit" in contents) or ("do not commit" in contents), "Docs should warn against committing secrets"
