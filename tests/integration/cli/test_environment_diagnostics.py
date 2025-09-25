@@ -83,7 +83,7 @@ def test_workspace_diagnostics_redacts_secret(repo):
     assert "sk-test-999" not in result.stderr
 
 
-def test_workspace_diagnostics_fails_on_missing_dependency(repo, monkeypatch):
+def test_workspace_diagnostics_fails_on_missing_dependency(repo):
     missing_repo = repo / "stubs" / "neo4j_graphrag.py"
     missing_repo.unlink()
     result = _run_cli(repo, arguments=["--no-report"])

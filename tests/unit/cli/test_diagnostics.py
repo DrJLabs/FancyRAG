@@ -11,7 +11,7 @@ SRC_PATH = REPO_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from cli import diagnostics  # noqa: E402
+from cli import diagnostics
 
 
 @pytest.fixture(autouse=True)
@@ -54,10 +54,12 @@ def test_dependency_import_success(tmp_path, monkeypatch):
 
 def test_missing_dependency_triggers_error(tmp_path, monkeypatch):
     """Missing module results in non-zero exit code and actionable output."""
+    original_import = importlib.import_module
+
     def broken_import(name, package=None):
         if name == "neo4j_graphrag":
-            raise ModuleNotFoundError("neo4j_graphrag not installed")
-        return importlib.import_module(name, package=package)
+            raise ModuleNotFoundError
+        return original_import(name, package=package)
 
     monkeypatch.setattr(importlib, "import_module", broken_import)
     rc = diagnostics.run_workspace(tmp_path, write=False, output=None)

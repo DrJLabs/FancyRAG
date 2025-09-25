@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 MODULES: List[tuple[str, str]] = [
     ("neo4j_graphrag", "neo4j-graphrag"),
@@ -102,12 +102,14 @@ def _load_requirements_versions(lock_path: Path) -> Dict[str, str]:
     return versions
 
 
-def _distribution_name(module: str, declared: str) -> str:
+def _distribution_name(_module: str, declared: str) -> str:
     # Some distributions use underscores internally; normalise to canonical form
     return declared
 
 
-def _version_from_metadata(distribution: str, fallback_module) -> tuple[Optional[str], str]:
+def _version_from_metadata(
+    distribution: str, fallback_module: Any
+) -> tuple[Optional[str], str]:
     try:
         return metadata.version(distribution), "metadata"
     except metadata.PackageNotFoundError:
@@ -122,7 +124,7 @@ def _collect_packages(requirements: Dict[str, str]) -> List[PackageInfo]:
     for module_name, distribution_name in MODULES:
         try:
             module = importlib.import_module(module_name)
-        except Exception as exc:
+        except (ImportError, ModuleNotFoundError) as exc:
             raise DependencyError(
                 f"Missing or broken dependency: unable to import '{module_name}'. {exc}"
             ) from exc
@@ -131,7 +133,7 @@ def _collect_packages(requirements: Dict[str, str]) -> List[PackageInfo]:
         version, source = _version_from_metadata(distribution, module)
         if version is None:
             req_version = requirements.get(distribution.lower()) or requirements.get(
-                distribution.replace("-", "_")
+                distribution.replace("-", "_").lower()
             )
             if req_version:
                 version = req_version
