@@ -31,3 +31,10 @@ graph TD
 | Date       | Version | Description                               | Author    |
 |------------|---------|-------------------------------------------|-----------|
 | 2025-09-24 | 0.1     | Seeded architecture overview shard        | Codex CLI |
+| 2025-09-25 | 0.2     | Documented environment configuration workflow | James      |
+
+## Environment Configuration
+- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh` and before executing CLI commands.
+- Populate the placeholders with environment-specific values: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`, optional `gpt-4.1-mini`), `OPENAI_EMBEDDING_MODEL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `QDRANT_URL`, and `QDRANT_API_KEY`.
+- Keep `.env` git-ignored; never commit real credentials or paste secrets into shared channels.
+- Ensure the values align with managed service endpoints (Neo4j Bolt URI and Qdrant HTTPS URL) documented in the architecture.

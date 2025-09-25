@@ -47,6 +47,7 @@ env/
 ENV/
 .env
 .env.*
+!.env.example
 .venv.bak/
 
 # Node / JavaScript
