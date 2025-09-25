@@ -1,0 +1,52 @@
+name: "Bug Report"
+description: "Report a defect or regression"
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve Neo4j GraphRAG! Please provide as much context as possible.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened? What did you expect instead?
+      placeholder: Clear and concise description of the issue
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps To Reproduce
+      description: List the minimal steps required to reproduce the bug.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Runtime details (OS, Python version, GraphRAG version, etc.)
+      placeholder: |
+        - OS:
+        - Python:
+        - GraphRAG version:
+        - Additional context:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & Diagnostics
+      description: Paste relevant stack traces or attach diagnostics outputs (`artifacts/environment/versions.json`, CLI logs, etc.).
+      render: shell
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Proposed Mitigation / Workaround
+      description: Optional ideas for fixing or mitigating the issue.
