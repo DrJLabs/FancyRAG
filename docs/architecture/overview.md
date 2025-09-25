@@ -8,6 +8,7 @@ The Neo4j GraphRAG solution is a Python 3.12 CLI that orchestrates knowledge gra
 - Knowledge Graph Builder leveraging `SimpleKGPipeline` to populate Neo4j.
 - Vector upsert service handling embedding, batching, and Qdrant payload consistency.
 - Retrieval engine that joins Qdrant hits with Neo4j entities and delegates answer generation to OpenAI models.
+- Workspace bootstrap script (`scripts/bootstrap.sh`) that provisions the Python 3.12 virtual environment, installs pinned dependencies, and validates `neo4j_graphrag` imports before operators run CLI workflows. Run it from the repository root (`bash scripts/bootstrap.sh`) and activate the resulting virtualenv (`source .venv/bin/activate`) prior to completing the `.env` configuration story.
 
 ## Diagram
 ```mermaid
