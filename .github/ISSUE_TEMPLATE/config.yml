@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Neo4j GraphRAG Support Discussions
-    url: https://github.com/DrJLabs/FancyRAG/discussions
+    url: https://github.com/neo4j/graphrag/discussions
     about: Ask questions, share ideas, or get help from the community.

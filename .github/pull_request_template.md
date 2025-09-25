@@ -2,7 +2,7 @@
 - [ ] Fixes # (issue)
 - [ ] Related # (issue)
 
-Provide a short description of the change and its motivation.
+<!-- Provide a short description of the change and its motivation. -->
 
 ## Testing
 - [ ] Not required (explain why)
