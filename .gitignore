@@ -82,3 +82,6 @@ Thumbs.db
 # OS metadata
 *.orig
 *~
+
+# Diagnostics artifacts
+artifacts/
