@@ -99,6 +99,21 @@ def test_report_artifacts_remain_untracked(repo):
     assert all("artifacts/" not in line for line in lines)
 
 
+def test_workspace_diagnostics_warns_without_lockfile(repo):
+    lockfile = repo / "requirements.lock"
+    lockfile.unlink()
+
+    result = _run_cli(repo, arguments=["--output", "artifacts/environment/versions.json"])
+
+    assert result.returncode == 0, result.stderr
+    assert "requirements.lock not found" in result.stdout
+
+    report_path = repo / "artifacts/environment/versions.json"
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    assert data["lockfile"]["exists"] is False
+    assert data["lockfile"]["sha256"] is None
+
+
 def test_overview_documents_diagnostics_reference():
     overview = (REPO_ROOT / "docs" / "architecture" / "overview.md").read_text(encoding="utf-8")
     assert "python -m cli.diagnostics" in overview
