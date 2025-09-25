@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,8 +46,14 @@ def _read_status(story_path: Path) -> str:
     status_heading = "## Status"
     with story_path.open("r", encoding="utf-8") as handle:
         in_status_section = False
+        in_code_block = False
         for line in handle:
             stripped_line = line.strip()
+            if stripped_line.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                continue
             if stripped_line == status_heading:
                 in_status_section = True
                 continue
@@ -83,11 +90,14 @@ def _load_latest_story(stories_dir: Path, *, exclude: Optional[Path] = None) -> 
 def _insert_override_note(story_path: Path, note: str) -> None:
     content = story_path.read_text(encoding="utf-8")
     anchor = "## Dev Notes"
-    if anchor not in content:
-        story_path.write_text(content + "\n\n" + note + "\n", encoding="utf-8")
+    pattern = rf"(^{re.escape(anchor)}\s*$)"
+    parts = re.split(pattern, content, maxsplit=1, flags=re.MULTILINE)
+    if len(parts) < 3:
+        updated = content.rstrip("\n") + "\n\n" + note + "\n"
+        story_path.write_text(updated, encoding="utf-8")
         return
-    head, tail = content.split(anchor, maxsplit=1)
-    updated = f"{head}{anchor}\n\n{note}\n{tail.lstrip()}"
+    head, matched_anchor, tail = parts
+    updated = f"{head}{matched_anchor}\n\n{note}\n{tail.lstrip()}"
     story_path.write_text(updated, encoding="utf-8")
 
 
@@ -103,9 +113,15 @@ def _ensure_log_header(path: Path) -> None:
     path.write_text(header, encoding="utf-8")
 
 
+def _md_cell(text: str) -> str:
+    return str(text).replace("|", r"\|").replace("\n", " ").strip()
+
+
 def _append_log_entry(path: Path, *, timestamp: datetime, actor: str, prior: StoryInfo, reason: str) -> None:
     _ensure_log_header(path)
-    line = f"| {timestamp.isoformat()} | {actor} | {prior.identifier} | {prior.status} | {reason} |\n"
+    line = (
+        f"| {timestamp.isoformat()} | {_md_cell(actor)} | {prior.identifier} | {_md_cell(prior.status)} | {_md_cell(reason)} |\n"
+    )
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line)
 
