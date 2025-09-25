@@ -17,7 +17,12 @@ from cli import diagnostics
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     """Ensure secrets are cleared between tests."""
-    for key in ("OPENAI_API_KEY", "QDRANT_API_KEY", "NEO4J_PASSWORD"):
+    for key in (
+        "OPENAI_API_KEY",
+        "QDRANT_API_KEY",
+        "NEO4J_PASSWORD",
+        "NEO4J_BOLT_PASSWORD",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 
