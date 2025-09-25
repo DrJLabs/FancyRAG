@@ -1,0 +1,60 @@
+schema: 1
+story: "1.1"
+story_title: "Workspace Bootstrap Script"
+gate: "PASS"
+status_reason: "Interpreter enforcement, deterministic locking, import validation, and secret-safe messaging all have automated coverage; residual risks downgraded to low with monitoring recommendations."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-09-25T00:00:00Z"
+waiver: { active: false }
+top_issues: []
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 0
+    low: 4
+  highest: null
+  recommendations:
+    must_fix: []
+    monitor:
+      - Add CI automation to regenerate requirements.lock and fail on diff.
+test_design:
+  scenarios_total: 7
+  by_level:
+    unit: 0
+    integration: 7
+    e2e: 0
+  by_priority:
+    p0: 5
+    p1: 2
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+trace:
+  totals:
+    requirements: 4
+    full: 4
+    partial: 0
+    none: 0
+  planning_ref: docs/qa/assessments/1.1-test-design-20250925.md
+  uncovered: []
+  notes: docs/qa/assessments/1.1-trace-20250925.md
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "Secret redaction validated via integration test; script never echoes env tokens."
+  performance:
+    status: PASS
+    notes: "Operator-only script; executes locally within seconds."
+  reliability:
+    status: PASS
+    notes: "Import validation failure path and idempotent reruns covered by tests."
+  maintainability:
+    status: PASS
+    notes: "Lockfile generation deterministic; pip-tools fallback and documentation updates in place."
+references:
+  risk_profile: docs/qa/assessments/1.1-risk-20250925.md
+  test_design: docs/qa/assessments/1.1-test-design-20250925.md
+  trace: docs/qa/assessments/1.1-trace-20250925.md
+  nfr_assessment: docs/qa/assessments/1.1-nfr-20250925.md
