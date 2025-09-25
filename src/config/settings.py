@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
@@ -51,7 +52,7 @@ class OpenAISettings:
         """Load settings from environment with strict validation."""
 
         source = env or os.environ
-        actor_name = actor or source.get(_ENV_ACTOR_HINT) or os.environ.get("USER") or "unknown"
+        actor_name = actor or source.get(_ENV_ACTOR_HINT) or getpass.getuser() or "unknown"
 
         requested_chat_model = (source.get(_ENV_OPENAI_MODEL) or "").strip() or DEFAULT_CHAT_MODEL
 

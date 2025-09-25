@@ -11,14 +11,14 @@ models:
     latency_ms_p95: 1200
     token_prompt_per_minute: 60000
     token_completion_per_minute: 15000
-    cost_usd_per_1k_prompt_tokens: 0.005
-    cost_usd_per_1k_completion_tokens: 0.015
+    cost_usd_per_1k_prompt_tokens: 0.0003
+    cost_usd_per_1k_completion_tokens: 0.0012
   gpt-4o-mini:
     latency_ms_p95: 800
     token_prompt_per_minute: 90000
     token_completion_per_minute: 20000
-    cost_usd_per_1k_prompt_tokens: 0.003
-    cost_usd_per_1k_completion_tokens: 0.009
+    cost_usd_per_1k_prompt_tokens: 0.00015
+    cost_usd_per_1k_completion_tokens: 0.0006
 alerts:
   latency_p95:
     panel_uid: openai-latency

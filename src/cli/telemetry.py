@@ -18,7 +18,7 @@ def _redact_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     safe: Dict[str, Any] = {}
     for key, value in data.items():
         key_lower = key.lower()
-        if key_lower in {"api_key", "authorization", "bearer"}:
+        if key_lower in {"api_key", "authorization", "bearer", "token", "secret", "password"}:
             safe[key] = "***"
         else:
             safe[key] = value
