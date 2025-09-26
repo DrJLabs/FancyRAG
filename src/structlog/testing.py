@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
-from . import BoundLogger, set_log_sink
+from . import get_log_sink, set_log_sink
 
 __all__ = ["capture_logs"]
 
@@ -23,8 +23,9 @@ def capture_logs() -> Iterator[List[Dict[str, Any]]]:
         entry = {"event": event, "level": level, "logger": logger, **kwargs}
         events.append(entry)
 
+    previous_sink = get_log_sink()
     set_log_sink(_capture_sink)
     try:
         yield events
     finally:
-        set_log_sink(None)
+        set_log_sink(previous_sink)
