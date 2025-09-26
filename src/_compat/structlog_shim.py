@@ -123,8 +123,13 @@ def _create_module() -> ModuleType:
 
 def ensure() -> ModuleType:
     """Return a structlog-like module, installing the shim when required."""
-
     existing = sys.modules.get("structlog")
     if existing is not None:
         return existing
-    return _create_module()
+
+    with _ensure_lock:
+        # Re-check inside the lock to handle the race condition.
+        existing = sys.modules.get("structlog")
+        if existing is not None:
+            return existing
+        return _create_module()
