@@ -13,10 +13,10 @@ ASSUME_PY312="${BOOTSTRAP_ASSUME_PY312:-0}"
 PACKAGES=(
   "neo4j-graphrag[openai,qdrant]"
   "neo4j>=5,<6"
-  "qdrant-client>=1.10"
   "openai>=1,<2"
-  "structlog>=24,<25"
   "prometheus-client>=0.23,<1"
+  "qdrant-client>=1.10"
+  "structlog>=24,<25"
   "pytest>=8,<9"
 )
 TEST_LOCK_CONTENT=$(cat <<'EOF'
