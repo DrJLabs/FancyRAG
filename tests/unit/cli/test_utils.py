@@ -1,5 +1,6 @@
 import pytest
-from structlog.testing import capture_logs
+
+from _compat.structlog import capture_logs
 
 from config.settings import OpenAISettings
 from cli.utils import ensure_embedding_dimensions

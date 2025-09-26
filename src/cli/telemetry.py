@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
-import structlog
+from _compat.structlog import structlog
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
 from cli.sanitizer import scrub_object

@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-import structlog
+from _compat.structlog import structlog
 
 logger = structlog.get_logger(__name__)
 
