@@ -1,0 +1,9 @@
+schema: 1
+story: '2.2'
+gate: PASS
+status_reason: 'Probe CLI, telemetry, and sanitization guardrails verified via unit/integration coverage; ready for downstream vector workflows.'
+reviewer: 'Quinn'
+updated: '2025-09-26T00:00:00Z'
+top_issues: []
+waiver:
+  active: false

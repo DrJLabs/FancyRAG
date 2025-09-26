@@ -8,32 +8,16 @@ from typing import Any, Dict, Optional
 import structlog
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
+from cli.sanitizer import sanitize_mapping
+
 logger = structlog.get_logger(__name__)
 
 
-_LATENCY_BUCKETS_MS = (50, 100, 250, 500, 1000, 2000, 5000, 10000)
+_LATENCY_BUCKETS_MS = (100, 250, 500, 1000, 2000, 5000)
 
 
 def _redact_payload(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Return a copy of `data` with sensitive authentication fields redacted.
-    
-    Parameters:
-        data (Dict[str, Any]): Mapping of keys to values to be sanitized.
-    
-    Returns:
-        Dict[str, Any]: A shallow copy of `data` where any key that equals
-        "api_key", "authorization", or "bearer" (case-insensitive) has its value
-        replaced with `"***"`.
-    """
-    safe: Dict[str, Any] = {}
-    for key, value in data.items():
-        key_lower = key.lower()
-        if key_lower in {"api_key", "authorization", "bearer", "token", "secret", "password"}:
-            safe[key] = "***"
-        else:
-            safe[key] = value
-    return safe
+    return sanitize_mapping(data)
 
 
 @dataclass
