@@ -26,6 +26,7 @@ neo4j==5.23.0
 qdrant-client==1.10.4
 openai==1.40.3
 structlog==24.1.0
+prometheus-client==0.23.1
 pytest==8.3.2
 EOF
 )
