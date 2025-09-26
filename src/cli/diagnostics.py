@@ -43,7 +43,7 @@ except ImportError:  # pragma: no cover - fallback types for static analysis/tes
             super().__init__(message)
             self.status_code = status_code
 
-    class RateLimitError(APIError):
+    class RateLimitError(APIStatusError):
         pass
 
     class OpenAI:  # type: ignore[no-redef]
