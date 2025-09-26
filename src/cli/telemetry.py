@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-import structlog
+from _compat.structlog import structlog
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
 logger = structlog.get_logger(__name__)

@@ -1,5 +1,6 @@
 import pytest
-from structlog.testing import capture_logs
+
+from _compat.structlog import capture_logs
 
 from config.settings import (
     DEFAULT_CHAT_MODEL,

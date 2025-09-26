@@ -1,5 +1,5 @@
 from prometheus_client import CollectorRegistry
-from structlog.testing import capture_logs
+from _compat.structlog import capture_logs
 
 from cli import telemetry
 

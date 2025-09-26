@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-import structlog
+from _compat.structlog import structlog
 
 from config.settings import OpenAISettings
 
