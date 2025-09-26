@@ -11,6 +11,14 @@ SRC_PATH = REPO_ROOT / "src"
 
 
 def _create_stub_openai(dest: Path) -> None:
+    """
+    Create an on-disk stub of the `openai` package at the given destination.
+    
+    The stub provides minimal classes and objects that mimic the public surface used by the code under test: exception types (APIError, APIConnectionError, APIStatusError, RateLimitError), lightweight usage/result containers, a chat completions helper that returns a single "stop" choice and usage counts, an embeddings helper that returns a 1536-length embedding vector, and an OpenAI class that exposes `chat.completions`, `embeddings`, and a `responses` list.
+    
+    Parameters:
+        dest (Path): Directory in which an `openai` package directory (with `__init__.py`) will be created.
+    """
     package = dest / "openai"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(
@@ -77,6 +85,15 @@ class OpenAI:
 
 
 def _initialise_repo(tmp_path: Path) -> Path:
+    """
+    Create a temporary Git repository populated with the project source, stub OpenAI package, and basic project files.
+    
+    Parameters:
+        tmp_path (Path): Base temporary directory where the repository directory named "repo" will be created.
+    
+    Returns:
+        repo (Path): Path to the created repository directory containing "src", "stubs", "requirements.lock", and ".gitignore".
+    """
     repo = tmp_path / "repo"
     shutil.copytree(SRC_PATH, repo / "src")
     (repo / "requirements.lock").write_text("neo4j-graphrag==0.9.0\n", encoding="utf-8")
@@ -96,6 +113,17 @@ def _initialise_repo(tmp_path: Path) -> Path:
 
 
 def _run_probe(repo: Path, extra_env: dict[str, str] | None = None, arguments: list[str] | None = None):
+    """
+    Run the CLI openai-probe against a repository scaffold and return the completed process result.
+    
+    Parameters:
+        repo (Path): Path to the repository to run the probe in; its "src" and "stubs" directories are added to PYTHONPATH.
+        extra_env (dict[str, str] | None): Additional environment variables to set or override for the probe process.
+        arguments (list[str] | None): Extra command-line arguments to append to the probe invocation.
+    
+    Returns:
+        subprocess.CompletedProcess: The completed process result for the probe run, containing `returncode`, `stdout`, and `stderr`.
+    """
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(
         [str(repo / "src"), str(repo / "stubs"), env.get("PYTHONPATH", "")]
