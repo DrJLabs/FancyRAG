@@ -862,11 +862,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    root: Optional[Path] = _compute_repo_root(getattr(args, "root", None)) if hasattr(args, "root") else None
+    root = _compute_repo_root(args.root)
 
     if args.command == "workspace":
-        assert root is not None
-
         write = not args.no_report
         output = args.output
         if output is not None and not output.is_absolute():
@@ -877,7 +875,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return run_workspace(root, write=write, output=output)
 
     if args.command == "openai-probe":
-        assert root is not None
         artifacts_dir = args.artifacts_dir
         if artifacts_dir is not None and not artifacts_dir.is_absolute():
             artifacts_dir = root / artifacts_dir

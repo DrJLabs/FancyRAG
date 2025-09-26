@@ -1,4 +1,4 @@
-from src.cli.telemetry import create_metrics
+from cli.telemetry import create_metrics
 
 
 def test_latency_histogram_uses_expected_buckets():

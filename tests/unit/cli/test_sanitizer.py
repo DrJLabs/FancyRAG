@@ -1,4 +1,4 @@
-from src.cli import sanitizer
+from cli import sanitizer
 
 
 def test_sanitize_text_redacts_env_values(monkeypatch):
