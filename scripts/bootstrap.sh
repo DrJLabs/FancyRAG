@@ -16,6 +16,7 @@ PACKAGES=(
   "qdrant-client>=1.10"
   "openai>=1,<2"
   "structlog>=24,<25"
+  "prometheus-client>=0.23,<1"
   "pytest>=8,<9"
 )
 TEST_LOCK_CONTENT=$(cat <<'EOF'
