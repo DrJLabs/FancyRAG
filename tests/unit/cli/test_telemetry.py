@@ -3,9 +3,12 @@ from cli.telemetry import create_metrics
 
 def test_latency_histogram_uses_expected_buckets():
     metrics = create_metrics()
-    histogram = metrics.chat_latency
-    # prom-client stores buckets under ._buckets with sorted boundaries
-    buckets = histogram._upper_bounds  # type: ignore[attr-defined]
-    assert buckets[0] == 100
-    assert 250 in buckets and 2000 in buckets
-    assert buckets[-2] == 5000
+    reg = metrics.registry
+    # Inspect bucket boundaries via Prometheus samples (exclude +Inf)
+    chat_metric = next(m for m in reg.collect() if m.name == "graphrag_openai_chat_latency_ms")
+    bounds = sorted(
+        {int(float(s.labels["le"])) for s in chat_metric.samples if s.name.endswith("_bucket") and s.labels["le"] != "+Inf"}
+    )
+    assert bounds[0] == 100
+    assert 250 in bounds and 2000 in bounds
+    assert bounds[-1] == 5000

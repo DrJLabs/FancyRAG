@@ -44,21 +44,7 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
         "access_token",
         "refresh_token",
     }
-)
-
-
-def _redacted_value(value: str) -> str:
-    """
-    Return a redacted replacement for a non-empty string.
-    
-    Parameters:
-        value (str): The string to redact; if empty, it is returned unchanged.
-    
-    Returns:
-        str: `"***"` if `value` is non-empty, otherwise the original (empty) string.
-    """
-    return "***" if value else value
-
+) 
 
 def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> str:
     """
@@ -88,14 +74,7 @@ def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None
 
 
 def scrub_object(obj: Any) -> Any:
-    """
-    Deeply sanitize arbitrary objects for safe JSON/file serialization.
-
-    Strings are sanitized with :func:`sanitize_text`. Mapping values are recursively
-    sanitized with sensitive keys masked. Lists and tuples are traversed element by
-    element, ensuring nested structures cannot leak secrets. Unsupported types are
-    returned unchanged.
-    """
+    """Deeply sanitize arbitrary objects for safe JSON/file serialization."""
 
     if isinstance(obj, str):
         return sanitize_text(obj)
@@ -107,9 +86,5 @@ def scrub_object(obj: Any) -> Any:
     if isinstance(obj, list):
         return [scrub_object(item) for item in obj]
     if isinstance(obj, tuple):
-        if len(obj) == 2 and isinstance(obj[0], str):
-            key = scrub_object(obj[0])
-            value = "***" if obj[0].lower() in SENSITIVE_KEY_NAMES else scrub_object(obj[1])
-            return (key, value)
         return tuple(scrub_object(item) for item in obj)
     return obj

@@ -349,9 +349,12 @@ def _usage_value(usage: Any, attr: str) -> int:
     """
     if usage is None:
         return 0
-    value = getattr(usage, attr, None)
-    if value is None and isinstance(usage, dict):
+
+    if isinstance(usage, dict):
         value = usage.get(attr)
+    else:
+        value = getattr(usage, attr, None)
+
     return int(value or 0)
 
 
@@ -845,8 +848,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    if args.command == "workspace":
+    root: Optional[Path] = None
+    if args.command in {"workspace", "openai-probe"}:
         root = _compute_repo_root(args.root)
+
+    if args.command == "workspace":
+        assert root is not None
 
         write = not args.no_report
         output = args.output
@@ -858,7 +865,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return run_workspace(root, write=write, output=output)
 
     if args.command == "openai-probe":
-        root = _compute_repo_root(args.root)
+        assert root is not None
         artifacts_dir = args.artifacts_dir
         if artifacts_dir is not None and not artifacts_dir.is_absolute():
             artifacts_dir = root / artifacts_dir

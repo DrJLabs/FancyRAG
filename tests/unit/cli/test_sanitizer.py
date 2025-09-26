@@ -36,7 +36,7 @@ def test_scrub_object_handles_mixed_structures(monkeypatch):
 
 
 def test_scrub_object_sanitizes_tuples_in_lists():
-    payload = {"items": [("password", "value"), ("note", "contains sk-secret")]}
+    payload = {"items": [("password", "sk-secret"), ("note", "contains sk-secret")]}  # noqa: S105 - test fixture
     scrubbed = sanitizer.scrub_object(payload)
     assert scrubbed["items"][0][1] == "***"
     assert "***" in scrubbed["items"][1][1]
