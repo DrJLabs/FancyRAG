@@ -15,11 +15,25 @@ class FakeEmbeddingResponse(SimpleNamespace):
 
 class HappyClient:
     def __init__(self):
+        """
+        Initialize a simulated OpenAI-like client used by tests.
+        
+        Creates a `chat` namespace exposing `completions.create` and an `embeddings` namespace exposing `create`, both bound to the instance's internal handlers, and initializes call counters under `self.calls` for "chat" and "embedding".
+        """
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
         self.embeddings = SimpleNamespace(create=self._embedding)
         self.calls = {"chat": 0, "embedding": 0}
 
     def _chat(self, **kwargs):
+        """
+        Simulate a chat API call: increments the chat call counter and returns a canned successful chat response.
+        
+        Parameters:
+            kwargs: Must include a 'model' key identifying the model to use; other keys are ignored.
+        
+        Returns:
+            FakeChatResponse: A mock response with `usage` (prompt_tokens=12, completion_tokens=3) and a single choice whose `finish_reason` is `"stop"`.
+        """
         self.calls["chat"] += 1
         assert kwargs["model"]
         return FakeChatResponse(
@@ -28,6 +42,15 @@ class HappyClient:
         )
 
     def _embedding(self, **kwargs):
+        """
+        Create a fake embedding response and record that an embedding call occurred.
+        
+        Parameters:
+            kwargs: Must include a "model" key; an AssertionError is raised if it is missing.
+        
+        Returns:
+            FakeEmbeddingResponse: Contains `data` with one embedding vector of length 1536 and `usage.total_tokens` equal to 8.
+        """
         self.calls["embedding"] += 1
         assert kwargs["model"]
         return FakeEmbeddingResponse(
@@ -37,6 +60,15 @@ class HappyClient:
 
 
 def _read_json(path: Path) -> dict:
+    """
+    Read and parse JSON from the given path.
+    
+    Parameters:
+        path (Path): Path to a UTF-8 encoded JSON file.
+    
+    Returns:
+        dict: Parsed JSON content.
+    """
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -102,10 +134,24 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
 
     class FlakyClient(HappyClient):
         def __init__(self):
+            """
+            Initialize the client and reset the chat attempts counter.
+            
+            Calls the superclass constructor and sets `chat_attempts` to 0 to track how many chat calls have been made.
+            """
             super().__init__()
             self.chat_attempts = 0
 
         def _chat(self, **kwargs):
+            """
+            Simulates intermittent rate limiting by raising FakeRateLimit for the first two invocations, then delegates to the superclass chat implementation.
+            
+            Raises:
+                FakeRateLimit: for the first two calls to simulate a rate-limit error.
+            
+            Returns:
+                The chat response returned by the superclass `_chat`.
+            """
             self.chat_attempts += 1
             if self.chat_attempts < 3:
                 raise FakeRateLimit("slow down")
@@ -141,6 +187,14 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
 
     class AlwaysRateLimited(HappyClient):
         def _chat(self, **kwargs):
+            """
+            Simulate a chat API call that always fails due to a rate limit.
+            
+            All keyword arguments are accepted and ignored.
+            
+            Raises:
+                FakeRateLimit: always raised with the message "token budget exceeded".
+            """
             raise FakeRateLimit("token budget exceeded")
 
     root = tmp_path / "repo"

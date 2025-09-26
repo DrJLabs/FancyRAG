@@ -49,11 +49,31 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
 
 
 def _redacted_value(value: str) -> str:
+    """
+    Return a redacted replacement for a non-empty string.
+    
+    Parameters:
+        value (str): The string to redact; if empty, it is returned unchanged.
+    
+    Returns:
+        str: `"***"` if `value` is non-empty, otherwise the original (empty) string.
+    """
     return "***" if value else value
 
 
 def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> str:
-    """Redact common secret patterns and environment values from ``text``."""
+    """
+    Redact known secret values and pattern matches from a text string.
+    
+    Replaces occurrences of environment values listed in SECRET_ENV_KEYS, matches of SECRET_PATTERNS, and matches of any provided extra_patterns with "***".
+    
+    Parameters:
+        text (str): Input text to sanitize.
+        extra_patterns (Iterable[re.Pattern[str]] | None): Optional additional compiled regular expressions whose matches will be replaced with "***".
+    
+    Returns:
+        str: A copy of `text` with secrets and pattern matches replaced by "***".
+    """
 
     sanitized = text
     for key in SECRET_ENV_KEYS:
@@ -69,7 +89,19 @@ def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None
 
 
 def sanitize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a sanitized shallow copy of ``data`` with sensitive values redacted."""
+    """
+    Create a shallow sanitized copy of a mapping with sensitive values redacted.
+    
+    For any key whose lowercased name is in SENSITIVE_KEY_NAMES, the corresponding value is replaced with "***".
+    All other values are sanitized recursively (strings, mappings, lists, tuples are processed as needed).
+    The original mapping is not modified; keys and their casing are preserved in the returned dict.
+    
+    Parameters:
+        data (Mapping[str, Any]): Input mapping to sanitize.
+    
+    Returns:
+        dict[str, Any]: A new dictionary with sensitive values redacted and other values sanitized.
+    """
 
     result: dict[str, Any] = {}
     for key, value in data.items():
@@ -83,6 +115,15 @@ def sanitize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _sanitize_value(value: Any) -> Any:
+    """
+    Recursively sanitize a value by redacting secrets in strings and nested structures.
+    
+    Parameters:
+        value: The input to sanitize. Strings are processed with sanitize_text; Mapping objects are processed with sanitize_mapping; lists and tuples are traversed and each element is sanitized recursively.
+    
+    Returns:
+        The sanitized value with secrets redacted. The return type matches the input structure (str, Mapping-derived dict, list, tuple, or the original object for unsupported types).
+    """
     if isinstance(value, str):
         return sanitize_text(value)
     if isinstance(value, Mapping):
@@ -104,7 +145,14 @@ def _sanitize_value(value: Any) -> Any:
 
 
 def scrub_object(obj: Any) -> Any:
-    """Deeply sanitize arbitrary objects for safe JSON/file serialization."""
+    """
+    Deeply sanitize an object for safe JSON/file serialization.
+    
+    Strings have secret-like substrings redacted. Mapping values, list items, and tuple elements are recursively sanitized; other values are returned unchanged.
+    
+    Returns:
+        The input object with sensitive string content redacted and nested structures recursively sanitized.
+    """
 
     if isinstance(obj, str):
         return sanitize_text(obj)
