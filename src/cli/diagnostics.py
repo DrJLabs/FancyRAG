@@ -390,7 +390,7 @@ def _execute_with_backoff(
         attempt += 1
         try:
             return operation()
-        except Exception as exc:  # noqa: BLE001 - controlled handling
+        except Exception as exc:  # controlled handling
             if _is_rate_limit_error(exc):
                 errors.append(str(exc))
                 if attempt >= max_attempts:
@@ -655,8 +655,24 @@ def run_openai_probe(
     Returns:
         int: Exit code: `0` on success or when probe was skipped; `1` if the probe failed and a failure report was written.
     """
-    settings = OpenAISettings.load(actor="openai-probe")
     metrics = create_metrics()
+
+    settings: Optional[OpenAISettings] = None
+
+    def _settings_payload() -> Dict[str, Any]:
+        if settings is None:
+            return {
+                "chat_model": None,
+                "embedding_model": None,
+                "embedding_dimensions": None,
+                "chat_override": None,
+            }
+        return {
+            "chat_model": settings.chat_model,
+            "embedding_model": settings.embedding_model,
+            "embedding_dimensions": settings.expected_embedding_dimensions(),
+            "chat_override": settings.is_chat_override,
+        }
 
     artifacts_root = artifacts_dir or (root / DEFAULT_PROBE_REPORT_PATH.parent)
     if not artifacts_root.is_absolute():
@@ -668,33 +684,13 @@ def run_openai_probe(
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    if skip_live:
-        report = {
-            "status": "skipped",
-            "generated_at": timestamp,
-            "actor": settings.actor,
-            "settings": {
-                "chat_model": settings.chat_model,
-                "embedding_model": settings.embedding_model,
-                "embedding_dimensions": settings.expected_embedding_dimensions(),
-            },
-            "notes": "Live OpenAI calls skipped by operator request.",
-        }
-        write_report(report, report_path)
-        metrics_path.write_text(metrics.export(), encoding="utf-8")
-        _print("INFO", f"Probe skipped; artifacts written to {report_path} and {metrics_path}")
-        return 0
-
     def _record_failure(exc: ProbeFailure) -> int:
+        actor_name = settings.actor if settings is not None else "openai-probe"
         failure_report = {
             "status": "failed",
             "generated_at": timestamp,
-            "actor": settings.actor,
-            "settings": {
-                "chat_model": settings.chat_model,
-                "embedding_model": settings.embedding_model,
-                "embedding_dimensions": settings.expected_embedding_dimensions(),
-            },
+            "actor": actor_name,
+            "settings": _settings_payload(),
             "error": scrub_object(
                 {
                     "message": str(exc),
@@ -708,6 +704,29 @@ def run_openai_probe(
         _print("ERROR", str(exc), file=sys.stderr)
         _print("ERROR", exc.remediation, file=sys.stderr)
         return 1
+
+    try:
+        settings = OpenAISettings.load(actor="openai-probe")
+    except ValueError as exc:
+        failure = ProbeFailure(
+            "OpenAI configuration is invalid.",
+            remediation="Verify OPENAI_MODEL and OPENAI_EMBEDDING_* settings are set to supported values.",
+            details={"reason": "settings_load", "message": str(exc)},
+        )
+        return _record_failure(failure)
+
+    if skip_live:
+        report = {
+            "status": "skipped",
+            "generated_at": timestamp,
+            "actor": settings.actor,
+            "settings": _settings_payload(),
+            "notes": "Live OpenAI calls skipped by operator request.",
+        }
+        write_report(report, report_path)
+        metrics_path.write_text(metrics.export(), encoding="utf-8")
+        _print("INFO", f"Probe skipped; artifacts written to {report_path} and {metrics_path}")
+        return 0
 
     try:
         try:
@@ -744,14 +763,9 @@ def run_openai_probe(
         "status": "success",
         "generated_at": timestamp,
         "actor": settings.actor,
-        "settings": {
-            "chat_model": settings.chat_model,
-            "embedding_model": settings.embedding_model,
-            "embedding_dimensions": settings.expected_embedding_dimensions(),
-            "chat_override": settings.is_chat_override,
-        },
-        "chat": scrub_object(chat_summary),
-        "embedding": scrub_object(embedding_summary),
+        "settings": _settings_payload(),
+        "chat": chat_summary,
+        "embedding": embedding_summary,
         "artifacts": {
             "report": str(report_path),
             "metrics": str(metrics_path),
@@ -848,9 +862,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    root: Optional[Path] = None
-    if args.command in {"workspace", "openai-probe"}:
-        root = _compute_repo_root(args.root)
+    root: Optional[Path] = _compute_repo_root(getattr(args, "root", None)) if hasattr(args, "root") else None
 
     if args.command == "workspace":
         assert root is not None
