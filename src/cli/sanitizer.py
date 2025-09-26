@@ -26,9 +26,17 @@ SECRET_ENV_KEYS: frozenset[str] = frozenset(
 )
 
 
+SENSITIVE_KEY_PATTERN = r"(?:api[_-]?key|authorization|bearer|token|secret|password|access[_-]?token|refresh[_-]?token)"
+
+
 SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"sk-[A-Za-z0-9]{4,}"),
-    re.compile(r"(?i)(api[_-]?key)\b[^=]*=\s*([A-Za-z0-9-]{6,})"),
+    re.compile(
+        rf"(?i)"  # case insensitive
+        rf"\"?{SENSITIVE_KEY_PATTERN}\"?"  # optional quotes around key name
+        rf"\s*[:=]\s*"  # key/value separator
+        rf"['\"]?(?:Bearer\s+)?[A-Za-z0-9._-]{{4,}}['\"]?"  # sanitized value with optional quotes/Bearer prefix
+    ),
     re.compile(r"(?i)(bearer)\s+[A-Za-z0-9._-]{10,}"),
 )
 
