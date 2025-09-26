@@ -11,7 +11,6 @@ __all__ = [
     "SECRET_PATTERNS",
     "SENSITIVE_KEY_NAMES",
     "sanitize_text",
-    "sanitize_mapping",
     "scrub_object",
 ]
 
@@ -88,79 +87,29 @@ def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None
     return sanitized
 
 
-def sanitize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
-    """
-    Create a shallow sanitized copy of a mapping with sensitive values redacted.
-    
-    For any key whose lowercased name is in SENSITIVE_KEY_NAMES, the corresponding value is replaced with "***".
-    All other values are sanitized recursively (strings, mappings, lists, tuples are processed as needed).
-    The original mapping is not modified; keys and their casing are preserved in the returned dict.
-    
-    Parameters:
-        data (Mapping[str, Any]): Input mapping to sanitize.
-    
-    Returns:
-        dict[str, Any]: A new dictionary with sensitive values redacted and other values sanitized.
-    """
-
-    result: dict[str, Any] = {}
-    for key, value in data.items():
-        lower_key = key.lower()
-        if lower_key in SENSITIVE_KEY_NAMES:
-            result[key] = "***"
-            continue
-
-        result[key] = _sanitize_value(value)
-    return result
-
-
-def _sanitize_value(value: Any) -> Any:
-    """
-    Recursively sanitize a value by redacting secrets in strings and nested structures.
-    
-    Parameters:
-        value: The input to sanitize. Strings are processed with sanitize_text; Mapping objects are processed with sanitize_mapping; lists and tuples are traversed and each element is sanitized recursively.
-    
-    Returns:
-        The sanitized value with secrets redacted. The return type matches the input structure (str, Mapping-derived dict, list, tuple, or the original object for unsupported types).
-    """
-    if isinstance(value, str):
-        return sanitize_text(value)
-    if isinstance(value, Mapping):
-        return sanitize_mapping(value)
-    if isinstance(value, list):
-        return [
-            sanitize_mapping(item)
-            if isinstance(item, Mapping)
-            else sanitize_text(item)
-            if isinstance(item, str)
-            else _sanitize_value(item)
-            if isinstance(item, list)
-            else item
-            for item in value
-        ]
-    if isinstance(value, tuple):
-        return tuple(_sanitize_value(item) for item in value)
-    return value
-
-
 def scrub_object(obj: Any) -> Any:
     """
-    Deeply sanitize an object for safe JSON/file serialization.
-    
-    Strings have secret-like substrings redacted. Mapping values, list items, and tuple elements are recursively sanitized; other values are returned unchanged.
-    
-    Returns:
-        The input object with sensitive string content redacted and nested structures recursively sanitized.
+    Deeply sanitize arbitrary objects for safe JSON/file serialization.
+
+    Strings are sanitized with :func:`sanitize_text`. Mapping values are recursively
+    sanitized with sensitive keys masked. Lists and tuples are traversed element by
+    element, ensuring nested structures cannot leak secrets. Unsupported types are
+    returned unchanged.
     """
 
     if isinstance(obj, str):
         return sanitize_text(obj)
     if isinstance(obj, Mapping):
-        sanitized = sanitize_mapping(obj)
-        return {key: scrub_object(value) for key, value in sanitized.items()}
+        return {
+            key: "***" if key.lower() in SENSITIVE_KEY_NAMES else scrub_object(value)
+            for key, value in obj.items()
+        }
     if isinstance(obj, list):
         return [scrub_object(item) for item in obj]
     if isinstance(obj, tuple):
+        if len(obj) == 2 and isinstance(obj[0], str):
+            key = scrub_object(obj[0])
+            value = "***" if obj[0].lower() in SENSITIVE_KEY_NAMES else scrub_object(obj[1])
+            return (key, value)
         return tuple(scrub_object(item) for item in obj)
     return obj

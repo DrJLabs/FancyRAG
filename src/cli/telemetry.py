@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import structlog
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
-from cli.sanitizer import sanitize_mapping
+from cli.sanitizer import scrub_object
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +26,7 @@ def _redact_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: A redacted copy of `data` with sensitive fields masked while preserving the original structure and value types where possible.
     """
-    return sanitize_mapping(data)
+    return cast(Dict[str, Any], scrub_object(data))
 
 
 @dataclass

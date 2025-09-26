@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from cli.sanitizer import sanitize_mapping, scrub_object
+from cli.sanitizer import sanitize_text, scrub_object
 from cli.telemetry import create_metrics
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
@@ -139,8 +139,6 @@ def _print(level: str, message: str, *, file = sys.stdout) -> None:
     	message (str): The text message to print; it will be sanitized before output.
     	file: A file-like object with a write() method to receive the output (defaults to sys.stdout).
     """
-    from cli.sanitizer import sanitize_text
-
     text = sanitize_text(message)
     print(f"[{level}] {text}", file=file)
 
@@ -684,16 +682,42 @@ def run_openai_probe(
         _print("INFO", f"Probe skipped; artifacts written to {report_path} and {metrics_path}")
         return 0
 
-    try:
-        client = client_factory()
-    except Exception as exc:  # pragma: no cover - misconfiguration
-        raise ProbeFailure(
-            "Unable to create OpenAI client.",
-            remediation="Confirm the openai package is installed and API key configured.",
-            details={"reason": "client_init", "message": str(exc)},
-        ) from exc
+    def _record_failure(exc: ProbeFailure) -> int:
+        failure_report = {
+            "status": "failed",
+            "generated_at": timestamp,
+            "actor": settings.actor,
+            "settings": {
+                "chat_model": settings.chat_model,
+                "embedding_model": settings.embedding_model,
+                "embedding_dimensions": settings.expected_embedding_dimensions(),
+            },
+            "error": scrub_object(
+                {
+                    "message": str(exc),
+                    "remediation": exc.remediation,
+                    "details": exc.details,
+                }
+            ),
+        }
+        write_report(failure_report, report_path)
+        metrics_path.write_text(metrics.export(), encoding="utf-8")
+        _print("ERROR", str(exc), file=sys.stderr)
+        _print("ERROR", exc.remediation, file=sys.stderr)
+        return 1
 
     try:
+        try:
+            client = client_factory()
+        except ProbeFailure:
+            raise
+        except Exception as exc:  # pragma: no cover - misconfiguration
+            raise ProbeFailure(
+                "Unable to create OpenAI client.",
+                remediation="Confirm the openai package is installed and API key configured.",
+                details={"reason": "client_init", "message": str(exc)},
+            ) from exc
+
         chat_summary = _chat_probe(
             client,
             settings=settings,
@@ -711,28 +735,7 @@ def run_openai_probe(
             metrics=metrics,
         )
     except ProbeFailure as exc:
-        failure_report = {
-            "status": "failed",
-            "generated_at": timestamp,
-            "actor": settings.actor,
-            "settings": {
-                "chat_model": settings.chat_model,
-                "embedding_model": settings.embedding_model,
-                "embedding_dimensions": settings.expected_embedding_dimensions(),
-            },
-            "error": sanitize_mapping(
-                {
-                    "message": str(exc),
-                    "remediation": exc.remediation,
-                    "details": exc.details,
-                }
-            ),
-        }
-        write_report(failure_report, report_path)
-        metrics_path.write_text(metrics.export(), encoding="utf-8")
-        _print("ERROR", str(exc), file=sys.stderr)
-        _print("ERROR", exc.remediation, file=sys.stderr)
-        return 1
+        return _record_failure(exc)
 
     report = {
         "status": "success",
@@ -744,8 +747,8 @@ def run_openai_probe(
             "embedding_dimensions": settings.expected_embedding_dimensions(),
             "chat_override": settings.is_chat_override,
         },
-        "chat": sanitize_mapping(chat_summary),
-        "embedding": sanitize_mapping(embedding_summary),
+        "chat": scrub_object(chat_summary),
+        "embedding": scrub_object(embedding_summary),
         "artifacts": {
             "report": str(report_path),
             "metrics": str(metrics_path),
