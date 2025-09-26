@@ -13,8 +13,9 @@ ASSUME_PY312="${BOOTSTRAP_ASSUME_PY312:-0}"
 PACKAGES=(
   "neo4j-graphrag[openai,qdrant]"
   "neo4j>=5,<6"
-  "qdrant-client>=1.10"
   "openai>=1,<2"
+  "prometheus-client>=0.23,<1"
+  "qdrant-client>=1.10"
   "structlog>=24,<25"
   "pytest>=8,<9"
 )
@@ -22,8 +23,9 @@ TEST_LOCK_CONTENT=$(cat <<'EOF'
 # Generated in test mode (no packages installed)
 neo4j-graphrag==0.9.0
 neo4j==5.23.0
-qdrant-client==1.10.4
 openai==1.40.3
+prometheus-client==0.23.1
+qdrant-client==1.10.4
 structlog==24.1.0
 pytest==8.3.2
 EOF
