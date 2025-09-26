@@ -21,6 +21,7 @@ __all__ = [
 ]
 
 _thread_local = threading.local()
+_ensure_lock = threading.Lock()
 
 
 def _default_sink(*, level: str, event: str, logger: str, **kwargs: Any) -> None:
