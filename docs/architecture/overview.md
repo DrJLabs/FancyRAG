@@ -33,6 +33,7 @@ graph TD
 | 2025-09-24 | 0.1     | Seeded architecture overview shard        | Codex CLI |
 | 2025-09-25 | 0.2     | Documented environment configuration workflow | James      |
 | 2025-09-25 | 0.3     | Added workspace diagnostics guidance       | James      |
+| 2025-09-25 | 0.4     | Documented OpenAI readiness probe workflow | James      |
 
 ## Environment Configuration
 - Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh` and before executing CLI commands.
@@ -63,3 +64,10 @@ graph TD
     "git": {"sha": "f4b0f87c"}
   }
   ```
+
+## OpenAI Readiness Probe
+- Run `PYTHONPATH=src python -m cli.diagnostics openai-probe` after the workspace diagnostics pass to validate OpenAI chat and embedding integrations end-to-end.
+- The probe issues a lightweight chat completion and embedding request using the configured defaults from `OpenAISettings`, writes a sanitized report to `artifacts/openai/probe.json`, and exports Prometheus metrics to `artifacts/openai/metrics.prom` with latency buckets spanning 100 ms–5 s.
+- Guardrails include exponential backoff for 429/`RateLimitError` responses with token-budget remediation messaging, reusable sanitization helpers shared with other diagnostics, and structured telemetry that records fallback usage (`gpt-4o-mini`) without leaking prompts or API keys.
+- Use `--skip-live` during CI outages to produce placeholder artifacts while keeping pipelines green; follow up by rerunning the live probe before production deploys.
+- Metrics output (`metrics.prom`) feeds dashboards tracking chat/embedding latency and token counters; verify buckets align with SLO thresholds before rollout.

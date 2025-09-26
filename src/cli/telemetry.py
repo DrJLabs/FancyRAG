@@ -3,37 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
 import structlog
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
+from cli.sanitizer import scrub_object
+
 logger = structlog.get_logger(__name__)
 
 
-_LATENCY_BUCKETS_MS = (50, 100, 250, 500, 1000, 2000, 5000, 10000)
+_LATENCY_BUCKETS_MS = (100, 250, 500, 1000, 2000, 5000)
 
 
-def _redact_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+def _redact_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
     """
-    Return a copy of `data` with sensitive authentication fields redacted.
+    Return a copy of the input mapping with sensitive values redacted.
     
     Parameters:
-        data (Dict[str, Any]): Mapping of keys to values to be sanitized.
+        data (Mapping[str, Any]): Mapping to sanitize; may contain nested mappings and values of arbitrary types.
     
     Returns:
-        Dict[str, Any]: A shallow copy of `data` where any key that equals
-        "api_key", "authorization", or "bearer" (case-insensitive) has its value
-        replaced with `"***"`.
+        Dict[str, Any]: A redacted copy of `data` with sensitive fields masked while preserving the original structure and value types where possible.
     """
-    safe: Dict[str, Any] = {}
-    for key, value in data.items():
-        key_lower = key.lower()
-        if key_lower in {"api_key", "authorization", "bearer", "token", "secret", "password"}:
-            safe[key] = "***"
-        else:
-            safe[key] = value
-    return safe
+    return cast(Dict[str, Any], scrub_object(data))
 
 
 @dataclass

@@ -1,17 +1,10 @@
 import importlib
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SRC_PATH = REPO_ROOT / "src"
-if str(SRC_PATH) not in sys.path:
-    sys.path.insert(0, str(SRC_PATH))
-
 from cli import diagnostics
+from cli.sanitizer import sanitize_text
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +67,7 @@ def test_missing_dependency_triggers_error(tmp_path, monkeypatch):
 def test_output_redacts_secret(monkeypatch):
     """Secrets are redacted from diagnostic text."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-456")
-    message = diagnostics._sanitize_text("API key sk-test-456 should not leak")
+    message = sanitize_text("API key sk-test-456 should not leak")
     assert "sk-test-456" not in message
     assert "***" in message
 
