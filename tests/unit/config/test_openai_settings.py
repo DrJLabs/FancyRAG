@@ -67,8 +67,9 @@ def test_embedding_override_validation(override_value, expect_success):
             )
 
 
-def test_actor_fallback_to_env_user(monkeypatch):
-    monkeypatch.setenv("USER", "cli-user")
+def test_actor_fallback_uses_getpass(monkeypatch):
+    monkeypatch.delenv("GRAPH_RAG_ACTOR", raising=False)
+    monkeypatch.setattr("config.settings.getpass.getuser", lambda: "cli-user")
     settings = OpenAISettings.load({}, actor=None)
     assert settings.actor == "cli-user"
 

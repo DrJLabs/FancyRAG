@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
-from _compat.structlog import structlog
+from _compat.structlog import get_logger
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
 from cli.sanitizer import scrub_object
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 _LATENCY_BUCKETS_MS = (100, 250, 500, 1000, 2000, 5000)

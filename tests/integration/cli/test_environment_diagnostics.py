@@ -1,3 +1,5 @@
+import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -86,6 +88,9 @@ def test_workspace_diagnostics_redacts_secret(repo):
 def test_workspace_diagnostics_fails_on_missing_dependency(repo):
     missing_repo = repo / "stubs" / "neo4j_graphrag.py"
     missing_repo.unlink()
+    spec = importlib.util.find_spec("neo4j_graphrag")
+    if spec and spec.origin and "site-packages" in spec.origin:
+        pytest.skip("neo4j_graphrag available from site-packages; missing dependency scenario not reproducible")
     result = _run_cli(repo, arguments=["--no-report"])
     assert result.returncode == 1
     assert "neo4j_graphrag" in result.stderr
