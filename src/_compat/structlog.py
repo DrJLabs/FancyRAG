@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 from . import structlog_shim
 
-__all__ = ["capture_logs", "ensure_structlog", "structlog", "get_logger"]
+__all__ = ["capture_logs", "ensure_structlog", "get_logger", "structlog"]
 
 
 def ensure_structlog() -> ModuleType:
