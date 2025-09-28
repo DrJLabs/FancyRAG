@@ -7,9 +7,9 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-from _compat.structlog import structlog
+from _compat.structlog import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
 FALLBACK_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4o-mini"})

@@ -3,6 +3,7 @@ from cli.telemetry import create_metrics
 
 def test_latency_histogram_uses_expected_buckets():
     metrics = create_metrics()
+    metrics.chat_latency.labels(model="validator")
     reg = metrics.registry
     # Inspect bucket boundaries via Prometheus samples (exclude +Inf)
     chat_metric = next(m for m in reg.collect() if m.name == "graphrag_openai_chat_latency_ms")

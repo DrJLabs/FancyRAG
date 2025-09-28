@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from _compat.structlog import structlog
+from _compat.structlog import get_logger
 
 from config.settings import OpenAISettings
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 def ensure_embedding_dimensions(
