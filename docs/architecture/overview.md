@@ -10,6 +10,15 @@ The Neo4j GraphRAG solution is a Python 3.12 CLI that orchestrates knowledge gra
 - Retrieval engine that joins Qdrant hits with Neo4j entities and delegates answer generation to OpenAI models.
 - Workspace bootstrap script (`scripts/bootstrap.sh`) that provisions the Python 3.12 virtual environment, installs pinned dependencies, and validates `neo4j_graphrag` imports before operators run CLI workflows. Run it from the repository root (`bash scripts/bootstrap.sh`) and activate the resulting virtualenv (`source .venv/bin/activate`) prior to completing the `.env` configuration story.
 
+## Built-In Tool Playbook
+Always consult the canonical documentation set below before running any built-in GraphRAG tooling (CLI subcommands under `src/cli/`, bootstrap scripts, or diagnostics helpers). These files are updated whenever workflows change and must be treated as the source of truth:
+
+- `docs/architecture/overview.md` (this file) — top-level workflows, environment sequencing, and operational guardrails.
+- `docs/architecture/source-tree.md` — current locations for CLI entrypoints, pipelines, and support modules.
+- `docs/architecture/coding-standards.md` — logging, retry, and testing expectations that every command must uphold.
+
+Re-read the sections relevant to the command you intend to run and confirm the workflow still matches the latest documented steps. If a command deviates from the documented behaviour, halt and update the documentation before proceeding.
+
 ## Diagram
 ```mermaid
 graph TD
