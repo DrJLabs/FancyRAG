@@ -9,7 +9,7 @@
 ## Critical Rules
 - **Secrets Handling:** Never log API keys or passwords; mask values before logging. Scripts must read credentials from `.env`/environment and allow CLI overrides without echoing secrets.
 - **Driver Lifecycle:** Use context managers for Neo4j sessions and ensure Qdrant clients are closed gracefully. Reuse a single driver/client per script run.
-- **Retry Limits:** Cap OpenAI retries (max 5) and log token usage to protect against runaway cost. Apply exponential backoff for 429/503 responses.
+- **Retry Limits:** Cap OpenAI retries (max 3, configurable via `OPENAI_MAX_ATTEMPTS`) and log token usage to protect against runaway cost. Apply exponential backoff for 429/503 responses.
 - **Idempotency:** Vector index creation, KG ingestion, and Qdrant upsert scripts must be safe to rerun; guard writes with `MERGE`/upsert semantics.
 
 ## Script Conventions

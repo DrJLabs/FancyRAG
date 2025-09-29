@@ -57,6 +57,9 @@ class BoundLogger:
     def error(self, event: str, **kwargs: Any) -> None:
         self._log("error", event, **kwargs)
 
+    def warning(self, event: str, **kwargs: Any) -> None:
+        self._log("warning", event, **kwargs)
+
 
 def set_log_sink(sink: Optional[_LogSink]) -> None:
     """Install a log sink callable for the active thread."""

@@ -66,11 +66,7 @@ class FlakyChatClient(StubOpenAIClient):
             self._failures -= 1
             headers = {"Retry-After": "1"}
             response = SimpleNamespace(headers=headers, request=SimpleNamespace(), status_code=429)
-            raise RateLimitError(
-                "slow down",
-                response=response,
-                body=None,
-            )
+            raise RateLimitError("slow down", response=response)
         return super()._chat(**kwargs)
 
 
@@ -116,7 +112,7 @@ def test_embedding_dimension_mismatch_raises():
     assert "Embedding length" in str(exc.value)
 
 
-def test_retry_after_header_controls_backoff(monkeypatch):
+def test_retry_after_header_controls_backoff():
     sleeps: list[float] = []
     stub = FlakyChatClient(failures=2)
     settings = OpenAISettings.load({}, actor="pytest")

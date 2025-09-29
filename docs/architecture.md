@@ -57,7 +57,7 @@ See `docs/architecture/tech-stack.md` for the authoritative table. Highlights:
 - Python 3.12 with `neo4j-graphrag[experimental,openai,qdrant]`.
 - Neo4j 5.26 (Docker) with APOC Core.
 - Qdrant latest (Docker) accessed via `qdrant-client` ≥ 1.8.
-- OpenAI GPT-4o models (`gpt-4o`, fallback `gpt-4o-mini`) and `text-embedding-3-small`.
+- OpenAI GPT-4.1 models (`gpt-4.1-mini`, fallback `gpt-4o-mini`) and `text-embedding-3-small`.
 - Structured logging through `structlog` or JSON `logging` handlers.
 
 ## Environments

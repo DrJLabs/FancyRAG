@@ -11,7 +11,7 @@ waiver:
 quality_score: 100
 evidence:
   tests_reviewed: 25
-  risks_identified: 0
+  risks_identified: 5
   trace:
     ac_covered: [1, 2, 3, 4]
     ac_gaps: []

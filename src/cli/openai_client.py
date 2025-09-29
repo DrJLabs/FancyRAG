@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - handled in tests without openai instal
     class OpenAI:  # type: ignore[no-redef]
         """Fallback OpenAI client raising ImportError on use."""
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *_: Any, **__: Any) -> None:
             raise ImportError(
                 "The openai package is required for OpenAI operations; install it with the project extras."
             )
@@ -108,7 +108,12 @@ class SharedOpenAIClient:
         self._metrics = metrics or get_metrics()
         self._sleep_fn = sleep_fn
         self._clock = clock
-        self._fallback_model = next(iter(FALLBACK_CHAT_MODELS), DEFAULT_CHAT_MODEL)
+        # Select a deterministic fallback model to ensure stable telemetry and behavior
+        self._fallback_model = (
+            sorted(FALLBACK_CHAT_MODELS)[0]
+            if FALLBACK_CHAT_MODELS
+            else DEFAULT_CHAT_MODEL
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -124,19 +129,41 @@ class SharedOpenAIClient:
         """Execute a chat completion with retry and fallback guardrails."""
 
         model = self._settings.chat_model
-        fallback_used = model != DEFAULT_CHAT_MODEL
+        fallback_used = model in FALLBACK_CHAT_MODELS
 
-        try:
-            response, latency_ms = self._execute_with_backoff(
+        def _run(model_name: str) -> tuple[Any, float]:
+            return self._execute_with_backoff(
                 lambda: self._client.chat.completions.create(
-                    model=model,
+                    model=model_name,
                     messages=list(messages),
                     temperature=temperature,
                     max_tokens=max_tokens,
                     **extra_params,
                 ),
-                description=f"chat completion ({model})",
+                description=f"chat completion ({model_name})",
             )
+
+        try:
+            response, latency_ms = _run(model)
+        except OpenAIClientError as exc:
+            if (
+                self._settings.enable_fallback
+                and model == DEFAULT_CHAT_MODEL
+                and self._fallback_model != model
+                and isinstance(exc.details, Mapping)
+                and exc.details.get("reason") == "rate_limit"
+            ):
+                logger.warning(
+                    "openai.retry.fallback",
+                    actor=self._settings.actor,
+                    from_model=model,
+                    to_model=self._fallback_model,
+                )
+                model = self._fallback_model
+                fallback_used = True
+                response, latency_ms = _run(model)
+            else:
+                raise
         except (APIConnectionError, APIError) as exc:
             raise self._wrap_error(
                 exc,
@@ -187,12 +214,6 @@ class SharedOpenAIClient:
         **extra_params: Any,
     ) -> EmbeddingResult:
         """Execute an embedding request enforcing dimension guardrails."""
-
-        expected_dimensions = (
-            override_dimensions
-            if override_dimensions is not None
-            else self._settings.expected_embedding_dimensions()
-        )
 
         try:
             response, latency_ms = self._execute_with_backoff(
@@ -279,7 +300,12 @@ class SharedOpenAIClient:
                 result = operation()
                 latency_ms = (self._clock() - start) * 1000.0
                 return result, latency_ms
-            except Exception as exc:  # noqa: BLE001
+            except (
+                RateLimitError,
+                APIStatusError,
+                APIConnectionError,
+                APIError,
+            ) as exc:
                 if self._is_retryable(exc):
                     errors.append(repr(exc))
                     if attempts >= max_attempts:
@@ -396,9 +422,9 @@ def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
 
 
 __all__ = [
-    "SharedOpenAIClient",
     "ChatResult",
     "EmbeddingResult",
     "OpenAIClientError",
     "RateLimitError",
+    "SharedOpenAIClient",
 ]

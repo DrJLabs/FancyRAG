@@ -6,7 +6,7 @@ Stand up a fully local GraphRAG evaluation stack that operators can provision en
 ## Epic Description
 **Existing System Context:**
 - Current relevant functionality: Environment bootstrap scripts target external Neo4j and Qdrant clusters with manual configuration steps; no project-owned services exist.
-- Technology stack: Python 3.12, `neo4j-graphrag[experimental,openai,qdrant]`, Docker Compose, Neo4j ≥ 5.26 with APOC Core, Qdrant ≥ 1.8, OpenAI GPT-4o/`text-embedding-3-small`.
+- Technology stack: Python 3.12, `neo4j-graphrag[experimental,openai,qdrant]`, Docker Compose, Neo4j ≥ 5.26 with APOC Core, Qdrant ≥ 1.8, OpenAI GPT-4.1-mini (fallback `gpt-4o-mini`) and `text-embedding-3-small`.
 - Integration points: Scripts must align with the official Neo4j GraphRAG package APIs (`SimpleKGPipeline`, `create_vector_index`, `QdrantNeo4jRetriever`) and reuse the `.env` surface established by the workspace epic.
 
 **Enhancement Details:**

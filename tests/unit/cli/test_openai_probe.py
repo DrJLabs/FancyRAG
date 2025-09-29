@@ -156,11 +156,7 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
                     status_code=429,
                     headers={"Retry-After": "1"},
                 )
-                raise openai_client.RateLimitError(
-                    "slow down",
-                    response=response,
-                    body=None,
-                )
+                raise openai_client.RateLimitError("slow down", response=response)
             return super()._chat(**kwargs)
 
     sleeps: list[float] = []
@@ -201,11 +197,7 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
                 status_code=429,
                 headers={},
             )
-            raise openai_client.RateLimitError(
-                "token budget exceeded",
-                response=response,
-                body=None,
-            )
+            raise openai_client.RateLimitError("token budget exceeded", response=response)
 
     root = tmp_path / "repo"
     root.mkdir()

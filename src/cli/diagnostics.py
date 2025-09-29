@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 from cli.openai_client import (
     ChatResult,
@@ -306,7 +306,9 @@ def run_openai_probe(
         max_attempts (int): Maximum number of retry attempts for probe calls subject to backoff and rate-limit handling.
         base_delay (float): Base delay in seconds for exponential backoff between retry attempts.
         sleep_fn (Callable[[float], None]): Function used to sleep between backoff attempts; defaults to time.sleep (primarily for testing).
-        client_factory (Callable[[], OpenAI]): Factory that returns an OpenAI client instance; used to construct the client and injectable for tests.
+        client_factory (Callable[[], Union[SharedOpenAIClient, OpenAI]]): Factory that returns a preconfigured
+            :class:`SharedOpenAIClient` or raw ``OpenAI`` SDK client; primarily used for dependency injection in
+            tests. When omitted, a new :class:`SharedOpenAIClient` is created from environment settings.
     
     Returns:
         int: Exit code: `0` on success or when probe was skipped; `1` if the probe failed and a failure report was written.
