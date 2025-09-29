@@ -1,0 +1,43 @@
+name: local-stack-smoke
+
+on:
+  push:
+    paths:
+      - docker-compose.neo4j-qdrant.yml
+      - scripts/check_local_stack.sh
+      - tests/integration/local_stack/**
+      - docs/architecture/overview.md
+      - .github/workflows/local-stack-smoke.yml
+  pull_request:
+    paths:
+      - docker-compose.neo4j-qdrant.yml
+      - scripts/check_local_stack.sh
+      - tests/integration/local_stack/**
+      - docs/architecture/overview.md
+      - .github/workflows/local-stack-smoke.yml
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Validate compose configuration
+        run: scripts/check_local_stack.sh --config
+
+      - name: Run minimal path smoke test (skips until Story 2.5 scripts land)
+        env:
+          PYTHONPATH: src
+        run: pytest tests/integration/local_stack/test_minimal_path_smoke.py -m integration

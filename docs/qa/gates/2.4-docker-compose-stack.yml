@@ -1,0 +1,65 @@
+schema: 1
+story: "2.4"
+story_title: "Docker Compose Stack for Neo4j + Qdrant"
+gate: "PASS"
+status_reason: "Compose stack, documentation, automation, and smoke workflow delivered; remaining enhancements tracked via production-parity checklist and Story 2.5 follow-up."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-09-29T19:12:00Z"
+waiver: { active: false }
+top_issues:
+  - "Monitor production-parity checklist items (digest pinning, APOC overrides, CI secrets)."
+  - "Upgrade smoke assertions once Story 2.5 implements full ingestion pipeline."
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 3
+    low: 2
+  highest: TECH-241
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Review compose image tags quarterly for parity with managed stack."
+      - "Add secret-scrub assertions post-Story 2.5 ingestion implementation."
+test_design:
+  scenarios_total: 11
+  by_level:
+    unit: 5
+    integration: 5
+    e2e: 1
+  by_priority:
+    p0: 8
+    p1: 3
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+trace:
+  totals:
+    requirements: 4
+    full: 4
+    partial: 0
+    none: 0
+  planning_ref: docs/qa/assessments/2.4-test-design-20250929.md
+  uncovered: []
+  notes: docs/qa/assessments/2.4-trace-20250929.md
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "Secrets sourced from .env; helper script avoids echoing credentials; smoke outputs redacted placeholders."
+  performance:
+    status: PASS
+    notes: "Health checks gate container readiness; CI limits compose usage to lint + smoke run."
+  reliability:
+    status: PASS
+    notes: "Unit + integration tests cover health checks, restart policy, and helper error handling; smoke workflow exercises full command sequence."
+  maintainability:
+    status: PASS
+    notes: "Documentation + automation reduce operator toil; production-parity checklist tracks enhancements."
+references:
+  risk_profile: docs/qa/assessments/2.4-risk-20250929.md
+  test_design: docs/qa/assessments/2.4-test-design-20250929.md
+  trace: docs/qa/assessments/2.4-trace-20250929.md
+  nfr_assessment: docs/qa/assessments/2.4-nfr-20250929.md
+  review: docs/qa/assessments/2.4-review-20250929.md
+  parity_checklist: docs/qa/assessments/2.4-production-parity-checklist.md
