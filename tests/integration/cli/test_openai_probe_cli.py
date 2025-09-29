@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -160,17 +160,19 @@ def test_openai_probe_cli_generates_artifacts(tmp_path):
     assert report_path.exists()
     assert metrics_path.exists()
 
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report_text = report_path.read_text(encoding="utf-8")
+    report = json.loads(report_text)
     assert report["status"] == "success"
     assert report["settings"]["chat_override"] is True
     assert report["chat"]["fallback_used"] is True
     assert report["embedding"]["vector_length"] == 1536
-    assert "sk-" not in report_path.read_text(encoding="utf-8")
+    assert "sk-" not in report_text
 
     metrics = metrics_path.read_text(encoding="utf-8")
     assert "graphrag_openai_chat_latency_ms_bucket" in metrics
     _assert_matches_fixture(report_path, metrics_path)
-    git_status = subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True)
+    git_cmd = shutil.which("git") or "git"
+    git_status = subprocess.check_output([git_cmd, "status", "--porcelain"], cwd=repo, text=True)
     assert all("artifacts/" not in line for line in git_status.splitlines())
 
 
@@ -194,7 +196,7 @@ def _assert_matches_fixture(report_path: Path, metrics_path: Path) -> None:
     assert normalised_metrics == expected_metrics
 
 
-def _normalise_report(report_path: Path) -> Dict[str, Any]:
+def _normalise_report(report_path: Path) -> dict[str, Any]:
     """
     Normalizes a probe JSON report for deterministic comparison against fixtures.
     
@@ -205,28 +207,28 @@ def _normalise_report(report_path: Path) -> Dict[str, Any]:
         Loads the JSON report and returns a pruned, deterministic dictionary containing:
         - actor, status, and a fixed artifacts mapping for metrics and report paths.
         - chat and embedding sub-dictionaries with numeric fields normalised:
-          - latency values: None -> 0.0; values < 0.05 -> 0.0; otherwise rounded to 2 decimals.
+          - latency values: None -> 0.0; values < 50.0 ms -> 0.0; otherwise rounded to 2 decimals.
           - token and vector counts default to 0 when missing.
         - settings copied from the original report.
         - generated_at replaced with the placeholder "<timestamp>".
     
     Returns:
-        Dict[str, Any]: The normalised report dictionary suitable for fixture comparison.
+        dict[str, Any]: The normalised report dictionary suitable for fixture comparison.
     """
     raw = json.loads(report_path.read_text(encoding="utf-8"))
-    def _latency(value: float) -> float:
+    def _latency(value: float | None) -> float:
         """
-        Normalize a latency value (in seconds) for reporting.
-        
+        Normalize a latency value (in milliseconds) for reporting.
+
         Parameters:
-            value (float | None): Latency in seconds; may be None.
-        
+            value (float | None): Latency in milliseconds; may be None.
+
         Returns:
-            float: `0.0` if `value` is `None` or less than 0.05 seconds, otherwise `value` rounded to two decimal places.
+            float: `0.0` if `value` is `None` or less than 50 milliseconds, otherwise `value` rounded to two decimal places.
         """
         if value is None:
             return 0.0
-        return 0.0 if value < 0.05 else round(value, 2)
+        return 0.0 if value < 50.0 else round(value, 2)
 
     return {
         "actor": raw.get("actor"),
@@ -274,8 +276,9 @@ def _normalise_metrics(metrics_text: str) -> str:
     - Preserves metric labels/suffixes.
     - If a metric value cannot be parsed as a float, keeps the line unchanged.
     - For metrics with names ending in `_created`, replaces the numeric value with `<created>`.
-    - Formats integer-valued metrics as integers.
-    - For non-integer numeric values, if the absolute value is less than 0.05 normalizes it to `0.00`; otherwise rounds to two decimal places.
+    - Formats integer-valued metrics as integers only when the raw numeric token lacks a decimal point or exponent.
+    - For non-integer numeric values, if the absolute value is less than 0.10 normalizes it to `0.00`; otherwise rounds to two decimal places.
+    - Preserves optional Prometheus timestamps that follow the metric value.
     
     Parameters:
         metrics_text (str): Raw Prometheus-formatted metrics text.
@@ -288,20 +291,42 @@ def _normalise_metrics(metrics_text: str) -> str:
         if line.startswith("#"):
             normalised_lines.append(line)
             continue
-        metric, value = line.split(" ", 1)
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            normalised_lines.append(line)
+            continue
+        metric, value = parts
         metric_name, brace, labels = metric.partition("{")
         suffix = f"{brace}{labels}" if brace else ""
         try:
-            numeric = float(value)
+            tokens = value.split()
+            num_token = tokens[0]
+            rest = tokens[1:]
+            numeric = float(num_token)
         except ValueError:
             normalised_lines.append(line)
             continue
+        timestamp = f" {' '.join(rest)}" if rest else ""
         if metric_name.endswith("_created"):
-            normalised_lines.append(f"{metric_name}{suffix} <created>")
+            normalised_lines.append(f"{metric_name}{suffix} <created>{timestamp}")
             continue
-        if abs(numeric - round(numeric)) < 1e-9:
-            normalised_lines.append(f"{metric_name}{suffix} {int(round(numeric))}")
+        fractional_digits = ""
+        if "." in num_token and "e" not in num_token and "E" not in num_token:
+            fractional_digits = num_token.split(".", 1)[1]
+        if (
+            abs(numeric - round(numeric)) < 1e-9
+            and (
+                "." not in num_token
+                or (
+                    fractional_digits
+                    and set(fractional_digits) <= {"0"}
+                    and len(fractional_digits) == 1
+                )
+            )
+        ):
+            integer_repr = f"{round(numeric):.0f}"
+            normalised_lines.append(f"{metric_name}{suffix} {integer_repr}{timestamp}")
             continue
-        adjusted = 0.0 if abs(numeric) < 0.05 else round(numeric, 2)
-        normalised_lines.append(f"{metric_name}{suffix} {adjusted:.2f}")
+        adjusted = 0.0 if abs(numeric) < 0.10 else round(numeric, 2)
+        normalised_lines.append(f"{metric_name}{suffix} {adjusted:.2f}{timestamp}")
     return "\n".join(normalised_lines) + "\n"

@@ -17,4 +17,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Audit OpenAI model allowlist
+        env:
+          PYTHONPATH: src
         run: python scripts/audit_openai_allowlist.py

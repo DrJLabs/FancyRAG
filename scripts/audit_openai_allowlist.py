@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Iterable
 
@@ -23,18 +24,37 @@ def _fetch_models(api_key: str) -> set[str]:
         api_key (str): OpenAI API key used for Authorization header.
     
     Returns:
-        set[str]: A set of model ID strings extracted from the catalog's `data` array. Non-dictionary entries are ignored; missing `id` fields contribute an empty string.
+        set[str]: A set of model ID strings extracted from the catalog's `data` array. The function
+        follows pagination using the `after` cursor, ignores non-dictionary entries, and discards
+        any catalog entries that lack an `id` value.
     """
-    request = urllib.request.Request(
-        CATALOG_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": "graphrag-allowlist-audit",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.load(response)
-    return {item.get("id", "") for item in payload.get("data", []) if isinstance(item, dict)}
+    models: set[str] = set()
+    after: str | None = None
+    while True:
+        query: dict[str, str] = {"limit": "100"}
+        if after:
+            query["after"] = after
+        request = urllib.request.Request(
+            f"{CATALOG_URL}?{urllib.parse.urlencode(query)}",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "graphrag-allowlist-audit",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+
+        data = [item for item in payload.get("data", []) if isinstance(item, dict)]
+        models.update(item["id"] for item in data if item.get("id"))
+
+        if not payload.get("has_more") or not data:
+            break
+
+        after = data[-1].get("id")
+        if not after:
+            break
+
+    return models
 
 
 def _format_list(models: Iterable[str]) -> str:
@@ -62,7 +82,7 @@ def main() -> int:
             1: OPENAI_API_KEY environment variable is missing.
             2: Failed to contact or fetch the model catalog (HTTP/URL error).
             3: One or more allowlisted models are missing from the catalog.
-            4: New GPT-4.1 variants were detected in the catalog that are not in the allowlist.
+            4: New variants of allowlisted model families were detected in the catalog.
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -79,8 +99,16 @@ def main() -> int:
         return 2
 
     missing = sorted(model for model in ALLOWED_CHAT_MODELS if model not in available_models)
+    families = {
+        family
+        for model in ALLOWED_CHAT_MODELS
+        if (family := model.rsplit("-", 1)[0]) != model
+    }
     new_variants = sorted(
-        model for model in available_models if model.startswith("gpt-4.1") and model not in ALLOWED_CHAT_MODELS
+        model
+        for model in available_models
+        if model not in ALLOWED_CHAT_MODELS
+        and any(model == family or model.startswith(f"{family}-") for family in families)
     )
 
     if missing:
@@ -92,7 +120,7 @@ def main() -> int:
 
     if new_variants:
         print(
-            "Allowlist validation succeeded but new GPT-4.1 variants were detected: " + _format_list(new_variants),
+            "Allowlist validation succeeded but new model variants were detected: " + _format_list(new_variants),
             file=sys.stderr,
         )
         return 4

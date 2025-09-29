@@ -27,7 +27,7 @@ def test_scrub_object_handles_mixed_structures(monkeypatch):
     monkeypatch.setenv("QDRANT_API_KEY", "qdrant-secret")
     data = {
         "message": "Token qdrant-secret should hide",
-        "tuple": ("sk-live", {"password": "hunter2"}),  # noqa: S105
+        "tuple": ("sk-live", {"password": "hunter2"}),
     }
     scrubbed = sanitizer.scrub_object(data)
     assert "qdrant-secret" not in scrubbed["message"]
@@ -163,7 +163,7 @@ def test_scrub_object_deep_nesting():
         "level1": {
             "level2": {
                 "level3": {
-                    "password": "deep-secret",  # noqa: S105
+                    "password": "deep-secret",
                     "level4": [
                         {"api_key": "nested-key"},
                         {"authorization": "Bearer deep-token"}
@@ -185,7 +185,7 @@ def test_scrub_object_preserves_non_sensitive_keys():
         "username": "john_doe",
         "email": "john@example.com",
         "preferences": {"theme": "dark", "lang": "en"},
-        "api_key": "secret123"  # This should be scrubbed
+        "api_key": "secret123"
     }
 
     result = sanitizer.scrub_object(data)
@@ -201,8 +201,8 @@ def test_scrub_object_handles_list_with_mixed_types():
     data = [
         "plain string",
         42,
-        {"password": "secret"},  # noqa: S105
-        ["nested", {"token": "hidden"}],  # noqa: S105
+        {"password": "secret"},
+        ["nested", {"token": "hidden"}],
         None,
         True
     ]
@@ -218,10 +218,11 @@ def test_scrub_object_handles_list_with_mixed_types():
 
 def test_scrub_object_handles_set_type():
     """Test scrubbing set data structures."""
-    data = {"items": {"password", "username", "api_key"}}
+    data = {"items": {"sk-live", "username", "api_key"}}
     result = sanitizer.scrub_object(data)
-    # Sets should be handled gracefully
+    # Sets should be handled gracefully and secrets redacted
     assert isinstance(result["items"], set)
+    assert "***" in result["items"]
 
 
 def test_scrub_object_handles_circular_references():
@@ -232,14 +233,15 @@ def test_scrub_object_handles_circular_references():
     # This should not cause infinite recursion
     result = sanitizer.scrub_object(data)
     assert "name" in result
+    assert result["self"] == "<circular>"
 
 
 def test_scrub_object_multiple_sensitive_keys_same_dict():
     """Test scrubbing dictionary with multiple sensitive keys."""
     data = {
         "api_key": "key123",
-        "password": "pass456",  # noqa: S105
-        "secret": "secret789",  # noqa: S105
+        "password": "pass456",
+        "secret": "secret789",
         "authorization": "Bearer token",
         "x-api-key": "header-key",
         "normal_field": "keep this"
@@ -260,8 +262,8 @@ def test_scrub_object_case_insensitive_key_matching():
         "API_KEY": "upper",
         "api_key": "lower",
         "Api_Key": "mixed",
-        "PASSWORD": "upper_pass",  # noqa: S105
-        "Password": "mixed_pass"   # noqa: S105
+        "PASSWORD": "upper_pass",
+        "Password": "mixed_pass"
     }
 
     result = sanitizer.scrub_object(data)
@@ -334,7 +336,7 @@ def test_scrub_object_preserves_structure_types():
         "tuple": (4, 5, 6),
         "dict": {"nested": True},
         "string": "text",
-        "password": "secret"  # noqa: S105
+        "password": "secret"
     }
 
     result = sanitizer.scrub_object(original)
@@ -366,7 +368,7 @@ def test_scrub_object_with_custom_objects():
     custom_obj = CustomObject("test")
     data = {
         "object": custom_obj,
-        "password": "secret"  # noqa: S105
+        "password": "secret"
     }
 
     result = sanitizer.scrub_object(data)

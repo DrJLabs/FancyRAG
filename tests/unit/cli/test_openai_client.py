@@ -77,7 +77,7 @@ class FlakyChatClient(StubOpenAIClient):
             self._failures -= 1
             headers = {"Retry-After": "1", "retry-after": "1"}
             response = SimpleNamespace(headers=headers, request=SimpleNamespace(), status_code=429)
-            raise RateLimitError("slow down", response=response, body=None)
+            raise RateLimitError("slow down", response=response)
         return super()._chat(**kwargs)
 
 
@@ -121,7 +121,7 @@ class SequencedRateLimitClient(StubOpenAIClient):
                 request=SimpleNamespace(),
                 status_code=429,
             )
-            raise RateLimitError("slow down", response=response, body=None)
+            raise RateLimitError("slow down", response=response)
         return super()._chat(**kwargs)
 
 

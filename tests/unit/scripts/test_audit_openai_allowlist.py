@@ -11,7 +11,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, patch
 import pytest
 
 # Ensure repository root is on sys.path so 'scripts' is importable
@@ -40,7 +40,7 @@ class TestFetchModels:
         }
 
         # Make urlopen context manager-compatible
-        mock_resp = Mock()
+        mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
         mock_urlopen.return_value = mock_resp
@@ -51,7 +51,7 @@ class TestFetchModels:
         assert models == {"gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"}
 
         mock_request.assert_called_once_with(
-            CATALOG_URL,
+            f"{CATALOG_URL}?limit=100",
             headers={
                 "Authorization": "Bearer test-api-key",
                 "User-Agent": "graphrag-allowlist-audit",
@@ -64,7 +64,7 @@ class TestFetchModels:
     def test_fetch_models_empty(self, _mock_request, mock_urlopen):
         mock_payload = {"data": []}
 
-        mock_resp = Mock()
+        mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
         mock_urlopen.return_value = mock_resp
@@ -79,14 +79,14 @@ class TestFetchModels:
         mock_payload = {
             "data": [
                 {"id": "gpt-4"},
-                {"object": "model"},  # missing id -> ""
+                {"object": "model"},  # missing id -> skipped
                 "not-a-dict",          # ignored
-                {"id": ""},            # empty id kept as ""
+                {"id": ""},            # empty id skipped
                 None,                  # ignored
             ]
         }
 
-        mock_resp = Mock()
+        mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
         mock_urlopen.return_value = mock_resp
@@ -94,15 +94,45 @@ class TestFetchModels:
         with patch('json.load', return_value=mock_payload):
             models = _fetch_models("key")
 
-        # Function includes empty-string IDs when 'id' is missing/empty
-        assert models == {"gpt-4", ""}
+        assert models == {"gpt-4"}
+
+    @patch('urllib.request.urlopen')
+    @patch('urllib.request.Request')
+    def test_fetch_models_paginates(self, mock_request, mock_urlopen):
+        first_page = {
+            "data": [
+                {"id": "gpt-4.1-mini"},
+            ],
+            "has_more": True,
+        }
+        second_page = {
+            "data": [
+                {"id": "gpt-4o-mini"},
+            ],
+            "has_more": False,
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
+        mock_urlopen.return_value = mock_resp
+
+        with patch('json.load', side_effect=[first_page, second_page]):
+            models = _fetch_models("key")
+
+        assert models == {"gpt-4.1-mini", "gpt-4o-mini"}
+        assert mock_request.call_count == 2
+        first_call_url = mock_request.call_args_list[0].args[0]
+        second_call_url = mock_request.call_args_list[1].args[0]
+        assert first_call_url == f"{CATALOG_URL}?limit=100"
+        assert "after=" in second_call_url
 
     @patch('urllib.request.urlopen')
     @patch('urllib.request.Request')
     def test_fetch_models_missing_data_key(self, _mock_request, mock_urlopen):
         mock_payload = {"error": "oops"}
 
-        mock_resp = Mock()
+        mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
         mock_urlopen.return_value = mock_resp
@@ -156,8 +186,8 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_success_all_models_available(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4', 'gpt-3.5-turbo', 'other'}
-        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4', 'gpt-3.5-turbo'})):
+        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'other'}
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
             with patch('sys.stdout') as out:
                 rc = main()
         assert rc == 0
@@ -166,9 +196,9 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_missing_models(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4', 'gpt-3.5-turbo'}
+        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini'}
         with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS',
-                   new=frozenset({'gpt-4', 'gpt-3.5-turbo', 'missing-model'})):
+                   new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini', 'missing-model'})):
             with patch('sys.stderr') as err:
                 rc = main()
         assert rc == 3
@@ -176,9 +206,9 @@ class TestMain:
 
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
-    def test_main_new_gpt41_variants(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4', 'gpt-3.5-turbo', 'gpt-4.1-preview', 'gpt-4.1-turbo'}
-        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4', 'gpt-3.5-turbo'})):
+    def test_main_new_variants_detected(self, mock_fetch):
+        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-turbo', 'gpt-4o-latest'}
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
             with patch('sys.stderr') as err:
                 rc = main()
         assert rc == 4
@@ -186,9 +216,9 @@ class TestMain:
 
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
-    def test_main_no_new_gpt41_variants(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4', 'gpt-3.5-turbo', 'gpt-4.0-preview', 'gpt-5-turbo'}
-        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4', 'gpt-3.5-turbo'})):
+    def test_main_no_new_variants(self, mock_fetch):
+        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4-mini'}
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
             with patch('sys.stdout') as out:
                 rc = main()
         assert rc == 0
@@ -197,7 +227,7 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_missing_and_new_variants(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4', 'gpt-4.1-preview'}
+        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-preview'}
         with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'missing-model'})):
             with patch('sys.stderr') as err:
                 rc = main()
@@ -244,7 +274,7 @@ class TestIntegrationScenarios:
             ]
         }
 
-        mock_resp = Mock()
+        mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
         mock_urlopen.return_value = mock_resp
@@ -267,7 +297,7 @@ class TestIntegrationScenarios:
             ]
         }
 
-        mock_resp = Mock()
+        mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
         mock_resp.__exit__.return_value = None
         mock_urlopen.return_value = mock_resp
