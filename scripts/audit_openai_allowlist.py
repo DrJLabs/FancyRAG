@@ -17,17 +17,25 @@ from config.settings import ALLOWED_CHAT_MODELS
 CATALOG_URL = "https://api.openai.com/v1/models"
 
 _DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})(?:-[a-z0-9]+)?$", re.IGNORECASE)
+_VARIANT_SUFFIX_PATTERN = re.compile(r"(?i)^(mini(?:-[a-z0-9]+)?|turbo|flash|lite|light|pro)$")
 
 
 def _family_of(model: str) -> str:
     """Collapse a model identifier to its allowlist family name."""
 
     base = _DATE_SUFFIX.sub("", model)
-    if "-" not in base:
-        return base
+    segments = base.split("-")
 
-    head, _tail = base.rsplit("-", 1)
-    return head
+    while segments and segments[-1].lower() in {"preview", "latest"}:
+        segments.pop()
+
+    if len(segments) <= 2:
+        return "-".join(segments)
+
+    if segments and _VARIANT_SUFFIX_PATTERN.match(segments[-1]):
+        segments.pop()
+
+    return "-".join(segments)
 
 
 def _fetch_models(api_key: str) -> set[str]:
@@ -52,7 +60,7 @@ def _fetch_models(api_key: str) -> set[str]:
             f"{CATALOG_URL}?{urllib.parse.urlencode(query)}",
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "User-Agent": "graphrag-allowlist-audit",
+                "User-Agent": "fancyrag-allowlist-audit",
             },
         )
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -111,6 +119,9 @@ def main() -> int:
     except urllib.error.URLError as exc:  # pragma: no cover - exercised in CI
         print(f"Failed to reach OpenAI API: {exc.reason}", file=sys.stderr)
         return 2
+    except json.JSONDecodeError as exc:
+        print(f"Malformed JSON from OpenAI API: {exc}", file=sys.stderr)
+        return 2
 
     missing = sorted(model for model in ALLOWED_CHAT_MODELS if model not in available_models)
     families = {_family_of(model) for model in ALLOWED_CHAT_MODELS}
@@ -118,7 +129,12 @@ def main() -> int:
         model
         for model in available_models
         if model not in ALLOWED_CHAT_MODELS
-        and any(model == family or model.startswith(f"{family}-") for family in families)
+        and any(
+            model == family
+            or model.startswith(f"{family}-")
+            or model.startswith(f"{family}.")
+            for family in families
+        )
     )
 
     if missing:

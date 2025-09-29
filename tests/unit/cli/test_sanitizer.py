@@ -1,3 +1,4 @@
+# ruff: noqa: S105
 from cli import sanitizer
 
 
@@ -75,6 +76,13 @@ def test_sanitize_text_handles_non_string_input():
     assert sanitizer.sanitize_text(123) == 123
     assert sanitizer.sanitize_text(True) is True
     assert sanitizer.sanitize_text([1, 2, 3]) == [1, 2, 3]
+
+
+def test_sanitize_text_handles_bytes(monkeypatch):
+    """Bytes inputs are decoded and sanitized."""
+    monkeypatch.setenv("API_KEY", "key123")
+    result = sanitizer.sanitize_text(b"Bearer key123")
+    assert result == "Bearer ***"
 
 
 def test_sanitize_text_case_sensitive_matching(monkeypatch):
@@ -220,9 +228,10 @@ def test_scrub_object_handles_set_type():
     """Test scrubbing set data structures."""
     data = {"items": {"sk-live", "username", "api_key"}}
     result = sanitizer.scrub_object(data)
-    # Sets should be handled gracefully and secrets redacted
-    assert isinstance(result["items"], set)
-    assert "***" in result["items"]
+    # Sets should be returned as sorted lists for determinism
+    assert isinstance(result["items"], list)
+    assert result["items"][0] == "***"
+    assert "username" in result["items"]
 
 
 def test_scrub_object_handles_circular_references():
@@ -254,6 +263,20 @@ def test_scrub_object_multiple_sensitive_keys_same_dict():
     assert result["authorization"] == "***"
     assert result["x-api-key"] == "***"
     assert result["normal_field"] == "keep this"
+
+
+def test_scrub_object_detects_camel_case_keys():
+    """Sensitive camelCase keys are detected and redacted."""
+    data = {
+        "apiKey": "secret",
+        "clientSecret": "top-secret",
+        "userPassword": "pw12345",
+    }
+
+    result = sanitizer.scrub_object(data)
+    assert result["apiKey"] == "***"
+    assert result["clientSecret"] == "***"
+    assert result["userPassword"] == "***"
 
 
 def test_scrub_object_case_insensitive_key_matching():
@@ -306,6 +329,13 @@ def test_sanitize_text_with_special_characters(monkeypatch):
     text = "Key is abc@#$%123 in the system"
     result = sanitizer.sanitize_text(text)
     assert "abc@#$%123" not in result
+    assert "***" in result
+
+
+def test_sanitize_text_redacts_basic_auth():
+    """Basic Authorization headers should be redacted."""
+    text = "Authorization: Basic dXNlcjpwYXNz"
+    result = sanitizer.sanitize_text(text)
     assert "***" in result
 
 

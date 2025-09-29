@@ -1,4 +1,3 @@
-#\!/usr/bin/env python3
 """
 Unit tests for the OpenAI allowlist audit script.
 
@@ -55,7 +54,7 @@ class TestFetchModels:
             f"{CATALOG_URL}?limit=100",
             headers={
                 "Authorization": "Bearer test-api-key",
-                "User-Agent": "graphrag-allowlist-audit",
+                "User-Agent": "fancyrag-allowlist-audit",
             },
         )
         mock_urlopen.assert_called_once_with(mock_request.return_value, timeout=30)
@@ -162,7 +161,7 @@ class TestFamilyOf:
             ("gpt-4.1-mini", "gpt-4.1"),
             ("gpt-4o-mini-2024-07-18", "gpt-4o"),
             ("gpt-4o-mini-2024-07-18-preview", "gpt-4o"),
-            ("gpt-4o", "gpt"),
+            ("gpt-4o", "gpt-4o"),
             ("gpt-4o-realtime-preview", "gpt-4o-realtime"),
             ("o1-preview", "o1"),
         ],
@@ -286,6 +285,15 @@ class TestMain:
         assert rc == 2
         err.write.assert_called()
 
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
+    @patch('scripts.audit_openai_allowlist._fetch_models')
+    def test_main_json_decode_error(self, mock_fetch):
+        mock_fetch.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        with patch('sys.stderr') as err:
+            rc = main()
+        assert rc == 2
+        err.write.assert_called()
+
     @patch.dict(os.environ, {'OPENAI_API_KEY': ''})
     def test_main_empty_api_key(self):
         with patch('sys.stderr') as err:
@@ -372,7 +380,3 @@ class TestEdgeCases:
                 rc = main()
         assert rc == 4
         err.write.assert_called()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    pytest.main([__file__])
