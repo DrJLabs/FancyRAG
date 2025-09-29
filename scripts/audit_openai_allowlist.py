@@ -12,6 +12,12 @@ import urllib.parse
 import urllib.request
 from typing import Iterable
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+_SRC_PATH = os.path.join(_PROJECT_ROOT, "src")
+if _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
+
 from config.settings import ALLOWED_CHAT_MODELS
 
 CATALOG_URL = "https://api.openai.com/v1/models"
@@ -29,13 +35,18 @@ def _family_of(model: str) -> str:
     while segments and segments[-1].lower() in {"preview", "latest"}:
         segments.pop()
 
-    if len(segments) <= 2:
-        return "-".join(segments)
+    base = "-".join(segments)
+    if not base or "-" not in base:
+        return base
 
-    if segments and _VARIANT_SUFFIX_PATTERN.match(segments[-1]):
-        segments.pop()
+    if base in {"gpt-4o"}:
+        return base
 
-    return "-".join(segments)
+    head, tail = base.rsplit("-", 1)
+    if _VARIANT_SUFFIX_PATTERN.match(tail):
+        return head
+
+    return base
 
 
 def _fetch_models(api_key: str) -> set[str]:

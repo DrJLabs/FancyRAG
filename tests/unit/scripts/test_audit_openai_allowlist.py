@@ -13,10 +13,12 @@ import urllib.request
 from unittest.mock import MagicMock, patch
 import pytest
 
-# Ensure repository root is on sys.path so 'scripts' is importable
+# Ensure repository root and src are importable regardless of CWD
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+SRC_ROOT = os.path.join(REPO_ROOT, 'src')
+for path in (REPO_ROOT, SRC_ROOT):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from scripts.audit_openai_allowlist import (
     _fetch_models,

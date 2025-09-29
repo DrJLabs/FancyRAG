@@ -406,20 +406,22 @@ def test_scrub_object_with_custom_objects():
     assert result["password"] == "***"
 
 
-def test_sanitize_and_scrub_integration():
+def test_sanitize_and_scrub_integration(monkeypatch):
     """Test integration between sanitize_text and scrub_object functions."""
+
+    monkeypatch.setenv("NESTED_SECRET", "nested-secret-value")
     data = {
         "message": "API key is sk-test-integration",
         "nested": {
-            "api_key": "nested-secret",
-            "description": "Contains nested-secret value"
-        }
+            "api_key": "some-key",
+            "description": "Contains nested-secret-value in text",
+        },
     }
 
-    # First scrub the object (handles sensitive keys)
     scrubbed = sanitizer.scrub_object(data)
 
-    # Then sanitize the text values (handles env var content)
-
-    assert scrubbed["nested"]["api_key"] == "***"  # Key-based scrubbing
-    # Text-based sanitization would need env vars set to work
+    assert "sk-test-integration" not in scrubbed["message"]
+    assert "***" in scrubbed["message"]
+    assert scrubbed["nested"]["api_key"] == "***"
+    assert "nested-secret-value" not in scrubbed["nested"]["description"]
+    assert "***" in scrubbed["nested"]["description"]
