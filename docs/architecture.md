@@ -1,269 +1,132 @@
 # Neo4j GraphRAG Architecture Document
 
 ## Introduction
-This document outlines the overall project architecture for Neo4j GraphRAG, including backend systems, shared services, and non-UI specific concerns. Its primary goal is to serve as the guiding architectural blueprint for AI-driven development, ensuring consistency and adherence to chosen patterns and technologies.
+This document outlines the overall project architecture for Neo4j GraphRAG, including backend systems, shared services, and non-UI specific concerns. Its primary goal is to guide AI-assisted development and ensure consistency with the product definition.
 
 **Relationship to Frontend Architecture:** The initial release is CLI-only; no separate frontend architecture document is required. If a UI emerges, it must adopt the technology choices recorded here.
 
 ### Starter Template or Existing Project
-Greenfield implementation. No starter template or legacy codebase is being reused; everything is composed from official Python packages and existing managed Neo4j/Qdrant services.
+Greenfield implementation grounded in the official `neo4j-graphrag` Python package. Version 1 operates entirely on a local Docker Compose stack (Neo4j + Qdrant) so teams can validate the workflow without managed services. Connection variables allow promotion to hosted deployments later.
 
 ### Change Log
-| Date       | Version | Description                                             | Author     |
-|------------|---------|---------------------------------------------------------|------------|
-| 2025-09-24 | 0.1     | Recast architecture document into BMAD structure; added diagrams, tech stack, workflows | Codex CLI  |
+| Date       | Version | Description                                                                   | Author     |
+|------------|---------|-------------------------------------------------------------------------------|------------|
+| 2025-09-24 | 0.1     | Recast architecture document into BMAD structure; added diagrams and workflows | Codex CLI  |
+| 2025-09-28 | 0.2     | Shifted scope to local Docker stack and scripted minimal path                 | Codex CLI  |
 
 ## High Level Architecture
 ### Technical Summary
-The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. It connects to managed Neo4j (graph storage), Qdrant (vector database), and OpenAI services (generation + embeddings). Primary patterns include a modular pipeline for ingestion, idempotent vector sync, and a retrieval layer that joins vector hits with graph context.
+The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. Docker Compose (`docker-compose.neo4j-qdrant.yml`) launches Neo4j 5.26 with APOC Core and Qdrant latest on the developer host. Python scripts create the Neo4j vector index, run `SimpleKGPipeline`, export embeddings to Qdrant, and execute retrieval with `QdrantNeo4jRetriever` and OpenAI GPT models.
 
 ### High Level Overview
-- Architectural style: Monolithic CLI orchestrator with external managed services.
-- Repository structure: Single repository containing CLI code, IaC descriptors, and documentation.
-- Services: Neo4j database `graphrag`, Qdrant collection `grag_main_v1`, OpenAI APIs.
-- Data Flow: Text sources → KG builder → Neo4j; embeddings → Qdrant; retrieval pipeline queries Qdrant then Neo4j before handing results to OpenAI LLM.
-- Rationale: Minimal infra footprint, leverages managed services, satisfies isolation and latency targets from PRD.
+- **Architectural style:** Monolithic CLI orchestrator with local containerized dependencies.
+- **Repository structure:** Single repository containing CLI code, scripts, Compose files, and documentation.
+- **Services:** Neo4j database (default DB `neo4j`), Qdrant collection (`chunks_main`), OpenAI APIs.
+- **Data Flow:** Text/PDF sources → KG builder → Neo4j (Document/Chunk nodes) → export embeddings → Qdrant → retrieval joins vector hits with Neo4j context → OpenAI generates grounded answers.
+- **Rationale:** Enables reproducible experimentation on a laptop, keeps compatibility with production endpoints via configuration, and exercises first-party GraphRAG APIs end-to-end.
 
 ### High Level Project Diagram
 ```mermaid
 graph TD
     Operator[Operator CLI]
-    Venv[Python CLI (venv)]
-    GraphRAG[Neo4j GraphRAG Library]
-    Neo4j[(Neo4j DB\ngraphrag)]
-    Qdrant[(Qdrant Collection\ngrag_main_v1)]
+    Compose[Docker Compose]
+    CLI[Python CLI (venv)]
+    KGB[GraphRAG Scripts]
+    Neo4j[(Neo4j 5.26)]
+    Qdrant[(Qdrant)]
     OpenAI[(OpenAI APIs)]
 
-    Operator --> Venv --> GraphRAG
-    GraphRAG --> Neo4j
-    GraphRAG --> Qdrant
-    GraphRAG --> OpenAI
-    Qdrant <-->|Vector IDs| Neo4j
+    Operator --> Compose
+    Operator --> CLI --> KGB
+    Compose --> Neo4j
+    Compose --> Qdrant
+    KGB --> Neo4j
+    KGB --> Qdrant
+    KGB --> OpenAI
+    Qdrant <-->|neo4j_id| Neo4j
 ```
 
 ### Architectural and Design Patterns
-- **Monolithic CLI Orchestrator:** A single Python executable coordinates ingestion, retrieval, and ops. _Rationale:_ Simplifies deployment for a CLI-only workflow; avoids premature service decomposition.
-- **Repository + Dependency Injection Patterns:** Components accept drivers/clients (Neo4j, Qdrant, OpenAI) as constructor params. _Rationale:_ Enables testing with fakes and future swapping of providers.
-- **Vector-Graph Join Pattern:** Store Neo4j identifiers in Qdrant payload and rehydrate graph context after vector retrieval. _Rationale:_ Preserves grounded responses and supports auditing.
+- **Monolithic CLI Orchestrator:** A single Python entrypoint plus helper scripts coordinate ingestion, vector sync, and retrieval.
+- **Dependency Injection:** Scripts accept drivers/clients (Neo4j, Qdrant, OpenAI) via configuration helpers for easy swapping.
+- **Vector-Graph Join Pattern:** Store Neo4j identifiers in Qdrant payloads and hydrate graph context post-search to preserve grounded responses.
+- **Idempotent Pipelines:** Each script is safe to rerun; Neo4j writes use `MERGE` and Qdrant upserts replace existing vectors.
 
 ## Tech Stack
-### Cloud Infrastructure
-- **Provider:** Self-managed infrastructure (Neo4j Aura or on-prem), Qdrant managed cluster, OpenAI SaaS.
-- **Key Services:** Neo4j DBMS 5.x, Qdrant vector DB 1.10+, OpenAI GPT/Embedding APIs.
-- **Deployment Regions:** Match existing data residency requirements (default: us-west).
+See `docs/architecture/tech-stack.md` for the authoritative table. Highlights:
+- Python 3.12 with `neo4j-graphrag[experimental,openai,qdrant]`.
+- Neo4j 5.26 (Docker) with APOC Core.
+- Qdrant latest (Docker) accessed via `qdrant-client` ≥ 1.8.
+- OpenAI GPT-4.1 models (`gpt-4.1-mini`, fallback `gpt-4o-mini`) and `text-embedding-3-small`.
+- Structured logging through `structlog` or JSON `logging` handlers.
 
-### Technology Stack Table
-| Category            | Technology                       | Version      | Purpose                                        | Rationale                                                     |
-|---------------------|----------------------------------|--------------|------------------------------------------------|---------------------------------------------------------------|
-| Language            | Python                           | 3.12         | Primary implementation language                | Modern LTS, compatible with neo4j-graphrag dependencies       |
-| Runtime             | CPython                          | 3.12         | Execution environment                          | Stable, supported by packaging tools                          |
-| Package             | neo4j-graphrag                   | latest 0.9.x | Knowledge graph ingestion & retrieval utilities | First-party integration for Neo4j + Qdrant                    |
-| Package             | neo4j                            | 5.x driver   | Bolt connectivity to Neo4j                     | Official driver with async support                            |
-| Package             | qdrant-client                    | 1.10+        | Vector DB client                               | Native client for Qdrant with async + payload helpers         |
-| Package             | openai                           | 1.x          | LLM and embedding access                        | Supports GPT-4o-mini and text-embedding-3-small               |
-| Observability       | structlog / logging              | 24.x         | Structured logging                              | Lightweight, JSON-friendly output for ops telemetry           |
-| Testing             | pytest                           | 8.x          | Unit/integration testing                        | Broad plugin ecosystem, simple CLI workflows                  |
-| Packaging           | pip-tools (optional)             | 7.x          | Dependency locking                              | Deterministic builds for production environments              |
-| Infrastructure IaC  | Terraform (optional)             | 1.8          | Manage Neo4j/Qdrant credentials + secrets       | Align with existing ops automation                            |
+## Environments
+- **Local (default):** Docker Compose stack listening on localhost (`7474`, `7687`, `6333`). Data persisted under `./.data/{neo4j,qdrant}`.
+- **Managed (future):** Override `.env` to point at hosted Neo4j/Qdrant once the workflow is productionized.
 
-## Data Models
-### Entity
-**Purpose:** Represents a unique object extracted from the corpus (concept, person, org, etc.) stored in Neo4j.
-
-**Key Attributes:**
-- `id`: string — Stable identifier used for joins.
-- `title`: string — Human-readable name.
-- `type`: string — Entity classification (Person, Concept, etc.).
-- `properties`: map — Arbitrary metadata from KG pipeline.
-
-**Relationships:**
-- Connected to other entities via `RELATES_TO` edges with weights.
-
-### RelationshipEdge
-**Purpose:** Captures directional relationships between entities in Neo4j.
-
-**Key Attributes:**
-- `weight`: float — Confidence/importance.
-- `source`: string — Provenance of relationship.
-
-**Relationships:**
-- `(:Entity)-[:RELATES_TO]->(:Entity)` pairs within Neo4j database.
-
-### VectorRecord
-**Purpose:** Represents an embedded text chunk stored in Qdrant.
-
-**Key Attributes:**
-- `vector`: float[1536] — Embedding values.
-- `neo4j_id`: string — Join key to Neo4j entity.
-- `doc_id`: string — Source document identifier.
-- `chunk`: string — Text snippet for context regeneration.
-- `source`: string — Provenance metadata.
-
-**Relationships:**
-- Links indirectly to Neo4j entities through `neo4j_id` payload.
-
-## Components
-### CLI Orchestrator
-**Responsibility:** Entry point for ingestion, vector sync, retrieval validation, and ops commands.
-
-**Key Interfaces:**
-- CLI options/commands (`ingest`, `upsert`, `search`).
-- `.env` configuration loader.
-
-**Dependencies:** Neo4j driver, Qdrant client, OpenAI SDK, configuration modules.
-
-**Technology Stack:** Python CLI (click or argparse), structlog for telemetry.
-
-### Knowledge Graph Builder
-**Responsibility:** Transform corpus into entities/relations using `SimpleKGPipeline` utilities.
-
-**Key Interfaces:**
-- Pipeline configuration YAML/JSON.
-- Neo4j session write handles.
-
-**Dependencies:** neo4j-graphrag KG modules, Neo4j driver, local file system.
-
-**Technology Stack:** `neo4j_graphrag.pipeline`, optional async execution.
-
-### Vector Upsert Service
-**Responsibility:** Embed text units and upsert vectors to Qdrant with payload join keys.
-
-**Key Interfaces:**
-- OpenAI embedding API.
-- Qdrant batch upsert API.
-
-**Dependencies:** qdrant-client, openai, retry/backoff utilities.
-
-**Technology Stack:** Python async tasks or synchronous batches with concurrency guards.
-
-### Retrieval Engine
-**Responsibility:** Execute hybrid retrieval and produce grounded answers.
-
-**Key Interfaces:**
-- `QdrantNeo4jRetriever.search()`
-- `GraphRAG` generation pipeline.
-
-**Dependencies:** Neo4j driver, Qdrant client, OpenAI LLM wrapper.
-
-**Technology Stack:** `neo4j_graphrag.retrievers`, `neo4j_graphrag.generation`.
-
-### Component Diagram
-```mermaid
-graph LR
-    CLI[CLI Orchestrator]
-    KGB[Knowledge Graph Builder]
-    VEC[Vector Upsert]
-    RET[Retrieval Engine]
-    Neo4j[(Neo4j)]
-    Qdrant[(Qdrant)]
-    OpenAI[(OpenAI)]
-
-    CLI --> KGB
-    CLI --> VEC
-    CLI --> RET
-    KGB --> Neo4j
-    VEC --> Qdrant
-    RET --> Qdrant
-    RET --> Neo4j
-    RET --> OpenAI
-```
-
-## External APIs
-### OpenAI API
-- **Purpose:** Text generation (`gpt-4.1-mini` baseline, fallback `gpt-4o-mini`) and embeddings (`text-embedding-3-small`).
-- **Documentation:** https://platform.openai.com/docs
-- **Base URL(s):** `https://api.openai.com/v1`
-- **Authentication:** Bearer token via `OPENAI_API_KEY`.
-- **Rate Limits:** Subject to account tier; monitor tokens/minute.
-
-**Key Endpoints Used:**
-- `POST /v1/chat/completions` — Generate answers with grounded context.
-- `POST /v1/embeddings` — Produce 1536-d embeddings for text chunks.
-
-**Integration Notes:** Implement exponential backoff, respect usage caps, and redact sensitive data before sending to OpenAI.
+Promotion path: `local → managed sandbox → managed prod` (future work).
 
 ## Core Workflows
 ```mermaid
 sequenceDiagram
     participant Op as Operator
-    participant CLI as CLI Orchestrator
-    participant KGB as KG Builder
+    participant Compose as docker compose
+    participant Script as GraphRAG Scripts
     participant Neo4j as Neo4j DB
-    participant OpenAI as OpenAI API
     participant Qdrant as Qdrant DB
+    participant OpenAI as OpenAI API
 
-    Op->>CLI: run ingest --corpus pilot
-    CLI->>KGB: create pipeline config
-    KGB->>OpenAI: embeddings for entity detection
-    KGB->>Neo4j: write entities & relations
-    Op->>CLI: run vectors --source neo4j
-    CLI->>OpenAI: embeddings for text chunks
-    CLI->>Qdrant: upsert vectors w/ payload
-    Op->>CLI: run search --query "Who partners with X?"
-    CLI->>Qdrant: vector search top_k=5
-    Qdrant-->>CLI: candidate payloads
-    CLI->>Neo4j: fetch graph context
-    CLI->>OpenAI: generate final answer w/ context
-    OpenAI-->>CLI: answer + citations
+    Op->>Compose: up -d (neo4j, qdrant)
+    Op->>Script: create_vector_index.py
+    Script->>Neo4j: create vector index (chunks_vec)
+    Op->>Script: kg_build.py --text sample
+    Script->>OpenAI: embeddings for chunks
+    Script->>Neo4j: write Document/Chunk graph
+    Op->>Script: export_to_qdrant.py
+    Script->>Neo4j: stream chunks + embeddings
+    Script->>Qdrant: upsert vectors w/ payload
+    Op->>Script: ask_qdrant.py --question …
+    Script->>OpenAI: generate grounded answer
+    Script->>Qdrant: vector search top_k
+    Script->>Neo4j: hydrate context
+    Script-->>Op: formatted answer + context
 ```
 
-## Database Schema
-- **Neo4j:** Nodes labeled `Entity` with unique `id`; relationships `RELATES_TO` optionally contain `weight`, `source`, `confidence`. Index `Entity(id)` and constraints for uniqueness.
-- **Qdrant:** Collection `grag_main_v1` sized to 1536 with cosine distance. Payload schema includes `neo4j_id` (string), `doc_id` (string), `chunk` (text), `source` (string). Use payload-based filtering for dataset slices.
+## Database & Collection Schema
+- **Neo4j:**
+  - Nodes: `Document{id, title, source}`, `Chunk{id, text, embedding, doc_id}`.
+  - Relationships: `Document`-`HAS_CHUNK`→`Chunk`; entity/relationship nodes created by `SimpleKGPipeline`.
+  - Index: Vector index `chunks_vec` on `Chunk(embedding)` (dimensions default 1536, cosine similarity).
+- **Qdrant:**
+  - Collection: `chunks_main` (vectors size 1536, cosine distance).
+  - Payload: `{neo4j_id: string, doc_id: string, chunk: string, source: string}`.
+  - Filters: allow doc-based filtering for targeted questions.
 
 ## Source Tree
-```text
-neo4j-graphrag/
-├── docs/
-│   ├── architecture.md
-│   ├── prd.md
-│   └── ...
-├── src/
-│   ├── cli/
-│   │   ├── __init__.py
-│   │   ├── ingest.py
-│   │   ├── vectors.py
-│   │   └── search.py
-│   ├── pipelines/
-│   │   ├── kg_builder.py
-│   │   └── vector_upsert.py
-│   └── config/
-│       ├── settings.py
-│       └── logging.py
-├── scripts/
-│   ├── bootstrap.sh
-│   └── backup-qdrant.sh
-├── tests/
-│   ├── unit/
-│   └── integration/
-└── pyproject.toml
-```
+See `docs/architecture/source-tree.md` for the up-to-date tree including Compose and script artifacts.
 
 ## Infrastructure and Deployment
-- **Infrastructure as Code:** Terraform 1.8 (optional) stored under `infra/terraform`; defines secrets, network rules, and scheduled jobs.
-- **Deployment Strategy:** CLI distributed via git tags; operators set up virtual envs manually. CI/CD workflows (GitHub Actions) lint, test, and build release artifacts.
-- **Environments:**
-  - **dev:** Local sandbox Neo4j/Qdrant instances for iteration.
-  - **staging:** Managed services with anonymized data to validate pipelines.
-  - **prod:** Live managed services with full data; restricted access.
-- **Environment Promotion Flow:**
-```
-dev → staging → prod
-```
-- **Rollback Strategy:** Re-run previous release scripts with known dependency lockfiles; restore Neo4j/Qdrant from latest snapshot (RTO ≤ 2 hours).
+- **Infrastructure as Code:** Docker Compose defines local services; Terraform references retained for future managed environments but out of scope for v1.
+- **Deployment Strategy:** CLI distributed via git tags; operators clone repository, run `scripts/bootstrap.sh`, and bring up Compose stack locally.
+- **Rollback Strategy:** Shut down Compose (`docker compose down --volumes`) to reset data. For managed deployments, plan to restore from snapshots (future work).
 
-## Error Handling Strategy
-- **General Approach:** Explicit exception hierarchy wrapping external client errors; propagate structured errors back to CLI with actionable messages.
-- **Logging Standards:** structlog 24.x emitting JSON lines with correlation IDs, operation name, duration, and status fields.
-- **External API Errors:** Exponential backoff (max 5 retries) for OpenAI/Qdrant transient errors; circuit breaker to prevent runaway cost.
-- **Business Logic Errors:** Custom exceptions (`IngestionError`, `VectorSyncError`, `RetrievalError`) mapped to exit codes; user-facing messaging includes remediation hints.
-- **Data Consistency:** Neo4j writes wrapped in transactions; Qdrant upserts tracked via idempotency keys; compensation step deletes partial batches on failure.
+## Error Handling
+- **General Approach:** Wrap external client errors (`neo4j`, `qdrant_client`, `openai`) with custom exceptions and exit codes; log remediation hints.
+- **Retries:** Exponential backoff (max 5) for OpenAI 429/503; retry Neo4j/Qdrant network errors with jittered delays.
+- **Observability:** Structured logs include `operation`, `duration_ms`, `status`, `index_name`/`collection`, and counts of processed chunks.
 
 ## Coding Standards
-- **Languages & Runtimes:** Python 3.12; enforce `ruff` + `black` formatting (line length 100).
-- **Style & Linting:** Ruff configuration stored in `pyproject.toml`; type checking with `mypy` focused on critical modules.
-- **Test Organization:** Mirror `src` module layout (`tests/unit/cli/test_ingest.py`, etc.).
-- **Critical Rules:**
-  - **Secrets Handling:** Never log raw API keys or passwords; redact before logging.
-  - **Driver Lifecycle:** Use context managers for Neo4j sessions and close Qdrant clients gracefully.
-  - **Retry Limits:** Cap OpenAI retries to protect against cost overruns; log token usage per request.
+Refer to `docs/architecture/coding-standards.md` for detailed guidance. Key highlights for this architecture:
+- Scripts must honour `.env` and CLI overrides.
+- Ensure idempotent writes to Neo4j/Qdrant.
+- Provide integration smoke tests that run against the Compose stack before release.
+
+## Security Considerations
+- Secrets loaded from `.env`; never commit real keys.
+- Compose stack is bound to localhost only; use Docker profiles or firewalls to restrict exposure.
+- Optional API keys (Qdrant) stored locally for parity with hosted environments.
+
+## Next Steps
+- Implement the scripted workflow described above.
+- Extend diagnostics to validate Compose service health (bolt + HTTP probes).
+- Plan migration path for pointing scripts at managed services once v1 succeeds.

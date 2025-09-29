@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from cli import diagnostics
+from cli import diagnostics, openai_client
 
 
 class FakeChatResponse(SimpleNamespace):
@@ -129,9 +129,6 @@ def test_openai_probe_identifies_fallback(tmp_path, monkeypatch):
 def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
     monkeypatch.setenv("GRAPH_RAG_ACTOR", "pytest-actor")
 
-    class FakeRateLimit(Exception):
-        pass
-
     class FlakyClient(HappyClient):
         def __init__(self):
             """
@@ -154,14 +151,17 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
             """
             self.chat_attempts += 1
             if self.chat_attempts < 3:
-                raise FakeRateLimit("slow down")
+                response = SimpleNamespace(
+                    request=SimpleNamespace(),
+                    status_code=429,
+                    headers={"Retry-After": "1"},
+                )
+                raise openai_client.RateLimitError("slow down", response=response)
             return super()._chat(**kwargs)
 
     sleeps: list[float] = []
     root = tmp_path / "repo"
     root.mkdir()
-
-    monkeypatch.setattr(diagnostics, "_is_rate_limit_error", lambda exc: isinstance(exc, FakeRateLimit))
 
     exit_code = diagnostics.run_openai_probe(
         root,
@@ -174,16 +174,13 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
     )
 
     assert exit_code == 0
-    assert sleeps == [0.01, 0.02]
+    assert sleeps == [1.0, 1.0]
     report = _read_json(root / "artifacts" / "openai" / "probe.json")
     assert report["chat"]["status"] == "success"
 
 
 def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("GRAPH_RAG_ACTOR", "pytest-actor")
-
-    class FakeRateLimit(Exception):
-        pass
 
     class AlwaysRateLimited(HappyClient):
         def _chat(self, **kwargs):
@@ -193,14 +190,17 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
             All keyword arguments are accepted and ignored.
             
             Raises:
-                FakeRateLimit: always raised with the message "token budget exceeded".
+                openai_client.RateLimitError: always raised with the message "token budget exceeded".
             """
-            raise FakeRateLimit("token budget exceeded")
+            response = SimpleNamespace(
+                request=SimpleNamespace(),
+                status_code=429,
+                headers={},
+            )
+            raise openai_client.RateLimitError("token budget exceeded", response=response)
 
     root = tmp_path / "repo"
     root.mkdir()
-
-    monkeypatch.setattr(diagnostics, "_is_rate_limit_error", lambda exc: isinstance(exc, FakeRateLimit))
 
     exit_code = diagnostics.run_openai_probe(
         root,
@@ -215,7 +215,7 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
     assert exit_code == 1
     report = _read_json(root / "artifacts" / "openai" / "probe.json")
     assert report["status"] == "failed"
-    assert "token budgets" in report["error"]["remediation"].lower()
+    assert report["error"]["details"]["reason"] == "rate_limit"
 
 
 def test_openai_probe_skip_live(tmp_path, monkeypatch):

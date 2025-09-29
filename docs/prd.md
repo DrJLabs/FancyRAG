@@ -2,125 +2,67 @@
 
 ## Goals and Background Context
 ### Goals
-- Deliver a CLI-driven GraphRAG workflow that reuses existing Neo4j and Qdrant services while ensuring strict data isolation.
-- Provide operators with a reliable pipeline to ingest a pilot corpus, build a knowledge graph, and populate Qdrant vectors with consistent join keys.
-- Enable retrieval that combines Qdrant vector hits with Neo4j graph context to answer questions accurately.
-- Document operational guardrails (backups, snapshots, scheduling) so adoption can occur without bespoke research.
+- Deliver a self-contained GraphRAG evaluation stack that runs on a single Linux host using Docker Compose for Neo4j and Qdrant plus the official `neo4j-graphrag` package.
+- Provide scripted workflows that create the Neo4j vector index, build the knowledge graph, mirror embeddings into Qdrant, and execute retrieval checks end-to-end.
+- Maintain compatibility with production-bound settings so the same scripts can later point at managed services without code changes.
 
 ### Background Context
-Neo4j GraphRAG (Python package) now ships first-party utilities for knowledge-graph aware retrieval. The organization already operates Neo4j and Qdrant clusters and wants to leverage them without exposing new HTTP APIs in v1. Prior attempts relied on ad-hoc scripts with uneven privilege separation. This PRD targets a disciplined CLI workflow that standardizes installation, ingestion, retrieval, and operations while keeping the footprint minimal.
+Earlier iterations assumed existing managed Neo4j and Qdrant deployments. That scope stalled adoption because teams could not safely experiment without access to those services. Version 1 focuses on a project-owned stack: Dockerized Neo4j 5.26 (with APOC Core) and Qdrant latest, paired with Python 3.12 tooling that relies exclusively on the public `neo4j-graphrag` APIs (`SimpleKGPipeline`, `create_vector_index`, `QdrantNeo4jRetriever`). Once the local workflow is proven, the same scripts will target managed infrastructure by overriding connection variables.
 
 ### Change Log
 | Date       | Version | Description                                                    | Author     |
 |------------|---------|----------------------------------------------------------------|------------|
 | 2025-09-24 | 0.1     | Rebuilt PRD in BMAD format; aligned goals, requirements, epics | Codex CLI  |
+| 2025-09-28 | 0.2     | Narrowed scope to local Docker stack + scripted minimal path   | Codex CLI  |
 
 ## Requirements
 ### Functional
-- **FR1:** Provide a reproducible virtual environment install of `neo4j-graphrag[openai,qdrant]` with dependency verification.
-- **FR2:** Configure OpenAI generation defaults to `gpt-4.1-mini` (48K context) with documented fallback to `gpt-4o-mini`; embeddings default to `text-embedding-3-small` (1536 dimensions).
-- **FR3:** Provision Neo4j database `graphrag` with a least-privilege user scoped to that database and required APOC procedures.
-- **FR4:** Provision Qdrant collection `grag_main_v1` sized to 1536 dimensions, cosine distance, and matching payload schema.
-- **FR5:** Use `SimpleKGPipeline` (or successor KG builder) to write pilot entities and relations into Neo4j with validation queries.
-- **FR6:** Batch embed text units and upsert to Qdrant with payload fields `{neo4j_id, doc_id, chunk, source}` to guarantee graph join fidelity.
-- **FR7:** Expose a CLI workflow that executes `QdrantNeo4jRetriever.search()` and produces grounded LLM answers with retrieved context records.
+- **FR1:** Provide `docker-compose.neo4j-qdrant.yml` that starts Neo4j 5.26 (APOC enabled) and Qdrant latest with persistent volumes and configurable credentials.
+- **FR2:** Ship a reproducible Python 3.12 environment that installs `neo4j-graphrag[experimental,openai,qdrant]`, validates imports, and documents required `.env` variables.
+- **FR3:** Implement a script that creates the Neo4j vector index on `Chunk.embedding` with configurable dimensions (default 1536) while reusing `neo4j_graphrag.indexes.create_vector_index`.
+- **FR4:** Implement a KG builder script that runs `SimpleKGPipeline` against sample content (text or PDF) and persists Document/Chunk nodes plus embeddings.
+- **FR5:** Implement export and retrieval scripts that batch embeddings into Qdrant, preserve join keys, and exercise `GraphRAG.search()` using `QdrantNeo4jRetriever` to return grounded answers.
 
 ### Non Functional
-- **NFR1:** Retrieval P95 latency ≤ 3 seconds for top-k ≤ 10 on the pilot dataset.
-- **NFR2:** Batch reindex of 100k chunks completes within 4 hours using retry/backoff strategy.
-- **NFR3:** Secrets remain in `.env` files or secret managers; no credentials committed to VCS.
-- **NFR4:** Logging/monitoring enables failure triage through persisted CLI logs and periodic backups.
-- **NFR5:** Solution runs on Python 3.12 with pinned dependencies to ensure reproducibility.
+- **NFR1:** The end-to-end workflow (compose up → scripts) completes in under 60 minutes on a developer laptop with 16 GB RAM.
+- **NFR2:** Secrets remain outside version control; scripts read credentials from `.env` and support overrides via environment variables.
+- **NFR3:** Logging is structured (JSON or key-value) and includes durations and statuses for each major step.
+- **NFR4:** Scripts exit non-zero on failure and provide actionable error messages for retry attempts.
 
 ## User Interface Design Goals
 - **Overall UX Vision:** Operate entirely via documented CLI commands and scripts; outputs must be copy-paste friendly.
 - **Key Interaction Paradigms:** Command-line prompts, environment variables, and scripted pipelines; no GUI.
 - **Core Screens and Views:** N/A (CLI only); focus on terminal output sections for install, ingestion, retrieval verification, and operational status.
 - **Accessibility:** N/A — CLI inherits terminal accessibility features.
-- **Branding:** Adopt standard corporate CLI color palette/logging format if available; otherwise plain-text output.
-- **Target Device and Platforms:** Web-responsive UI not required; Linux/macOS shell environments.
+- **Branding:** Plain-text output with optional structured logging.
+- **Target Device and Platforms:** Linux/macOS shell environments.
 
 ## Technical Assumptions
-- **Repository Structure:** Monorepo containing CLI scripts, infrastructure automation, and documentation.
-- **Service Architecture:** Single Python CLI application integrating with external Neo4j and Qdrant services (monolithic control plane).
-- **Testing Requirements:** Unit tests for helper functions; integration smoke tests for retriever and ingestion scripts using sandbox data.
+- **Repository Structure:** Monorepo containing CLI scripts, Docker Compose files, configuration modules, and documentation.
+- **Service Architecture:** Python CLI orchestrator interacting with locally managed Neo4j and Qdrant containers by default; connection variables allow redirection to managed services later.
+- **Testing Requirements:** Unit tests for helper functions; integration smoke test that runs the retrieval script against the local Docker stack with seeded sample content.
 - **Additional Technical Assumptions and Requests:**
-  - Python 3.12 interpreter with `pip-tools` or `uv` optional for lockfile generation.
-  - Qdrant reachable via internal network with API key authentication; TLS termination managed upstream.
-  - Neo4j reachable via Bolt protocol; `neo4j` Python driver pinned to latest 5.x compatible version.
-  - Logging via `structlog` or standard library logging with JSON formatter for ingestion/retrieval scripts.
+  - Python 3.12 interpreter with option to pin dependencies via `pip-tools` or `uv`.
+  - Qdrant reachable at `http://localhost:6333` when using the default compose file; API key optional for local use.
+  - Neo4j reachable over Bolt `neo4j://localhost:7687` with credentials sourced from `.env`.
+  - Logging via `structlog` or standard library logging configured for JSON output.
 
 ## Epic List
-| Epic | Title                        | Goal Statement                                                                 |
-|------|------------------------------|--------------------------------------------------------------------------------|
-| 1    | Environment & Workspace      | Establish reproducible Python environment, install GraphRAG package, verify imports. |
-| 2    | Models & Vectors             | Configure OpenAI models and embeddings with guardrails and probes.             |
-| 3    | Neo4j Isolation              | Provision dedicated Neo4j database/user with constraints ready for KG ingest. |
-| 4    | Qdrant Collection            | Stand up versioned Qdrant collection with security and retention configured.  |
-| 5    | Knowledge Graph Build        | Ingest pilot corpus into Neo4j using KG pipeline and validate graph quality.  |
-| 6    | Vector Upsert                | Embed text units and upsert vectors to Qdrant with graph join metadata.       |
-| 7    | Retrieval Validation         | Execute retriever searches and confirm grounded answers across scenarios.     |
-| 8    | Security & Backups           | Implement credential rotation, snapshots, and restore drills.                 |
-| 9    | Scheduling & Cost Control    | Optional automation for periodic refreshes with spend and latency tracking.   |
-| 10   | Documentation & Change Mgmt  | Maintain runbooks, configs, and change history for onboarding & audits.       |
+| Epic | Title                               | Goal Statement                                                                         |
+|------|-------------------------------------|----------------------------------------------------------------------------------------|
+| 1    | Environment & Workspace             | Establish reproducible Python environment and configuration surface for local stack.   |
+| 2    | Local GraphRAG Minimal Path         | Deliver Dockerized Neo4j/Qdrant plus scripts covering KG build, vector sync, retrieval. |
 
 ## Epic Details
 ### Epic 1 — Environment & Workspace
-**Goal:** Provide a dependable development shell that standardizes Python versioning, dependencies, and environment configuration.
-- Create and document virtual environment bootstrap (`python3 -m venv`, `pip install "neo4j-graphrag[openai,qdrant]"`).
-- Record package versions and validate import via `python -c "import neo4j_graphrag"`.
-- Publish sample `.env` template listing required variables.
+**Goal:** Provide a dependable development shell that standardizes Python versioning, installs `neo4j-graphrag[experimental,openai,qdrant]`, and documents `.env` variables that default to the local Docker stack.
+- Create and document virtual environment bootstrap (`python3 -m venv`, `pip install "neo4j-graphrag[experimental,openai,qdrant]"`).
+- Record package versions and validate imports via `scripts/bootstrap.sh` diagnostics.
+- Publish sample `.env` template listing required variables and pointing at the compose defaults (`neo4j://localhost:7687`, `http://localhost:6333`).
 
-### Epic 2 — Models & Vectors
-**Goal:** Ensure LLM and embedding models are configured, tested, and guarded for production-like reliability.
-- Set `OPENAI_MODEL=gpt-4.1-mini`; document fallback to `gpt-4o-mini` for throughput or latency emergencies.
-- Validate embeddings return 1536-length vectors; document guardrails for batch sizes and retries.
-- Capture cost/latency expectations for each model variant.
+### Epic 2 — Local GraphRAG Minimal Path
+**Goal:** Ensure Docker Compose, KG builder, vector index, and Qdrant export/retrieval scripts deliver an end-to-end GraphRAG demonstration locally.
+- Add `docker-compose.neo4j-qdrant.yml` with persistent volumes and documented environment overrides.
+- Provide a script that runs `create_vector_index` and a `SimpleKGPipeline` ingestion with sample content.
+- Provide export and retrieval scripts that push embeddings to Qdrant and execute `GraphRAG.search()` to verify grounded answers.
 
-### Epic 3 — Neo4j Isolation
-**Goal:** Guarantee least-privilege access and graph readiness in Neo4j.
-- Automate creation of database `graphrag` and user `graphrag` with editor role.
-- Apply uniqueness constraints/indexing for node identifiers used by the KG pipeline.
-- Document required APOC features and health checks.
-
-### Epic 4 — Qdrant Collection
-**Goal:** Prepare Qdrant for production-grade vector storage with audit-ready configuration.
-- Provision `grag_main_v1` (size 1536, cosine distance) via API or CLI.
-- Secure API key management and network policies; define snapshot cadence.
-- Validate readiness via API introspection and test inserts.
-
-### Epic 5 — Knowledge Graph Build
-**Goal:** Produce a representative knowledge graph aligned with PRD goals.
-- Run `SimpleKGPipeline` (or successor) on curated pilot corpus.
-- Tune schema mappings and pruning thresholds; verify node/edge counts exceed baseline.
-- Provide Cypher queries for sampling graph quality.
-
-### Epic 6 — Vector Upsert
-**Goal:** Synchronize text embeddings into Qdrant with traceable join metadata.
-- Batch process text units with backpressure handling; log throughput metrics.
-- Ensure payload contains `neo4j_id`, `doc_id`, `chunk`, `source`; enforce idempotent upserts.
-- Cross-check Qdrant counts against source documents.
-
-### Epic 7 — Retrieval Validation
-**Goal:** Deliver trustworthy question-answering via combined vector + graph retrieval.
-- Configure `QdrantNeo4jRetriever` with correct ID properties and database selectors.
-- Validate retrieval quality across at least five representative questions (top-k ≤ 10).
-- Capture transcripts showing grounded context and final LLM response.
-
-### Epic 8 — Security & Backups
-**Goal:** Harden operations and support disaster recovery.
-- Rotate Neo4j and Qdrant credentials; document storage locations and rotation cadence.
-- Script Qdrant snapshots and Neo4j backups; perform a restore drill in sandbox.
-- Document incident escalation paths.
-
-### Epic 9 — Scheduling & Cost Control
-**Goal:** Automate refresh workflows while managing spend.
-- Optional systemd timer or cron to re-run ingestion/upsert pipelines nightly.
-- Track token usage, latency, and storage growth; define thresholds for alerting.
-- Provide remediation steps when metrics exceed budgets.
-
-### Epic 10 — Documentation & Change Management
-**Goal:** Create durable knowledge assets and governance.
-- Maintain versioned configs, prompt libraries, and onboarding checklists.
-- Update this PRD change log and supporting architecture/prd shards upon material changes.
-- Ensure onboarding time ≤ 1 hour via curated runbook and repository README updates.

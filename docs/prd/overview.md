@@ -1,15 +1,15 @@
 # PRD Overview
 
 ## Goals
-- Deliver a CLI-driven GraphRAG workflow that reuses existing Neo4j and Qdrant deployments while maintaining isolation.
-- Provide operators with ingestion, vector sync, and retrieval pipelines that are reliable and repeatable.
-- Ensure retrieval joins vector results with graph context to support grounded answers.
-- Document operational guardrails so the team can adopt GraphRAG without ad-hoc experimentation.
+- Deliver a self-contained GraphRAG evaluation stack that relies on local Docker containers for Neo4j and Qdrant plus the official `neo4j-graphrag` package.
+- Provide scripted ingestion, vector synchronization, and retrieval commands that operators can run end-to-end on a single host.
+- Maintain parity with production-grade settings so the same scripts can later point at managed services.
 
 ## Background Context
-Neo4j GraphRAG now offers first-party tooling for graph-aware retrieval. Our organization already maintains Neo4j and Qdrant services; this initiative standardizes how we ingest data, form the knowledge graph, and perform retrievals strictly through CLI workflows with no HTTP exposure in the initial release.
+Teams previously depended on pre-provisioned databases, which slowed experimentation and onboarding. Version 1 shifts to a project-owned stack: `docker compose` launches Neo4j 5.26 (APOC Core) and Qdrant latest, while Python scripts powered by `neo4j-graphrag[experimental,openai,qdrant]` take care of the KG build, vector export, and retrieval smoke tests. Configuration lives in `.env`, letting operators swap endpoints without rewriting code.
 
 ## Change Log
-| Date       | Version | Description                                    | Author    |
-|------------|---------|------------------------------------------------|-----------|
-| 2025-09-24 | 0.1     | Seeded overview shard aligned to PRD baseline | Codex CLI |
+| Date       | Version | Description                                       | Author    |
+|------------|---------|---------------------------------------------------|-----------|
+| 2025-09-24 | 0.1     | Seeded overview shard aligned to PRD baseline    | Codex CLI |
+| 2025-09-28 | 0.2     | Narrowed scope to local Docker + scripted path   | Codex CLI |

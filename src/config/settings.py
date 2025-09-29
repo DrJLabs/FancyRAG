@@ -17,11 +17,17 @@ ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({DEFAULT_CHAT_MODEL, *FALLBACK_C
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSIONS = 1536
+DEFAULT_MAX_RETRY_ATTEMPTS = 3
+DEFAULT_BACKOFF_SECONDS = 0.5
+DEFAULT_FALLBACK_ENABLED = True
 
 _ENV_OPENAI_MODEL = "OPENAI_MODEL"
 _ENV_OPENAI_EMBEDDING_MODEL = "OPENAI_EMBEDDING_MODEL"
 _ENV_OPENAI_EMBEDDING_DIMENSIONS = "OPENAI_EMBEDDING_DIMENSIONS"
 _ENV_ACTOR_HINT = "GRAPH_RAG_ACTOR"
+_ENV_OPENAI_MAX_ATTEMPTS = "OPENAI_MAX_ATTEMPTS"
+_ENV_OPENAI_BACKOFF_SECONDS = "OPENAI_BACKOFF_SECONDS"
+_ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,9 @@ class OpenAISettings:
     embedding_dimensions: int
     embedding_dimensions_override: Optional[int]
     actor: str
+    max_attempts: int
+    backoff_seconds: float
+    enable_fallback: bool
 
     @property
     def is_chat_override(self) -> bool:
@@ -69,7 +78,12 @@ class OpenAISettings:
             actor (Optional[str]): Optional actor name to record; if omitted, the value is taken from the environment variable GRAPH_RAG_ACTOR, then USER, then "unknown".
         
         Description:
-            Reads OPENAI_MODEL, OPENAI_EMBEDDING_MODEL, and OPENAI_EMBEDDING_DIMENSIONS (and GRAPH_RAG_ACTOR for actor hint). Validates that the selected chat model is allowed and that any embedding-dimensions override is a positive integer. Records informational logs for overrides and error logs for invalid values.
+            Reads OPENAI_MODEL, OPENAI_EMBEDDING_MODEL, OPENAI_EMBEDDING_DIMENSIONS,
+            OPENAI_MAX_ATTEMPTS, OPENAI_BACKOFF_SECONDS, and
+            OPENAI_ENABLE_FALLBACK (plus GRAPH_RAG_ACTOR for actor hint). Validates
+            chat-model allowlists, embedding override dimensions, retry/backoff
+            ranges, and fallback toggles. Records informational logs for overrides
+            and error logs for invalid values.
         
         Returns:
             OpenAISettings: An instance populated with the resolved chat model, embedding model, default embedding dimensions, any embedding-dimensions override, and the resolved actor name.
@@ -134,12 +148,107 @@ class OpenAISettings:
                 default_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
             )
 
+        max_attempts_raw = (source.get(_ENV_OPENAI_MAX_ATTEMPTS) or "").strip()
+        max_attempts = DEFAULT_MAX_RETRY_ATTEMPTS
+        if max_attempts_raw:
+            try:
+                max_attempts = int(max_attempts_raw)
+            except ValueError as exc:  # pragma: no cover - invalid atoi path
+                logger.error(
+                    "openai.settings.invalid_max_attempts",
+                    actor=actor_name,
+                    supplied=max_attempts_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_MAX_ATTEMPTS} value '{max_attempts_raw}'. Provide a positive integer."
+                ) from exc
+            if max_attempts <= 0:
+                logger.error(
+                    "openai.settings.non_positive_max_attempts",
+                    actor=actor_name,
+                    supplied=max_attempts_raw,
+                )
+                raise ValueError(
+                    f"{_ENV_OPENAI_MAX_ATTEMPTS} must be a positive integer when set; received {max_attempts}."
+                )
+            logger.info(
+                "openai.settings.max_attempts_override",
+                actor=actor_name,
+                max_attempts=max_attempts,
+                default_attempts=DEFAULT_MAX_RETRY_ATTEMPTS,
+            )
+
+        backoff_raw = (source.get(_ENV_OPENAI_BACKOFF_SECONDS) or "").strip()
+        backoff_seconds = DEFAULT_BACKOFF_SECONDS
+        if backoff_raw:
+            try:
+                backoff_seconds = float(backoff_raw)
+            except ValueError as exc:  # pragma: no cover - invalid atof path
+                logger.error(
+                    "openai.settings.invalid_backoff",
+                    actor=actor_name,
+                    supplied=backoff_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_BACKOFF_SECONDS} value '{backoff_raw}'. Provide a positive number."
+                ) from exc
+            if backoff_seconds <= 0:
+                logger.error(
+                    "openai.settings.non_positive_backoff",
+                    actor=actor_name,
+                    supplied=backoff_raw,
+                )
+                raise ValueError(
+                    f"{_ENV_OPENAI_BACKOFF_SECONDS} must be greater than zero when set; received {backoff_seconds}."
+                )
+            logger.info(
+                "openai.settings.backoff_override",
+                actor=actor_name,
+                backoff_seconds=backoff_seconds,
+                default_seconds=DEFAULT_BACKOFF_SECONDS,
+            )
+
+        fallback_raw = (source.get(_ENV_OPENAI_ENABLE_FALLBACK) or "").strip().lower()
+        enable_fallback = DEFAULT_FALLBACK_ENABLED
+        if fallback_raw:
+            if fallback_raw in {"1", "true", "yes", "on"}:
+                enable_fallback = True
+            elif fallback_raw in {"0", "false", "no", "off"}:
+                enable_fallback = False
+            else:
+                logger.error(
+                    "openai.settings.invalid_fallback",
+                    actor=actor_name,
+                    supplied=fallback_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_ENABLE_FALLBACK} value '{fallback_raw}'. Use true/false."
+                )
+            logger.info(
+                "openai.settings.fallback_toggle",
+                actor=actor_name,
+                enable_fallback=enable_fallback,
+            )
+
+        if not enable_fallback and requested_chat_model != DEFAULT_CHAT_MODEL:
+            logger.error(
+                "openai.settings.fallback_disabled",
+                actor=actor_name,
+                supplied_model=requested_chat_model,
+            )
+            raise ValueError(
+                f"{_ENV_OPENAI_ENABLE_FALLBACK} is disabled; {requested_chat_model} cannot be used as it is reserved for fallback scenarios."
+            )
+
         return cls(
             chat_model=requested_chat_model,
             embedding_model=embedding_model,
             embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
             embedding_dimensions_override=override_dimensions,
             actor=actor_name,
+            max_attempts=max_attempts,
+            backoff_seconds=backoff_seconds,
+            enable_fallback=enable_fallback,
         )
 
     def expected_embedding_dimensions(self) -> int:
@@ -158,4 +267,7 @@ __all__ = [
     "FALLBACK_CHAT_MODELS",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_EMBEDDING_DIMENSIONS",
+    "DEFAULT_MAX_RETRY_ATTEMPTS",
+    "DEFAULT_BACKOFF_SECONDS",
+    "DEFAULT_FALLBACK_ENABLED",
 ]
