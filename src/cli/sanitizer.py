@@ -100,7 +100,7 @@ def sanitize_text(text: Any, *, extra_patterns: Iterable[re.Pattern[str]] | None
         if _is_sensitive_name(key):
             values_to_mask.append(value)
 
-    for value in values_to_mask:
+    for value in sorted(values_to_mask, key=len, reverse=True):
         sanitized = sanitized.replace(value, "***")
     for pattern in SECRET_PATTERNS:
         sanitized = pattern.sub("***", sanitized)

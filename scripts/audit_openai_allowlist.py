@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -14,6 +15,19 @@ from typing import Iterable
 from config.settings import ALLOWED_CHAT_MODELS
 
 CATALOG_URL = "https://api.openai.com/v1/models"
+
+_DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})(?:-[a-z0-9]+)?$", re.IGNORECASE)
+
+
+def _family_of(model: str) -> str:
+    """Collapse a model identifier to its allowlist family name."""
+
+    base = _DATE_SUFFIX.sub("", model)
+    if "-" not in base:
+        return base
+
+    head, _tail = base.rsplit("-", 1)
+    return head
 
 
 def _fetch_models(api_key: str) -> set[str]:
@@ -99,11 +113,7 @@ def main() -> int:
         return 2
 
     missing = sorted(model for model in ALLOWED_CHAT_MODELS if model not in available_models)
-    families = {
-        family
-        for model in ALLOWED_CHAT_MODELS
-        if (family := model.rsplit("-", 1)[0]) != model
-    }
+    families = {_family_of(model) for model in ALLOWED_CHAT_MODELS}
     new_variants = sorted(
         model
         for model in available_models

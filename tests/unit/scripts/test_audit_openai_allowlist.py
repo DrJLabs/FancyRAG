@@ -22,6 +22,7 @@ if REPO_ROOT not in sys.path:
 from scripts.audit_openai_allowlist import (
     _fetch_models,
     _format_list,
+    _family_of,
     main,
     CATALOG_URL,
 )
@@ -154,6 +155,22 @@ class TestFetchModels:
             _fetch_models("key")
 
 
+class TestFamilyOf:
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("gpt-4.1-mini", "gpt-4.1"),
+            ("gpt-4o-mini-2024-07-18", "gpt-4o"),
+            ("gpt-4o-mini-2024-07-18-preview", "gpt-4o"),
+            ("gpt-4o", "gpt"),
+            ("gpt-4o-realtime-preview", "gpt-4o-realtime"),
+            ("o1-preview", "o1"),
+        ],
+    )
+    def test_family_of(self, model: str, expected: str) -> None:
+        assert _family_of(model) == expected
+
+
 class TestFormatList:
     def test_format_list_multiple(self):
         assert _format_list(["gpt-4", "gpt-3.5-turbo", "claude-2"]) == "claude-2, gpt-3.5-turbo, gpt-4"
@@ -211,6 +228,22 @@ class TestMain:
         with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
             with patch('sys.stderr') as err:
                 rc = main()
+        assert rc == 4
+        err.write.assert_called()
+
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
+    @patch('scripts.audit_openai_allowlist._fetch_models')
+    def test_main_new_variants_detected_with_date_suffix(self, mock_fetch):
+        mock_fetch.return_value = {
+            'gpt-4o-mini-2024-07-18',
+            'gpt-4o-mini-2024-08-01',
+            'gpt-4o-mini-2024-07-18-preview',
+        }
+        allowed = frozenset({'gpt-4o-mini-2024-07-18'})
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=allowed):
+            with patch('sys.stderr') as err:
+                rc = main()
+
         assert rc == 4
         err.write.assert_called()
 
