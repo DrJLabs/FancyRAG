@@ -16,6 +16,15 @@ CATALOG_URL = "https://api.openai.com/v1/models"
 
 
 def _fetch_models(api_key: str) -> set[str]:
+    """
+    Fetch the OpenAI model catalog and extract model identifiers.
+    
+    Parameters:
+        api_key (str): OpenAI API key used for Authorization header.
+    
+    Returns:
+        set[str]: A set of model ID strings extracted from the catalog's `data` array. Non-dictionary entries are ignored; missing `id` fields contribute an empty string.
+    """
     request = urllib.request.Request(
         CATALOG_URL,
         headers={
@@ -29,10 +38,32 @@ def _fetch_models(api_key: str) -> set[str]:
 
 
 def _format_list(models: Iterable[str]) -> str:
+    """
+    Format an iterable of model identifiers into a sorted, comma-separated string.
+    
+    Parameters:
+        models: An iterable of model identifier strings.
+    
+    Returns:
+        A comma-separated string of the models sorted lexicographically; returns "<none>" if `models` is empty.
+    """
     return ", ".join(sorted(models)) or "<none>"
 
 
 def main() -> int:
+    """
+    Validate the configured OpenAI chat-model allowlist against the live model catalog.
+    
+    Fetches the model catalog using OPENAI_API_KEY, compares it to ALLOWED_CHAT_MODELS, and prints outcome messages to stdout or stderr. The function does not raise; it returns an integer exit code describing the result.
+    
+    Returns:
+        int: Exit code indicating the validation result:
+            0: Allowlist verified with no issues.
+            1: OPENAI_API_KEY environment variable is missing.
+            2: Failed to contact or fetch the model catalog (HTTP/URL error).
+            3: One or more allowlisted models are missing from the catalog.
+            4: New GPT-4.1 variants were detected in the catalog that are not in the allowlist.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("OPENAI_API_KEY is required to audit the OpenAI model catalog.", file=sys.stderr)
