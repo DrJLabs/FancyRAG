@@ -52,7 +52,7 @@ graph TD
 
 ## Environment Configuration
 - Run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` to start Neo4j and Qdrant locally; the file mounts data under `./.data/neo4j` and `./.data/qdrant` and reads credentials from `.env` (defaults `neo4j/password`).
-- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4o` family), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `QDRANT_URL`, and `QDRANT_API_KEY` (optional locally).
+- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4.1-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `QDRANT_URL`, and `QDRANT_API_KEY` (optional locally).
 - Optional guardrails: `OPENAI_MAX_ATTEMPTS` (default 3) controls retry ceilings, `OPENAI_BACKOFF_SECONDS` adjusts the initial exponential backoff, and `OPENAI_ENABLE_FALLBACK` toggles whether operators may use the documented fallback chat model. Leave unset to accept defaults.
 - Keep `.env` git-ignored; never commit real credentials or paste secrets into shared channels.
 - To target managed services, override the same variables without modifying script code.
