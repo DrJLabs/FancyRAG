@@ -376,15 +376,8 @@ def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
     if headers is None:
         return None
     header_value = None
-    header_keys = [_RETRY_AFTER_HEADER, _RETRY_AFTER_HEADER.capitalize(), _RETRY_AFTER_HEADER.title()]
-    if isinstance(headers, Mapping) or hasattr(headers, "get"):
-        for key in header_keys:
-            if hasattr(headers, "get"):
-                header_value = headers.get(key)
-            else:  # pragma: no cover - fallback
-                header_value = None
-            if header_value:
-                break
+    if hasattr(headers, "get"):
+        header_value = headers.get(_RETRY_AFTER_HEADER)
     if not header_value:
         return None
     header_value = str(header_value).strip()
