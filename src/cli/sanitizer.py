@@ -51,8 +51,10 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
         "password",
         "access_token",
         "refresh_token",
+        "x-openai-client",
+        "openai-organization",
     }
-) 
+)
 
 def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> str:
     """

@@ -64,9 +64,32 @@ class FlakyChatClient(StubOpenAIClient):
     def _chat(self, **kwargs):
         if self._failures > 0:
             self._failures -= 1
-            headers = {"Retry-After": "1"}
+            headers = {"Retry-After": "1", "retry-after": "1"}
             response = SimpleNamespace(headers=headers, request=SimpleNamespace(), status_code=429)
-            raise RateLimitError("slow down", response=response)
+            raise RateLimitError("slow down", response=response, body=None)
+        return super()._chat(**kwargs)
+
+
+class SequencedRateLimitClient(StubOpenAIClient):
+    def __init__(self, retry_after: list[str], *, always_fail: bool = False) -> None:
+        super().__init__()
+        self._retry_after = retry_after
+        self._always_fail = always_fail
+        self._attempts = 0
+
+    def _chat(self, **kwargs):
+        header_value = "1"
+        if self._retry_after:
+            index = min(self._attempts, len(self._retry_after) - 1)
+            header_value = self._retry_after[index]
+        self._attempts += 1
+        if self._always_fail or self._attempts <= len(self._retry_after):
+            response = SimpleNamespace(
+                headers={"Retry-After": header_value, "retry-after": header_value},
+                request=SimpleNamespace(),
+                status_code=429,
+            )
+            raise RateLimitError("slow down", response=response, body=None)
         return super()._chat(**kwargs)
 
 
@@ -128,3 +151,35 @@ def test_retry_after_header_controls_backoff():
 
     assert result.prompt_tokens == 4
     assert sleeps == [1.0, 1.0]
+
+
+def test_retry_after_sequence_uses_largest_header():
+    sleeps: list[float] = []
+    stub = SequencedRateLimitClient(["1", "2"])
+    shared = SharedOpenAIClient(
+        OpenAISettings.load({}, actor="pytest"),
+        client=stub,
+        metrics=create_metrics(),
+        sleep_fn=lambda duration: sleeps.append(round(duration, 1)),
+        clock=FakeClock(),
+    )
+
+    shared.chat_completion(messages=[{"role": "user", "content": "ping"}])
+
+    assert sleeps == [1.0, 2.0]
+
+
+def test_retry_after_exhaustion_raises_client_error():
+    stub = SequencedRateLimitClient(["1"], always_fail=True)
+    shared = SharedOpenAIClient(
+        OpenAISettings.load({"OPENAI_MAX_ATTEMPTS": "3"}, actor="pytest"),
+        client=stub,
+        metrics=create_metrics(),
+        sleep_fn=lambda *_: None,
+        clock=FakeClock(),
+    )
+
+    with pytest.raises(OpenAIClientError) as exc:
+        shared.chat_completion(messages=[{"role": "user", "content": "ping"}])
+
+    assert exc.value.details["reason"] == "rate_limit"

@@ -2,41 +2,53 @@
 
 ```text
 neo4j-graphrag/
-├── docker-compose.neo4j-qdrant.yml
+├── AGENTS.md
+├── README.md
 ├── docs/
 │   ├── architecture.md
 │   ├── prd.md
 │   ├── architecture/
+│   │   ├── coding-standards.md
 │   │   ├── overview.md
-│   │   ├── tech-stack.md
 │   │   ├── source-tree.md
-│   │   └── coding-standards.md
+│   │   └── tech-stack.md
+│   ├── bmad/
+│   │   └── focused-epics/
 │   └── prd/
+│       ├── epics.md
 │       ├── overview.md
 │       ├── requirements.md
-│       ├── epics.md
 │       └── technical-assumptions.md
+├── requirements.lock
 ├── scripts/
-│   ├── bootstrap.sh
-│   ├── create_vector_index.py
-│   ├── kg_build.py
-│   ├── export_to_qdrant.py
-│   ├── ask_qdrant.py
-│   └── backup-qdrant.sh
+│   ├── audit_openai_allowlist.py
+│   └── bootstrap.sh
 ├── src/
+│   ├── __init__.py
+│   ├── _compat/
+│   │   ├── __init__.py
+│   │   ├── structlog.py
+│   │   └── structlog_shim.py
 │   ├── cli/
-│   │   ├── ingest.py
-│   │   ├── vectors.py
-│   │   ├── search.py
-│   │   └── openai_client.py
-│   ├── pipelines/
-│   │   ├── kg_builder.py
-│   │   └── vector_upsert.py
+│   │   ├── __init__.py
+│   │   ├── diagnostics.py
+│   │   ├── openai_client.py
+│   │   ├── sanitizer.py
+│   │   ├── stories.py
+│   │   ├── telemetry.py
+│   │   └── utils.py
 │   └── config/
-│       ├── settings.py
-│       └── logging.py
+│       ├── __init__.py
+│       └── settings.py
 ├── tests/
-│   ├── unit/
-│   └── integration/
-└── pyproject.toml
+│   ├── conftest.py
+│   ├── fixtures/
+│   │   └── openai_probe/
+│   ├── integration/
+│   │   └── cli/
+│   └── unit/
+│       ├── cli/
+│       └── config/
+└── .github/workflows/
+    └── openai-allowlist-audit.yml
 ```

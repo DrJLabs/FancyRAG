@@ -40,3 +40,19 @@ def test_scrub_object_sanitizes_tuples_in_lists():
     scrubbed = sanitizer.scrub_object(payload)
     assert scrubbed["items"][0][1] == "***"
     assert "***" in scrubbed["items"][1][1]
+
+
+def test_scrub_object_handles_openai_headers_and_json_payload():
+    payload = {
+        "headers": {
+            "X-OpenAI-Client": "python/1.0.0",
+            "OpenAI-Organization": "org-123",
+        },
+        "body": '{"authorization": "Bearer test-token-987654"}',
+    }
+
+    scrubbed = sanitizer.scrub_object(payload)
+
+    assert scrubbed["headers"]["X-OpenAI-Client"] == "***"
+    assert scrubbed["headers"]["OpenAI-Organization"] == "***"
+    assert "***" in scrubbed["body"]

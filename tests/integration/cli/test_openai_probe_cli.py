@@ -4,10 +4,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Dict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_PATH = REPO_ROOT / "src"
+FIXTURE_ROOT = REPO_ROOT / "tests" / "fixtures" / "openai_probe"
 
 
 def _create_stub_openai(dest: Path) -> None:
@@ -167,5 +169,85 @@ def test_openai_probe_cli_generates_artifacts(tmp_path):
 
     metrics = metrics_path.read_text(encoding="utf-8")
     assert "graphrag_openai_chat_latency_ms_bucket" in metrics
+    _assert_matches_fixture(report_path, metrics_path)
     git_status = subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True)
     assert all("artifacts/" not in line for line in git_status.splitlines())
+
+
+def _assert_matches_fixture(report_path: Path, metrics_path: Path) -> None:
+    expected_report = json.loads((FIXTURE_ROOT / "probe.json").read_text(encoding="utf-8"))
+    normalised_report = _normalise_report(report_path)
+    assert normalised_report == expected_report
+
+    expected_metrics = (FIXTURE_ROOT / "metrics.prom").read_text(encoding="utf-8").strip()
+    normalised_metrics = _normalise_metrics(metrics_path.read_text(encoding="utf-8")).strip()
+    assert normalised_metrics == expected_metrics
+
+
+def _normalise_report(report_path: Path) -> Dict[str, Any]:
+    raw = json.loads(report_path.read_text(encoding="utf-8"))
+    def _latency(value: float) -> float:
+        if value is None:
+            return 0.0
+        return 0.0 if value < 0.05 else round(value, 2)
+
+    return {
+        "actor": raw.get("actor"),
+        "artifacts": {
+            "metrics": "artifacts/openai/metrics.prom",
+            "report": "artifacts/openai/probe.json",
+        },
+        "chat": {
+            "completion_tokens": raw["chat"].get("completion_tokens", 0),
+            "fallback_used": raw["chat"].get("fallback_used", False),
+            "finish_reason": raw["chat"].get("finish_reason"),
+            "latency_ms": _latency(raw["chat"].get("latency_ms", 0.0)),
+            "model": raw["chat"].get("model"),
+            "prompt_tokens": raw["chat"].get("prompt_tokens", 0),
+            "status": raw["chat"].get("status"),
+        },
+        "embedding": {
+            "expected_dimensions": raw["embedding"].get("expected_dimensions", 0),
+            "latency_ms": _latency(raw["embedding"].get("latency_ms", 0.0)),
+            "model": raw["embedding"].get("model"),
+            "status": raw["embedding"].get("status"),
+            "tokens_consumed": raw["embedding"].get("tokens_consumed", 0),
+            "vector_length": raw["embedding"].get("vector_length", 0),
+        },
+        "generated_at": "<timestamp>",
+        "settings": {
+            "backoff_seconds": raw["settings"].get("backoff_seconds"),
+            "chat_model": raw["settings"].get("chat_model"),
+            "chat_override": raw["settings"].get("chat_override"),
+            "embedding_dimensions": raw["settings"].get("embedding_dimensions"),
+            "embedding_model": raw["settings"].get("embedding_model"),
+            "fallback_enabled": raw["settings"].get("fallback_enabled"),
+            "max_attempts": raw["settings"].get("max_attempts"),
+        },
+        "status": raw.get("status"),
+    }
+
+
+def _normalise_metrics(metrics_text: str) -> str:
+    normalised_lines: list[str] = []
+    for line in metrics_text.strip().splitlines():
+        if line.startswith("#"):
+            normalised_lines.append(line)
+            continue
+        metric, value = line.split(" ", 1)
+        metric_name, brace, labels = metric.partition("{")
+        suffix = f"{brace}{labels}" if brace else ""
+        try:
+            numeric = float(value)
+        except ValueError:
+            normalised_lines.append(line)
+            continue
+        if metric_name.endswith("_created"):
+            normalised_lines.append(f"{metric_name}{suffix} <created>")
+            continue
+        if abs(numeric - round(numeric)) < 1e-9:
+            normalised_lines.append(f"{metric_name}{suffix} {int(round(numeric))}")
+            continue
+        adjusted = 0.0 if abs(numeric) < 0.05 else round(numeric, 2)
+        normalised_lines.append(f"{metric_name}{suffix} {adjusted:.2f}")
+    return "\n".join(normalised_lines) + "\n"
