@@ -16,7 +16,7 @@ def _create_stub_openai(dest: Path) -> None:
     """
     Create an on-disk stub of the `openai` package at the given destination.
     
-    The stub provides minimal classes and objects that mimic the public surface used by the code under test: exception types (APIError, APIConnectionError, APIStatusError, RateLimitError), lightweight usage/result containers, a chat completions helper that returns a single "stop" choice and usage counts, an embeddings helper that returns a 1536-length embedding vector, and an OpenAI class that exposes `chat.completions`, `embeddings`, and a `responses` list.
+    The stub exposes a minimal public surface used by tests: exception types (APIError, APIConnectionError, APIStatusError, RateLimitError), lightweight usage/result containers, a chat completions helper that yields a single choice with a `finish_reason` of `"stop"` and usage counts, an embeddings helper that returns a 1536-dimensional embedding and usage, and an `OpenAI` class exposing `chat.completions`, `embeddings`, and a `responses` list.
     
     Parameters:
         dest (Path): Directory in which an `openai` package directory (with `__init__.py`) will be created.
@@ -175,6 +175,16 @@ def test_openai_probe_cli_generates_artifacts(tmp_path):
 
 
 def _assert_matches_fixture(report_path: Path, metrics_path: Path) -> None:
+    """
+    Compare the generated probe JSON report and Prometheus metrics file to the corresponding fixtures after applying normalization.
+    
+    Parameters:
+        report_path (Path): Path to the generated probe JSON file to compare.
+        metrics_path (Path): Path to the generated Prometheus metrics text file to compare.
+    
+    Description:
+        Loads expected fixtures from FIXTURE_ROOT ("probe.json" and "metrics.prom"), normalizes the actual report and metrics using _normalise_report and _normalise_metrics, and asserts that the normalized actual outputs exactly match the fixtures.
+    """
     expected_report = json.loads((FIXTURE_ROOT / "probe.json").read_text(encoding="utf-8"))
     normalised_report = _normalise_report(report_path)
     assert normalised_report == expected_report
@@ -185,8 +195,35 @@ def _assert_matches_fixture(report_path: Path, metrics_path: Path) -> None:
 
 
 def _normalise_report(report_path: Path) -> Dict[str, Any]:
+    """
+    Normalizes a probe JSON report for deterministic comparison against fixtures.
+    
+    Parameters:
+        report_path (Path): Path to the probe JSON file to read and normalise.
+    
+    Description:
+        Loads the JSON report and returns a pruned, deterministic dictionary containing:
+        - actor, status, and a fixed artifacts mapping for metrics and report paths.
+        - chat and embedding sub-dictionaries with numeric fields normalised:
+          - latency values: None -> 0.0; values < 0.05 -> 0.0; otherwise rounded to 2 decimals.
+          - token and vector counts default to 0 when missing.
+        - settings copied from the original report.
+        - generated_at replaced with the placeholder "<timestamp>".
+    
+    Returns:
+        Dict[str, Any]: The normalised report dictionary suitable for fixture comparison.
+    """
     raw = json.loads(report_path.read_text(encoding="utf-8"))
     def _latency(value: float) -> float:
+        """
+        Normalize a latency value (in seconds) for reporting.
+        
+        Parameters:
+            value (float | None): Latency in seconds; may be None.
+        
+        Returns:
+            float: `0.0` if `value` is `None` or less than 0.05 seconds, otherwise `value` rounded to two decimal places.
+        """
         if value is None:
             return 0.0
         return 0.0 if value < 0.05 else round(value, 2)
@@ -229,6 +266,23 @@ def _normalise_report(report_path: Path) -> Dict[str, Any]:
 
 
 def _normalise_metrics(metrics_text: str) -> str:
+    """
+    Normalizes Prometheus metrics text for stable comparisons.
+    
+    Processes each line of the provided metrics text:
+    - Preserves comment lines (starting with '#') unchanged.
+    - Preserves metric labels/suffixes.
+    - If a metric value cannot be parsed as a float, keeps the line unchanged.
+    - For metrics with names ending in `_created`, replaces the numeric value with `<created>`.
+    - Formats integer-valued metrics as integers.
+    - For non-integer numeric values, if the absolute value is less than 0.05 normalizes it to `0.00`; otherwise rounds to two decimal places.
+    
+    Parameters:
+        metrics_text (str): Raw Prometheus-formatted metrics text.
+    
+    Returns:
+        str: Normalized metrics text with a trailing newline.
+    """
     normalised_lines: list[str] = []
     for line in metrics_text.strip().splitlines():
         if line.startswith("#"):

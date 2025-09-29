@@ -58,16 +58,14 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
 
 def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> str:
     """
-    Redact known secret values and pattern matches from a text string.
-    
-    Replaces occurrences of environment values listed in SECRET_ENV_KEYS, matches of SECRET_PATTERNS, and matches of any provided extra_patterns with "***".
+    Redact secret values and regex pattern matches from a text string by replacing them with "***".
     
     Parameters:
         text (str): Input text to sanitize.
-        extra_patterns (Iterable[re.Pattern[str]] | None): Optional additional compiled regular expressions whose matches will be replaced with "***".
+        extra_patterns (Iterable[re.Pattern[str]] | None): Optional compiled regular expressions whose matches will also be redacted.
     
     Returns:
-        str: A copy of `text` with secrets and pattern matches replaced by "***".
+        str: A copy of `text` with environment-derived secret values and all matched patterns replaced by "***".
     """
 
     sanitized = text
