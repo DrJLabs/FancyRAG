@@ -27,6 +27,8 @@ SECRET_ENV_KEYS: frozenset[str] = frozenset(
 
 
 SENSITIVE_KEY_PATTERN = r"(?:api[_-]?key|authorization|bearer|token|secret|password|access[_-]?token|refresh[_-]?token)"
+SENSITIVE_NAME_TOKENS: tuple[str, ...] = ("token", "secret", "password")
+SENSITIVE_KEY_SUFFIX_PATTERN = re.compile(r"(?i)(?:^|[_-])key(?:$|[_-])")
 
 
 SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -38,12 +40,14 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
         rf"['\"]?(?:Bearer\s+)?[A-Za-z0-9._-]{{4,}}['\"]?"  # sanitized value with optional quotes/Bearer prefix
     ),
     re.compile(r"(?i)(bearer)\s+[A-Za-z0-9._-]{10,}"),
+    re.compile(r"(?i)(basic)\s+[A-Za-z0-9+/=]{10,}"),
 )
 
 
 SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
     {
         "api_key",
+        "apikey",
         "authorization",
         "bearer",
         "token",
@@ -51,28 +55,65 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
         "password",
         "access_token",
         "refresh_token",
+        "x-openai-client",
+        "openai-organization",
     }
-) 
+)
 
-def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> str:
+def _is_sensitive_name(name: str) -> bool:
+    """Return True if a mapping or environment key name should be considered sensitive."""
+
+    lower = name.lower()
+    if lower in SENSITIVE_KEY_NAMES:
+        return True
+    if SENSITIVE_KEY_SUFFIX_PATTERN.search(name):
+        return True
+    tokens = re.split(r"[_\-\s]+|(?<=[a-z0-9])(?=[A-Z])", name)
+    for token in tokens:
+        lowered = token.lower()
+        if not lowered:
+            continue
+        if lowered in SENSITIVE_NAME_TOKENS or lowered == "key":
+            return True
+    return False
+
+
+def sanitize_text(text: Any, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> Any:
     """
-    Redact known secret values and pattern matches from a text string.
-    
-    Replaces occurrences of environment values listed in SECRET_ENV_KEYS, matches of SECRET_PATTERNS, and matches of any provided extra_patterns with "***".
-    
+    Redact secret values and regex pattern matches from a text string by replacing them with "***".
+
     Parameters:
-        text (str): Input text to sanitize.
-        extra_patterns (Iterable[re.Pattern[str]] | None): Optional additional compiled regular expressions whose matches will be replaced with "***".
-    
+        text (Any): Input text to sanitize; non-string values are returned unchanged.
+        extra_patterns (Iterable[re.Pattern[str]] | None): Optional compiled regular expressions whose matches will also be redacted.
+
     Returns:
-        str: A copy of `text` with secrets and pattern matches replaced by "***".
+        Any: A sanitized copy of `text` when it is a string; otherwise the original object is returned unchanged.
     """
+    if isinstance(text, (bytes, bytearray)):
+        try:
+            text = text.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            text = text.decode("utf-8", errors="replace")
+    elif not isinstance(text, str):
+        return text
 
     sanitized = text
+    values_to_mask: set[str] = set()
+    min_length = 4
+
     for key in SECRET_ENV_KEYS:
         value = os.environ.get(key)
-        if value:
-            sanitized = sanitized.replace(value, "***")
+        if value and len(value) >= min_length:
+            values_to_mask.add(value)
+
+    for key, value in os.environ.items():
+        if not value or len(value) < min_length:
+            continue
+        if _is_sensitive_name(key):
+            values_to_mask.add(value)
+
+    for value in sorted(values_to_mask, key=len, reverse=True):
+        sanitized = sanitized.replace(value, "***")
     for pattern in SECRET_PATTERNS:
         sanitized = pattern.sub("***", sanitized)
     if extra_patterns:
@@ -81,18 +122,65 @@ def sanitize_text(text: str, *, extra_patterns: Iterable[re.Pattern[str]] | None
     return sanitized
 
 
-def scrub_object(obj: Any) -> Any:
+def scrub_object(obj: Any, *, visited: set[int] | None = None) -> Any:
     """Deeply sanitize arbitrary objects for safe JSON/file serialization."""
 
     if isinstance(obj, str):
         return sanitize_text(obj)
+    if visited is None:
+        visited = set()
+
     if isinstance(obj, Mapping):
-        return {
-            key: "***" if key.lower() in SENSITIVE_KEY_NAMES else scrub_object(value)
-            for key, value in obj.items()
-        }
-    if isinstance(obj, list):
-        return [scrub_object(item) for item in obj]
-    if isinstance(obj, tuple):
-        return tuple(scrub_object(item) for item in obj)
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            result: dict[Any, Any] = {}
+            for key, value in obj.items():
+                if isinstance(key, str) and _is_sensitive_name(key):
+                    result[key] = "***" if value is not None else value
+                else:
+                    result[key] = scrub_object(value, visited=visited)
+            return result
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, list):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            return [scrub_object(item, visited=visited) for item in obj]
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, tuple):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            return tuple(scrub_object(item, visited=visited) for item in obj)
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, set):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            sanitized_items = [scrub_object(item, visited=visited) for item in obj]
+            return sorted(sanitized_items, key=lambda item: repr(item))
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, frozenset):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            sanitized_items = [scrub_object(item, visited=visited) for item in obj]
+            return tuple(sorted(sanitized_items, key=lambda item: repr(item)))
+        finally:
+            visited.remove(obj_id)
     return obj

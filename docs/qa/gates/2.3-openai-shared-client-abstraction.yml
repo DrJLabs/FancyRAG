@@ -31,9 +31,9 @@ nfr_validation:
 recommendations:
   immediate: []
   future:
-    - action: 'Generate golden metrics/report fixtures for the readiness probe to detect schema drift before shipping.'
+    - action: 'Generate golden metrics/report fixtures for the readiness probe to detect schema drift before shipping. (Completed 2025-09-29)'
       refs: ['docs/stories/2.3.openai-shared-client.md#follow-up-tasks']
-    - action: 'Schedule weekly allowlist audit automation in CI per researcher guidance.'
+    - action: 'Schedule weekly allowlist audit automation in CI per researcher guidance. (Completed 2025-09-29)'
       refs: ['docs/qa/assessments/2.3-researcher-validation-20250928.md']
-    - action: 'Finalize async OpenAI client strategy and capture mitigation plan before scaling workloads.'
-      refs: ['docs/stories/2.3.openai-shared-client.md#open-questions']
+    - action: 'Finalize async OpenAI client strategy and capture mitigation plan before scaling workloads. (Completed 2025-09-29)'
+      refs: ['docs/stories/2.3.openai-shared-client.md#decision-log']

@@ -1,0 +1,42 @@
+# HELP graphrag_openai_chat_latency_ms Latency distribution for OpenAI chat completions (ms).
+# TYPE graphrag_openai_chat_latency_ms histogram
+graphrag_openai_chat_latency_ms_bucket{le="100.0",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_bucket{le="250.0",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_bucket{le="500.0",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_bucket{le="1000.0",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_bucket{le="2000.0",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_bucket{le="5000.0",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_bucket{le="+Inf",model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_count{model="gpt-4o-mini"} 1
+graphrag_openai_chat_latency_ms_sum{model="gpt-4o-mini"} 0.00
+# HELP graphrag_openai_chat_latency_ms_created Latency distribution for OpenAI chat completions (ms).
+# TYPE graphrag_openai_chat_latency_ms_created gauge
+graphrag_openai_chat_latency_ms_created{model="gpt-4o-mini"} <created>
+# HELP graphrag_openai_chat_tokens_total Token usage for OpenAI chat completions.
+# TYPE graphrag_openai_chat_tokens_total counter
+graphrag_openai_chat_tokens_total{model="gpt-4o-mini",token_type="prompt"} 9
+graphrag_openai_chat_tokens_total{model="gpt-4o-mini",token_type="completion"} 3
+# HELP graphrag_openai_chat_tokens_created Token usage for OpenAI chat completions.
+# TYPE graphrag_openai_chat_tokens_created gauge
+graphrag_openai_chat_tokens_created{model="gpt-4o-mini",token_type="prompt"} <created>
+graphrag_openai_chat_tokens_created{model="gpt-4o-mini",token_type="completion"} <created>
+# HELP graphrag_openai_embedding_latency_ms Latency distribution for OpenAI embedding requests (ms).
+# TYPE graphrag_openai_embedding_latency_ms histogram
+graphrag_openai_embedding_latency_ms_bucket{le="100.0",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_bucket{le="250.0",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_bucket{le="500.0",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_bucket{le="1000.0",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_bucket{le="2000.0",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_bucket{le="5000.0",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_bucket{le="+Inf",model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_count{model="text-embedding-3-small"} 1
+graphrag_openai_embedding_latency_ms_sum{model="text-embedding-3-small"} 0.00
+# HELP graphrag_openai_embedding_latency_ms_created Latency distribution for OpenAI embedding requests (ms).
+# TYPE graphrag_openai_embedding_latency_ms_created gauge
+graphrag_openai_embedding_latency_ms_created{model="text-embedding-3-small"} <created>
+# HELP graphrag_openai_embedding_tokens_total Token usage for OpenAI embedding requests.
+# TYPE graphrag_openai_embedding_tokens_total counter
+graphrag_openai_embedding_tokens_total{model="text-embedding-3-small",token_type="input"} 7
+# HELP graphrag_openai_embedding_tokens_created Token usage for OpenAI embedding requests.
+# TYPE graphrag_openai_embedding_tokens_created gauge
+graphrag_openai_embedding_tokens_created{model="text-embedding-3-small",token_type="input"} <created>

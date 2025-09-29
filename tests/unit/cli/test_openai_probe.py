@@ -127,6 +127,11 @@ def test_openai_probe_identifies_fallback(tmp_path, monkeypatch):
 
 
 def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
+    """
+    Verify that the OpenAI probe retries on rate-limit errors and succeeds after the specified attempts.
+    
+    Uses a FlakyClient that raises RateLimitError for the first two chat calls with Retry-After headers, runs the probe with retry settings, and asserts that the probe exits successfully, the recorded sleep durations match the retry backoffs ([1.0, 1.0]), and the generated probe report marks the chat status as "success".
+    """
     monkeypatch.setenv("GRAPH_RAG_ACTOR", "pytest-actor")
 
     class FlakyClient(HappyClient):
@@ -141,20 +146,22 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
 
         def _chat(self, **kwargs):
             """
-            Simulates intermittent rate limiting by raising FakeRateLimit for the first two invocations, then delegates to the superclass chat implementation.
+            Simulates intermittent rate limiting by raising a RateLimitError on the first two calls and forwarding subsequent calls to the superclass.
             
-            Raises:
-                FakeRateLimit: for the first two calls to simulate a rate-limit error.
+            On the first two invocations this function raises an exception that mimics an HTTP 429 rate-limit response; on later invocations it delegates to and returns the result of the superclass `_chat`.
             
             Returns:
                 The chat response returned by the superclass `_chat`.
+            
+            Raises:
+                openai_client.RateLimitError: Raised for the first two invocations to simulate a rate-limit (HTTP 429) response.
             """
             self.chat_attempts += 1
             if self.chat_attempts < 3:
                 response = SimpleNamespace(
                     request=SimpleNamespace(),
                     status_code=429,
-                    headers={"Retry-After": "1"},
+                    headers={"Retry-After": "1", "retry-after": "1"},
                 )
                 raise openai_client.RateLimitError("slow down", response=response)
             return super()._chat(**kwargs)
@@ -185,12 +192,12 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
     class AlwaysRateLimited(HappyClient):
         def _chat(self, **kwargs):
             """
-            Simulate a chat API call that always fails due to a rate limit.
+            Simulate a chat API call that always fails with an OpenAI rate-limit error.
             
             All keyword arguments are accepted and ignored.
             
             Raises:
-                openai_client.RateLimitError: always raised with the message "token budget exceeded".
+                openai_client.RateLimitError: always raised with message "token budget exceeded"; the attached response has status_code 429 and empty headers.
             """
             response = SimpleNamespace(
                 request=SimpleNamespace(),
