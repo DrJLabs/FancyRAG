@@ -399,11 +399,9 @@ def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
     if response is None:
         return None
     headers = getattr(response, "headers", None)
-    if headers is None:
+    if headers is None or not hasattr(headers, "get"):
         return None
-    header_value = None
-    if hasattr(headers, "get"):
-        header_value = headers.get(_RETRY_AFTER_HEADER)
+    header_value = headers.get(_RETRY_AFTER_HEADER)
     if not header_value:
         return None
     header_value = str(header_value).strip()
