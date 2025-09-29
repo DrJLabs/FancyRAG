@@ -12,49 +12,24 @@ import platform
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from cli.openai_client import (
+    ChatResult,
+    EmbeddingResult,
+    OpenAIClientError,
+    SharedOpenAIClient,
+)
 from cli.sanitizer import sanitize_text, scrub_object
 from cli.telemetry import create_metrics
-from cli.utils import ensure_embedding_dimensions
-from config.settings import OpenAISettings
-
-try:  # pragma: no cover - import guarded for environments without OpenAI
-    from openai import APIConnectionError, APIError, APIStatusError, OpenAI, RateLimitError
-except ImportError:  # pragma: no cover - fallback types for static analysis/tests
-    class APIError(Exception):
-        pass
-
-    class APIConnectionError(APIError):
-        pass
-
-    class APIStatusError(APIError):
-        def __init__(self, message: str, *, status_code: int | None = None) -> None:
-            """
-            Initialize the exception with an error message and an optional numeric status code.
-            
-            Parameters:
-                message (str): Human-readable error message.
-                status_code (int | None): Optional numeric status code providing additional context (for example, an HTTP status); stored on the instance as `status_code`.
-            """
-            super().__init__(message)
-            self.status_code = status_code
-
-    class RateLimitError(APIStatusError):
-        pass
-
-    class OpenAI:  # type: ignore[no-redef]
-        def __init__(self) -> None:  # pragma: no cover - fallback stub
-            """
-            Initialize the fallback OpenAI client constructor that always fails.
-            
-            Raises:
-                RuntimeError: Indicates the required 'openai' package is not installed.
-            """
-            raise RuntimeError("openai package is not installed")
+from config.settings import (
+    DEFAULT_BACKOFF_SECONDS,
+    DEFAULT_MAX_RETRY_ATTEMPTS,
+    OpenAISettings,
+)
 
 MODULES: List[tuple[str, str]] = [
     ("neo4j_graphrag", "neo4j-graphrag"),
@@ -68,8 +43,6 @@ MODULES: List[tuple[str, str]] = [
 DEFAULT_REPORT_PATH = Path("artifacts") / "environment" / "versions.json"
 DEFAULT_PROBE_REPORT_PATH = Path("artifacts") / "openai" / "probe.json"
 DEFAULT_PROBE_METRICS_PATH = Path("artifacts") / "openai" / "metrics.prom"
-DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_BACKOFF_SECONDS = 0.5
 
 
 class DependencyError(RuntimeError):
@@ -309,323 +282,6 @@ def run_workspace(root: Path, *, write: bool, output: Optional[Path]) -> int:
     return 0
 
 
-def _create_openai_client() -> OpenAI:
-    """
-    Create an OpenAI client using the default configuration.
-    
-    Returns:
-        client (OpenAI): An OpenAI client instance configured with default settings.
-    """
-    return OpenAI()
-
-
-def _is_rate_limit_error(error: Exception) -> bool:
-    """
-    Detects whether an exception represents an OpenAI rate-limit condition.
-    
-    Parameters:
-        error (Exception): The exception to inspect.
-    
-    Returns:
-        True if the error is a rate-limiting error (e.g., a `RateLimitError` or an `APIStatusError` with HTTP status 429), False otherwise.
-    """
-    if isinstance(error, RateLimitError):
-        return True
-    if isinstance(error, APIStatusError) and getattr(error, "status_code", None) == 429:
-        return True
-    return False
-
-
-def _usage_value(usage: Any, attr: str) -> int:
-    """
-    Extracts an integer usage metric named by `attr` from a usage object.
-    
-    Parameters:
-    	usage (Any): Usage data which may be None, an object with attributes, or a dict.
-    	attr (str): Name of the attribute or key to extract from `usage`.
-    
-    Returns:
-    	int: The integer value of the requested metric, or 0 if the metric is missing or falsy.
-    """
-    if usage is None:
-        return 0
-
-    if isinstance(usage, dict):
-        value = usage.get(attr)
-    else:
-        value = getattr(usage, attr, None)
-
-    return int(value or 0)
-
-
-def _execute_with_backoff(
-    operation: Callable[[], Dict[str, Any]],
-    *,
-    description: str,
-    max_attempts: int,
-    base_delay: float,
-    sleep_fn: Callable[[float], None],
-) -> Dict[str, Any]:
-    """
-    Execute `operation` and retry on OpenAI rate-limit errors using exponential backoff.
-    
-    Parameters:
-        operation (Callable[[], Dict[str, Any]]): Callable that performs the probe step and returns a result mapping.
-        description (str): Short text describing the operation for error messages.
-        max_attempts (int): Maximum number of attempts before giving up.
-        base_delay (float): Initial backoff delay in seconds; doubled after each retry.
-        sleep_fn (Callable[[float], None]): Function used to pause between retries (e.g., time.sleep).
-    
-    Returns:
-        result (Dict[str, Any]): The mapping returned by a successful `operation` call.
-    
-    Raises:
-        ProbeFailure: If repeated rate-limit errors occur for `max_attempts` attempts, with remediation guidance and aggregated error details.
-        Exception: Any non-rate-limit exception raised by `operation` is propagated unchanged.
-    """
-    attempt = 0
-    delay = base_delay
-    errors: List[str] = []
-    while attempt < max_attempts:
-        attempt += 1
-        try:
-            return operation()
-        except Exception as exc:  # controlled handling
-            if _is_rate_limit_error(exc):
-                errors.append(str(exc))
-                if attempt >= max_attempts:
-                    raise ProbeFailure(
-                        f"Rate limit exceeded for {description} after {max_attempts} attempts.",
-                        remediation=(
-                            "Reduce concurrent OpenAI usage, review token budgets, "
-                            "and retry later or run with --skip-live while investigating."
-                        ),
-                        details={"errors": errors, "reason": "rate_limit"},
-                    ) from exc
-                sleep_fn(delay)
-                delay *= 2
-                continue
-            raise
-
-
-def _chat_probe(
-    client: OpenAI,
-    *,
-    settings: OpenAISettings,
-    max_attempts: int,
-    base_delay: float,
-    sleep_fn: Callable[[float], None],
-    metrics,
-) -> Dict[str, Any]:
-    """
-    Perform a chat completion probe against the OpenAI chat API, record probe metrics, and return a concise result summary.
-    
-    Parameters:
-        settings (OpenAISettings): Probe configuration including `chat_model`, `actor`, and `is_chat_override`.
-        max_attempts (int): Maximum number of attempts for the probe when retrying on rate limits.
-        base_delay (float): Base backoff delay in seconds used for exponential backoff between attempts.
-        sleep_fn (Callable[[float], None]): Function used to sleep between retries (e.g., time.sleep).
-        metrics: Metrics collector with an `observe_chat` method used to record latency and token usage.
-    
-    Returns:
-        Dict[str, Any]: A summary dictionary containing:
-            - "status": Probe status, e.g., "success".
-            - "model": The chat model name used.
-            - "fallback_used": Whether a chat override was applied.
-            - "latency_ms": Observed latency in milliseconds (rounded to two decimals).
-            - "prompt_tokens": Prompt token count (int).
-            - "completion_tokens": Completion token count (int).
-            - "finish_reason": Finish reason string from the model, or `None` if unavailable.
-    """
-    def _call() -> Dict[str, Any]:
-        start = time.perf_counter()
-        response = client.chat.completions.create(
-            model=settings.chat_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an OpenAI readiness probe verifying model guardrails.",
-                },
-                {
-                    "role": "user",
-                    "content": "Return a brief acknowledgement that chat completions are reachable.",
-                },
-            ],
-            temperature=0,
-            max_tokens=32,
-        )
-        latency_ms = (time.perf_counter() - start) * 1000.0
-        usage = getattr(response, "usage", None)
-        prompt_tokens = _usage_value(usage, "prompt_tokens")
-        completion_tokens = _usage_value(usage, "completion_tokens")
-
-        metrics.observe_chat(
-            model=settings.chat_model,
-            latency_ms=latency_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            actor=settings.actor,
-        )
-
-        finish_reason = None
-        choices = getattr(response, "choices", None)
-        if choices:
-            first = choices[0]
-            finish_reason = getattr(first, "finish_reason", None) or (
-                first.get("finish_reason") if isinstance(first, dict) else None
-            )
-
-        return {
-            "status": "success",
-            "model": settings.chat_model,
-            "fallback_used": settings.is_chat_override,
-            "latency_ms": round(latency_ms, 2),
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "finish_reason": finish_reason,
-        }
-
-    try:
-        return _execute_with_backoff(
-            _call,
-            description="chat completion",
-            max_attempts=max_attempts,
-            base_delay=base_delay,
-            sleep_fn=sleep_fn,
-        )
-    except APIConnectionError as exc:  # pragma: no cover - network failures
-        raise ProbeFailure(
-            "Failed to reach OpenAI for chat completion.",
-            remediation="Check network connectivity and OpenAI status page before retrying.",
-            details={"reason": "connection_error"},
-        ) from exc
-    except APIError as exc:
-        raise ProbeFailure(
-            "OpenAI chat completion returned an error.",
-            remediation="Verify model configuration and ensure the API key has access to the selected model.",
-            details={"reason": "api_error", "message": str(exc)},
-        ) from exc
-
-
-def _embedding_probe(
-    client: OpenAI,
-    *,
-    settings: OpenAISettings,
-    max_attempts: int,
-    base_delay: float,
-    sleep_fn: Callable[[float], None],
-    metrics,
-) -> Dict[str, Any]:
-    """
-    Perform an embedding probe against the OpenAI embedding endpoint and report metrics.
-    
-    Creates an embedding for a fixed probe input, validates the presence and dimensionality of the returned vector, records latency and token usage via the provided metrics collector, and returns a summary of the probe result.
-    
-    Parameters:
-        settings (OpenAISettings): Probe configuration (embedding model, expected dimensions, actor).
-        max_attempts (int): Maximum retry attempts for transient failures.
-        base_delay (float): Base backoff delay in seconds.
-        sleep_fn (Callable[[float], None]): Function used to sleep between backoff attempts.
-        
-    Returns:
-        dict: Summary containing keys:
-            - "status": "success" on success.
-            - "model": embedding model used.
-            - "expected_dimensions": expected embedding length from settings.
-            - "vector_length": length of the returned embedding vector.
-            - "latency_ms": observed request latency in milliseconds (rounded to 2 decimals).
-            - "tokens_consumed": total tokens reported by the provider (0 if unavailable).
-    
-    Raises:
-        ProbeFailure: If the response is missing embedding data, the embedding dimensions do not match expectations, network connectivity to OpenAI fails, or the OpenAI API returns an error. Details and remediation guidance are provided on the exception.
-    """
-    expected_length = settings.expected_embedding_dimensions()
-
-    def _call() -> Dict[str, Any]:
-        """
-        Validate an OpenAI embedding response, record embedding metrics, and return a summary of the probe result.
-        
-        Raises:
-            ProbeFailure: If the response contains no embedding data or the embedding vector is missing.
-        
-        Returns:
-            dict: Summary of the embedding probe containing:
-                - "status": Probe outcome, e.g., "success".
-                - "model": The embedding model used.
-                - "expected_dimensions": The expected embedding length.
-                - "vector_length": Length of the returned embedding vector.
-                - "latency_ms": Round-trip latency in milliseconds (rounded to two decimals).
-                - "tokens_consumed": Number of tokens reported as consumed.
-        """
-        start = time.perf_counter()
-        response = client.embeddings.create(
-            model=settings.embedding_model,
-            input="GraphRAG readiness probe vector check.",
-        )
-        latency_ms = (time.perf_counter() - start) * 1000.0
-        data = getattr(response, "data", None) or []
-        if not data:
-            raise ProbeFailure(
-                "Embedding response did not include any vector data.",
-                remediation="Inspect OpenAI embedding response structure; retry after confirming service health.",
-                details={"reason": "no_embedding"},
-            )
-        embedding = getattr(data[0], "embedding", None)
-        if embedding is None and isinstance(data[0], dict):
-            embedding = data[0].get("embedding")
-        if embedding is None:
-            raise ProbeFailure(
-                "Embedding vector missing from OpenAI response.",
-                remediation="Upgrade openai SDK or retry once service resumes returning vectors.",
-                details={"reason": "missing_embedding"},
-            )
-
-        ensure_embedding_dimensions(embedding, settings=settings)
-
-        usage = getattr(response, "usage", None)
-        tokens_consumed = _usage_value(usage, "total_tokens")
-        metrics.observe_embedding(
-            model=settings.embedding_model,
-            latency_ms=latency_ms,
-            vector_length=len(embedding),
-            tokens_consumed=tokens_consumed,
-            actor=settings.actor,
-        )
-        return {
-            "status": "success",
-            "model": settings.embedding_model,
-            "expected_dimensions": expected_length,
-            "vector_length": len(embedding),
-            "latency_ms": round(latency_ms, 2),
-            "tokens_consumed": tokens_consumed,
-        }
-
-    try:
-        return _execute_with_backoff(
-            _call,
-            description="embedding request",
-            max_attempts=max_attempts,
-            base_delay=base_delay,
-            sleep_fn=sleep_fn,
-        )
-    except ValueError as exc:
-        raise ProbeFailure(
-            str(exc),
-            remediation="Ensure OPENAI_EMBEDDING_DIMENSIONS matches the provider response or adjust overrides.",
-            details={"reason": "dimension_mismatch"},
-        ) from exc
-    except APIConnectionError as exc:  # pragma: no cover - network failures
-        raise ProbeFailure(
-            "Failed to reach OpenAI for embeddings.",
-            remediation="Check network connectivity and OpenAI status before retrying.",
-            details={"reason": "connection_error"},
-        ) from exc
-    except APIError as exc:
-        raise ProbeFailure(
-            "OpenAI embeddings API returned an error.",
-            remediation="Verify embedding model availability and review OpenAI account usage limits.",
-            details={"reason": "api_error", "message": str(exc)},
-        ) from exc
 
 
 def run_openai_probe(
@@ -636,7 +292,7 @@ def run_openai_probe(
     max_attempts: int,
     base_delay: float,
     sleep_fn: Callable[[float], None] = time.sleep,
-    client_factory: Callable[[], OpenAI] = _create_openai_client,
+    client_factory: Optional[Callable[[], Any]] = None,
 ) -> int:
     """
     Run an OpenAI readiness probe and write probe artifacts to the workspace.
@@ -666,12 +322,18 @@ def run_openai_probe(
                 "embedding_model": None,
                 "embedding_dimensions": None,
                 "chat_override": None,
+                "max_attempts": None,
+                "backoff_seconds": None,
+                "fallback_enabled": None,
             }
         return {
             "chat_model": settings.chat_model,
             "embedding_model": settings.embedding_model,
             "embedding_dimensions": settings.expected_embedding_dimensions(),
             "chat_override": settings.is_chat_override,
+            "max_attempts": settings.max_attempts,
+            "backoff_seconds": settings.backoff_seconds,
+            "fallback_enabled": settings.enable_fallback,
         }
 
     artifacts_root = artifacts_dir or (root / DEFAULT_PROBE_REPORT_PATH.parent)
@@ -715,6 +377,8 @@ def run_openai_probe(
         )
         return _record_failure(failure)
 
+    settings = replace(settings, max_attempts=max_attempts, backoff_seconds=base_delay)
+
     if skip_live:
         report = {
             "status": "skipped",
@@ -729,32 +393,60 @@ def run_openai_probe(
         return 0
 
     try:
+        shared_client: SharedOpenAIClient
         try:
-            client = client_factory()
-        except ProbeFailure:
-            raise
-        except Exception as exc:  # pragma: no cover - misconfiguration
+            candidate = client_factory() if client_factory else None
+            if isinstance(candidate, SharedOpenAIClient):
+                shared_client = candidate
+            else:
+                shared_client = SharedOpenAIClient(
+                    settings,
+                    client=candidate,
+                    metrics=metrics,
+                    sleep_fn=sleep_fn,
+                )
+        except OpenAIClientError as exc:
+            raise ProbeFailure(
+                str(exc),
+                remediation=exc.remediation,
+                details=exc.details,
+            ) from exc
+        except Exception as exc:  # pragma: no cover - unexpected client init failure
             raise ProbeFailure(
                 "Unable to create OpenAI client.",
                 remediation="Confirm the openai package is installed and API key configured.",
                 details={"reason": "client_init", "message": str(exc)},
             ) from exc
 
-        chat_summary = _chat_probe(
-            client,
-            settings=settings,
-            max_attempts=max_attempts,
-            base_delay=base_delay,
-            sleep_fn=sleep_fn,
-            metrics=metrics,
-        )
-        embedding_summary = _embedding_probe(
-            client,
-            settings=settings,
-            max_attempts=max_attempts,
-            base_delay=base_delay,
-            sleep_fn=sleep_fn,
-            metrics=metrics,
+        try:
+            chat_result = shared_client.chat_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an OpenAI readiness probe verifying model guardrails.",
+                    },
+                    {
+                        "role": "user",
+                        "content": "Return a brief acknowledgement that chat completions are reachable.",
+                    },
+                ],
+                temperature=0,
+                max_tokens=32,
+            )
+            embedding_result = shared_client.embedding(
+                input_text="GraphRAG readiness probe vector check.",
+            )
+        except OpenAIClientError as exc:
+            raise ProbeFailure(
+                str(exc),
+                remediation=exc.remediation,
+                details=exc.details,
+            ) from exc
+
+        chat_summary = _chat_summary_from_result(chat_result)
+        embedding_summary = _embedding_summary_from_result(
+            embedding_result,
+            expected_dimensions=settings.expected_embedding_dimensions(),
         )
     except ProbeFailure as exc:
         return _record_failure(exc)
@@ -781,6 +473,33 @@ def run_openai_probe(
         f"{report_path} and metrics at {metrics_path}.",
     )
     return 0
+
+
+def _chat_summary_from_result(result: ChatResult) -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "model": result.model,
+        "fallback_used": result.fallback_used,
+        "latency_ms": result.latency_ms,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "finish_reason": result.finish_reason,
+    }
+
+
+def _embedding_summary_from_result(
+    result: EmbeddingResult,
+    *,
+    expected_dimensions: int,
+) -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "model": result.model,
+        "expected_dimensions": expected_dimensions,
+        "vector_length": len(result.vector),
+        "latency_ms": result.latency_ms,
+        "tokens_consumed": result.tokens_consumed,
+    }
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -835,8 +554,8 @@ def _build_parser() -> argparse.ArgumentParser:
     probe.add_argument(
         "--max-attempts",
         type=int,
-        default=DEFAULT_MAX_ATTEMPTS,
-        help=f"Maximum retry attempts for rate-limited calls (default: {DEFAULT_MAX_ATTEMPTS}).",
+        default=DEFAULT_MAX_RETRY_ATTEMPTS,
+        help=f"Maximum retry attempts for rate-limited calls (default: {DEFAULT_MAX_RETRY_ATTEMPTS}).",
     )
     probe.add_argument(
         "--backoff-seconds",
