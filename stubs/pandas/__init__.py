@@ -11,7 +11,7 @@ NaT = object()
 class Series:  # pragma: no cover - simple stub
     """Placeholder for pandas.Series"""
 
-    def __init__(self, *args, **kwargs) -> None:  # noqa: D401
+    def __init__(self, *args, **kwargs) -> None:
         """
         Initialize the object by recording the provided positional and keyword arguments.
         
@@ -79,13 +79,13 @@ class Timedelta(_dt.timedelta):  # pragma: no cover - simple stub
     pass
 
 __all__ = [
-    "Series",
-    "DataFrame",
     "Categorical",
+    "DataFrame",
     "ExtensionArray",
-    "Timestamp",
-    "Timedelta",
     "NA",
     "NaT",
+    "Series",
+    "Timedelta",
+    "Timestamp",
     "core",
 ]

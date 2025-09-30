@@ -1,9 +1,35 @@
+from __future__ import annotations
+
+import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 
-SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+STUBS_DIR = ROOT_DIR / "stubs"
 
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+
+def _ensure_path(path: Path) -> None:
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+
+_ensure_path(SRC_DIR)
+
+
+def _load_pandas_stub() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "pandas", STUBS_DIR / "pandas" / "__init__.py"
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive guard
+        raise ImportError("Unable to load pandas stub module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module  # type: ignore[return-value]
+
+
+if "pandas" not in sys.modules:
+    sys.modules["pandas"] = _load_pandas_stub()
 

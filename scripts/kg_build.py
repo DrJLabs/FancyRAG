@@ -9,9 +9,10 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError, Neo4jError
@@ -182,52 +183,97 @@ def _ensure_directory(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _extract_content(raw_response: Any) -> str:
-    """
-    Extracts the textual content from a raw chat-completion or embedding API response.
-    
-    This function navigates common response shapes (objects with attributes or mappings/dicts) produced by chat-style APIs, looking for a top-level `choices` sequence, then a `message` entry, and finally `content`. If `content` is a string it is returned directly. If `content` is a sequence, textual parts are concatenated from each item (from `text.value` or `content` fields when present). If no text can be found, an empty string is returned.
-    
-    Parameters:
-        raw_response (Any): The raw response object or mapping returned by a chat/completion API.
-    
-    Returns:
-        str: The extracted text content, or an empty string if no content could be located.
-    """
-    choices = getattr(raw_response, "choices", None)
-    if choices is None and isinstance(raw_response, Mapping):
-        choices = raw_response.get("choices")
-    if not choices:
-        return ""
-    first = choices[0]
-    message = getattr(first, "message", None)
-    if message is None and isinstance(first, Mapping):
-        message = first.get("message")
-    if message is None:
-        return ""
-    content = getattr(message, "content", None)
-    if content is None and isinstance(message, Mapping):
-        content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, Sequence):
+def _attr_or_key(obj: Any, name: str) -> Any:
+    """Return an attribute or mapping entry, preferring attribute access."""
+
+    if hasattr(obj, name):
+        return getattr(obj, name)
+    if isinstance(obj, Mapping):
+        return obj.get(name)
+    return None
+
+
+def _is_sequence(obj: Any) -> bool:
+    return isinstance(obj, Sequence) and not isinstance(obj, (str, bytes, bytearray))
+
+
+def _iterable(value: Any) -> Iterable[Any]:
+    return value if _is_sequence(value) else ()
+
+
+def _extract_text(value: Any) -> str | None:
+    """Normalise common text container shapes to a plain string."""
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        inner = value.get("value")
+        return str(inner) if inner else None
+    if hasattr(value, "value"):
+        inner = getattr(value, "value")
+        return str(inner) if inner else None
+    return None
+
+
+@dataclass(frozen=True)
+class ChatContent:
+    parts: tuple[str, ...]
+
+    @classmethod
+    def from_raw(cls, message: Any) -> "ChatContent":
+        raw_content = _attr_or_key(message, "content")
+        if isinstance(raw_content, str):
+            return cls((raw_content,))
         parts: list[str] = []
-        for item in content:
-            text_value = getattr(item, "text", None)
-            if isinstance(text_value, Mapping):
-                part = text_value.get("value")
-            elif hasattr(text_value, "value"):
-                part = getattr(text_value, "value")
-            else:
-                part = None
-            if part:
-                parts.append(str(part))
-            else:
-                maybe_str = getattr(item, "content", None)
-                if maybe_str:
-                    parts.append(str(maybe_str))
-        return "".join(parts)
-    return ""
+        for item in _iterable(raw_content):
+            text = _extract_text(_attr_or_key(item, "text"))
+            if text:
+                parts.append(text)
+                continue
+            fallback = _attr_or_key(item, "content")
+            fallback_text = _extract_text(fallback)
+            if fallback_text:
+                parts.append(fallback_text)
+        return cls(tuple(parts))
+
+
+@dataclass(frozen=True)
+class ChatChoice:
+    content: ChatContent
+
+    @classmethod
+    def from_raw(cls, raw_choice: Any) -> "ChatChoice | None":
+        message = _attr_or_key(raw_choice, "message")
+        if message is None:
+            return None
+        return cls(ChatContent.from_raw(message))
+
+
+@dataclass(frozen=True)
+class ChatCompletion:
+    choices: tuple[ChatChoice, ...]
+
+    @classmethod
+    def from_raw(cls, raw_response: Any) -> "ChatCompletion":
+        raw_choices = _attr_or_key(raw_response, "choices")
+        normalised: list[ChatChoice] = []
+        for raw_choice in _iterable(raw_choices):
+            choice = ChatChoice.from_raw(raw_choice)
+            if choice is not None:
+                normalised.append(choice)
+        return cls(tuple(normalised))
+
+    def first_content(self) -> str:
+        if not self.choices:
+            return ""
+        return "".join(self.choices[0].content.parts)
+
+
+def _extract_content(raw_response: Any) -> str:
+    """Extract textual content from a chat-completion style response."""
+
+    completion = ChatCompletion.from_raw(raw_response)
+    return completion.first_content()
 
 
 def _strip_code_fence(text: str) -> str:

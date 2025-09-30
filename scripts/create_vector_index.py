@@ -9,8 +9,6 @@ with local smoke automation.
 
 from __future__ import annotations
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

@@ -81,19 +81,11 @@ def test_minimal_path_smoke() -> None:
     env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
     env["QDRANT_URL"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
     env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
-    env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
-    max_attempts = os.environ.get("OPENAI_MAX_ATTEMPTS", "")
-    env["OPENAI_MAX_ATTEMPTS"] = max_attempts if max_attempts.isdigit() and int(max_attempts) > 0 else "3"
-    backoff = os.environ.get("OPENAI_BACKOFF_SECONDS", "")
-    try:
-        float(backoff)
-    except (TypeError, ValueError):
-        backoff = "0.5"
-    env["OPENAI_BACKOFF_SECONDS"] = backoff
-    fallback = os.environ.get("OPENAI_ENABLE_FALLBACK", "true").lower()
-    if fallback not in {"1", "0", "true", "false", "yes", "no", "on", "off"}:
-        fallback = "true"
-    env["OPENAI_ENABLE_FALLBACK"] = fallback
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY environment variable is required for minimal path smoke test")
+    env["OPENAI_API_KEY"] = api_key
 
     # Ensure bind-mount directories exist before starting the stack.
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
