@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from neo4j import AsyncGraphDatabase
+from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError, Neo4jError
 
 from _compat.structlog import get_logger
@@ -267,7 +267,12 @@ class ChatCompletion(BaseModel):
 def _extract_content(raw_response: Any) -> str:
     """Extract textual content from a chat-completion style response."""
 
-    completion = ChatCompletion.model_validate(raw_response)
+    payload = raw_response
+    if hasattr(raw_response, "model_dump"):
+        payload = raw_response.model_dump()
+    elif hasattr(raw_response, "to_dict"):
+        payload = raw_response.to_dict()
+    completion = ChatCompletion.model_validate(payload)
     return completion.first_text()
 
 
@@ -428,22 +433,9 @@ class SharedOpenAILLM(LLMInterface):
         )
 
 
-async def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
-    """
-    Collects counts of documents, chunks, and document→chunk relationships from the specified Neo4j database.
-    
-    Queries the database for:
-    - number of Document nodes,
-    - number of Chunk nodes,
-    - number of HAS_CHUNK relationships from Document to Chunk.
-    
-    Parameters:
-        database (str | None): Name of the Neo4j database to query; pass `None` to use the driver's default.
-    
-    Returns:
-        Mapping[str, int]: A mapping with keys "documents", "chunks", and "relationships" containing integer counts.
-        Keys for which the query failed are omitted from the mapping.
-    """
+def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
+    """Collect counts of documents, chunks, and relationships from Neo4j."""
+
     queries = {
         "documents": "MATCH (:Document) RETURN count(*) AS value",
         "chunks": "MATCH (:Chunk) RETURN count(*) AS value",
@@ -452,7 +444,7 @@ async def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
     counts: dict[str, int] = {}
     for key, query in queries.items():
         try:
-            result = await driver.execute_query(query, database_=database)
+            result = driver.execute_query(query, database_=database)
             records = result
             if isinstance(result, tuple):
                 records = result[0]
@@ -467,7 +459,7 @@ async def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
     return counts
 
 
-async def _execute_pipeline(
+def _execute_pipeline(
     *,
     uri: str,
     auth: tuple[str, str],
@@ -477,9 +469,9 @@ async def _execute_pipeline(
     llm: SharedOpenAILLM,
     splitter: FixedSizeSplitter,
 ) -> tuple[str | None, Mapping[str, int]]:
-    """Run the SimpleKGPipeline using the async Neo4j driver."""
+    """Run the SimpleKGPipeline using the synchronous Neo4j driver."""
 
-    async with AsyncGraphDatabase.driver(uri, auth=auth) as driver:
+    with GraphDatabase.driver(uri, auth=auth) as driver:
         pipeline = SimpleKGPipeline(
             llm=llm,
             driver=driver,
@@ -489,9 +481,17 @@ async def _execute_pipeline(
             text_splitter=splitter,
             neo4j_database=database,
         )
-        result = await pipeline.run_async(text=source_text)
-        counts = await _collect_counts(driver, database=database)
-        return result.run_id, counts
+
+        async def _run() -> tuple[str | None, Mapping[str, int]]:
+            result = await pipeline.run_async(text=source_text)
+            loop = asyncio.get_running_loop()
+            counts = await loop.run_in_executor(
+                None,
+                lambda: _collect_counts(driver, database=database),
+            )
+            return result.run_id, counts
+
+        return asyncio.run(_run())
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
@@ -546,16 +546,14 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     counts: Mapping[str, int] = {}
 
     try:
-        run_id, counts = asyncio.run(
-            _execute_pipeline(
-                uri=uri,
-                auth=auth,
-                source_text=source_text,
-                database=args.database,
-                embedder=embedder,
-                llm=llm,
-                splitter=splitter,
-            )
+        run_id, counts = _execute_pipeline(
+            uri=uri,
+            auth=auth,
+            source_text=source_text,
+            database=args.database,
+            embedder=embedder,
+            llm=llm,
+            splitter=splitter,
         )
     except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
         raise RuntimeError(f"OpenAI request failed: {exc}") from exc
