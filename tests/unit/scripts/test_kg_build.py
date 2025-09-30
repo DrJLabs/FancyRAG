@@ -119,6 +119,19 @@ class FakePipeline:
         neo4j_database,
         kg_writer=None,
     ) -> None:
+        """
+        Initialize a FakePipeline used in tests with the provided components.
+        
+        Parameters:
+            llm: The language model stub used to simulate LLM invocations.
+            driver: The fake Neo4j driver instance used to capture and simulate queries.
+            embedder: The embedder stub used to generate embeddings for queries/text.
+            schema: Optional KG schema or mapping used by the pipeline.
+            from_pdf: Boolean indicating whether the source was a PDF (affects pipeline behavior in tests).
+            text_splitter: Component responsible for splitting text into chunks for ingestion.
+            neo4j_database: Name of the Neo4j database to target for queries.
+            kg_writer: Optional writer instance (e.g., SanitizingNeo4jWriter) used to persist data to the graph.
+        """
         self.llm = llm
         self.driver = driver
         self.embedder = embedder
@@ -130,6 +143,16 @@ class FakePipeline:
         self.kg_writer = kg_writer
 
     async def run_async(self, *, text: str = "", file_path: str | None = None):
+        """
+        Store invocation arguments, call embedder and LLM stubs to simulate a run, and return a test run identifier.
+        
+        Parameters:
+            text (str): Input text to process.
+            file_path (str | None): Optional path to the source file associated with the run.
+        
+        Returns:
+            SimpleNamespace: Object with attribute `run_id` containing the test run identifier (for example, "test-run").
+        """
         self.run_args = {"text": text, "file_path": file_path}
         # Simulate embedder and LLM usage to exercise client stubs
         self.embedder.embed_query(text)
@@ -139,10 +162,22 @@ class FakePipeline:
 
 class FakeDriver:
     def __init__(self) -> None:
+        """
+        Initialize the fake driver used in tests.
+        
+        Creates an empty `queries` list to record executed query texts and a `_pool` namespace with a `pool_config`
+        containing a `user_agent` attribute initialized to None.
+        """
         self.queries: list[str] = []
         self._pool = types.SimpleNamespace(pool_config=types.SimpleNamespace(user_agent=None))
 
     def __enter__(self) -> "FakeDriver":
+        """
+        Enter the context manager for the FakeDriver and provide the driver instance.
+        
+        Returns:
+            FakeDriver: The same FakeDriver instance (`self`) for use within the context.
+        """
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -152,9 +187,33 @@ class FakeDriver:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover
+        """
+        Exit the asynchronous context manager.
+        
+        Called when leaving an `async with` block; receives exception information if an exception was raised inside the block. This method does not suppress exceptions (it always returns None).
+        
+        Parameters:
+            exc_type (type | None): Exception class if an exception was raised, otherwise None.
+            exc (BaseException | None): Exception instance if an exception was raised, otherwise None.
+            tb (types.TracebackType | None): Traceback object for the exception, if any.
+        """
         return None
 
     def execute_query(self, query: str, *params, database_: str | None = None, **kwargs):
+        """
+        Simulate executing a Cypher query against a test Neo4j driver and return canned responses based on the query text.
+        
+        This test helper records the trimmed query into self.queries and returns a tuple shaped like (records, summary, metadata) where `records` is a list of dicts representing query results. The returned `records` vary deterministically for specific query patterns used in tests (e.g., DETACH DELETE, MERGE for Document nodes, dbms.components, and various MATCH ... RETURN count queries).
+        
+        Parameters:
+            query (str): The Cypher query text to execute; it will be trimmed and recorded.
+            *params: Ignored positional parameters for compatibility with call sites.
+            database_ (str | None): Ignored database selector; present for compatibility with call sites.
+            **kwargs: Ignored keyword parameters for compatibility with call sites.
+        
+        Returns:
+            tuple: A 3-tuple (records, summary, metadata) where `records` is a list of result dictionaries (e.g., [{"value": N}] or [{"versions": [...], "edition": "..."}]) and `summary` and `metadata` are always None in this fake driver.
+        """
         query_text = query.strip()
         self.queries.append(query_text)
         if "DETACH DELETE" in query_text:
@@ -214,6 +273,14 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs)))
 
     def driver_factory(*_args, **_kwargs):
+        """
+        Create a new FakeDriver, record it in `created_drivers`, and return it.
+        
+        Instantiates a FakeDriver, appends it to the module-level list `created_drivers` for later inspection in tests, and returns the instance. Any positional or keyword arguments are ignored.
+        
+        Returns:
+            FakeDriver: The newly created driver instance.
+        """
         driver = FakeDriver()
         created_drivers.append(driver)
         return driver

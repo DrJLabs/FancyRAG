@@ -23,6 +23,12 @@ from fancyrag.utils import ensure_env
 
 
 def _load_settings() -> OpenAISettings:
+    """
+    Load OpenAI settings configured for the "ask_qdrant" actor.
+    
+    Returns:
+        OpenAISettings: An OpenAISettings instance with the actor set to "ask_qdrant".
+    """
     return OpenAISettings.load(actor="ask_qdrant")
 
 
@@ -33,6 +39,18 @@ def _query_qdrant(
     vector: list[float],
     limit: int,
 ) -> list[Any]:
+    """
+    Query a Qdrant collection for the nearest points to a provided embedding vector.
+    
+    Parameters:
+        client (QdrantClient): Qdrant client used to perform the query.
+        collection (str): Name of the Qdrant collection to search.
+        vector (list[float]): Embedding vector used as the query.
+        limit (int): Maximum number of matching points to return.
+    
+    Returns:
+        list[Any]: A list of matching point objects (including payload) from Qdrant.
+    """
     try:
         response = client.query_points(
             collection_name=collection,
@@ -51,6 +69,22 @@ def _query_qdrant(
 
 
 def _fetch_chunk_context(driver, *, chunk_id: str, database: str | None) -> dict[str, Any]:
+    """
+    Retrieve stored text and document metadata for a chunk identified by `chunk_id` from Neo4j.
+    
+    Parameters:
+    	chunk_id (str): The chunk identifier to look up.
+    	database (str | None): Optional Neo4j database name to execute the query against.
+    
+    Returns:
+    	context (dict[str, Any]): A mapping with at least `chunk_id`. When a matching chunk is found, includes:
+    		- `chunk_id` (str)
+    		- `text` (str): chunk text content
+    		- `source_path` (str): path or source of the chunk
+    		- `document_name` (str, optional): name of the parent document when available
+    		- `document_source_path` (str, optional): source path of the parent document when available
+    	If no matching node exists, returns `{"chunk_id": chunk_id}`.
+    """
     records, _, _ = driver.execute_query(
         """
         MATCH (doc:Document)-[:HAS_CHUNK]->(chunk:Chunk {chunk_id: $chunk_id})
@@ -80,6 +114,11 @@ def _fetch_chunk_context(driver, *, chunk_id: str, database: str | None) -> dict
 
 
 def main() -> None:
+    """
+    Run a CLI that queries Qdrant for top-k chunk matches and enriches each match with Neo4j document context.
+    
+    Accepts command-line flags (--question, --top-k, --collection), reads required environment variables for OpenAI, Qdrant, and Neo4j, obtains an embedding for the provided question, queries Qdrant for nearest chunks, fetches associated chunk/document context from Neo4j, and produces a sanitized JSON result. The function writes the result to artifacts/local_stack/ask_qdrant.json, prints the sanitized JSON to stdout, and raises SystemExit(1) if an error occurs.
+    """
     parser = argparse.ArgumentParser(description="Query Qdrant for chunk matches")
     parser.add_argument("--question", required=True)
     parser.add_argument("--top-k", type=int, default=5)

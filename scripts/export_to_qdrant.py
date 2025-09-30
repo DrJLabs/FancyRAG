@@ -22,7 +22,16 @@ from fancyrag.utils import ensure_env
 
 
 def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
-    """Fetch chunk data (id, source path, text, embeddings) from Neo4j."""
+    """
+    Retrieve chunk records from Neo4j including chunk_id, chunk_index, text, embedding, and source_path.
+    
+    Parameters:
+        database (str | None): Optional Neo4j database name to execute the query against; if None the driver's default database is used.
+    
+    Returns:
+        list[dict[str, Any]]: A list of records where each dictionary contains the keys
+        'chunk_id', 'chunk_index', 'text', 'embedding', and 'source_path'.
+    """
 
     records, _, _ = driver.execute_query(
         """
@@ -40,6 +49,16 @@ def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
 
 
 def _batched(iterable: Iterable[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
+    """
+    Yield successive batches of items from `iterable` as lists of up to `size` elements.
+    
+    Parameters:
+        iterable (Iterable[dict[str, Any]]): Source sequence of chunk dictionaries.
+        size (int): Maximum number of items per yielded batch; must be >= 1.
+    
+    Returns:
+        Iterable[list[dict[str, Any]]]: Consecutive lists containing up to `size` items from `iterable`. The final batch may contain fewer than `size` items.
+    """
     batch: list[dict[str, Any]] = []
     for item in iterable:
         batch.append(item)
@@ -51,7 +70,16 @@ def _batched(iterable: Iterable[dict[str, Any]], size: int) -> Iterable[list[dic
 
 
 def _coerce_point_id(value: Any, fallback: int) -> int | str:
-    """Convert chunk identifiers into a Qdrant-compatible point id."""
+    """
+    Normalize a chunk identifier into an integer or string suitable for use as a Qdrant point id.
+    
+    Parameters:
+        value (Any): The original chunk identifier; may be None, int, str, or any other type.
+        fallback (int): Value to use when `value` is None.
+    
+    Returns:
+        int | str: `fallback` if `value` is None; the original int if `value` is an int; if `value` is a string, the trimmed string converted to an int when it contains only digits, otherwise the trimmed string; for other types, the string representation of `value`.
+    """
 
     if value is None:
         return fallback
@@ -66,7 +94,22 @@ def _coerce_point_id(value: Any, fallback: int) -> int | str:
 
 
 def main() -> None:
-    """Export chunk embeddings to Qdrant using the current Neo4j dataset."""
+    """
+    Orchestrate export of chunk embeddings from Neo4j into a Qdrant collection.
+    
+    Connects to Neo4j using environment credentials, fetches chunk records (including text and embedding),
+    creates or replaces the target Qdrant collection configured for the embedding dimensionality,
+    and upserts points in batches. Writes a sanitized JSON log artifact to artifacts/local_stack/export_to_qdrant.json
+    and prints the same sanitized log to stdout.
+    
+    Environment requirements:
+    - QDRANT_URL, NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD must be set. Optional: QDRANT_API_KEY, NEO4J_DATABASE.
+    
+    Raises:
+        RuntimeError: If chunk embeddings are missing or empty.
+        SystemExit: Exits with status 1 when the export operation fails.
+        Exceptions propagated from Neo4j/Qdrant clients or filesystem operations may also be raised.
+    """
 
     parser = argparse.ArgumentParser(description="Export embeddings to Qdrant")
     parser.add_argument("--collection", default="chunks_main")

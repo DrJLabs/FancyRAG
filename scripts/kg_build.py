@@ -77,7 +77,19 @@ PRIMITIVE_TYPES = (str, int, float, bool)
 
 
 def _ensure_jsonable(value: Any) -> Any:
-    """Recursively coerce a value into a JSON-serialisable structure."""
+    """
+    Coerce an arbitrary Python value into a JSON-serializable structure.
+    
+    Parameters:
+        value (Any): The input to convert. May be a primitive, mapping, sequence, or any other object.
+    
+    Returns:
+        Any: A JSON-serializable representation of `value`:
+            - primitives and `None` are returned unchanged,
+            - mappings become dicts with string keys and JSONable values,
+            - lists/tuples/sets become lists of JSONable items,
+            - all other objects are converted to their string representation.
+    """
 
     if value is None or isinstance(value, PRIMITIVE_TYPES):
         return value
@@ -89,7 +101,21 @@ def _ensure_jsonable(value: Any) -> Any:
 
 
 def _sanitize_property_value(value: Any) -> Any:
-    """Sanitize a Neo4j property value to primitives or primitive lists."""
+    """
+    Convert a value into a Neo4j-safe property form (a primitive, a homogeneous list of primitives, or a JSON string).
+    
+    If the input is None or a primitive type (str, int, float, bool), it is returned unchanged. Sequences (list/tuple/set) are recursively sanitized: if all non-None elements coerce to the same primitive type, a list of those primitives is returned; otherwise the original sequence is serialized to a JSON string. Mappings are serialized to a JSON string. Any other value is coerced to its string representation.
+    
+    Parameters:
+        value (Any): The value to sanitize for Neo4j property storage.
+    
+    Returns:
+        Any: One of the following:
+            - None or a primitive (str, int, float, bool) when the value is already primitive or None.
+            - A list of primitives when a sequence contains homogeneous primitive elements.
+            - A JSON string for mappings or heterogeneous/complex sequences.
+            - A string for other non-serializable objects.
+    """
 
     if value is None or isinstance(value, PRIMITIVE_TYPES):
         return value
@@ -117,6 +143,17 @@ class SanitizingNeo4jWriter(Neo4jWriter):
     """Neo4j writer that coerces complex properties into Neo4j-friendly primitives."""
 
     def _sanitize_properties(self, properties: Mapping[str, Any]) -> dict[str, Any]:
+        """
+        Sanitize a mapping of node/relationship properties into Neo4j-friendly primitives.
+        
+        Iterates over the provided properties, converts each value using _sanitize_property_value, omits entries whose sanitized value is None, and returns a dictionary with stringified keys and sanitized values.
+        
+        Parameters:
+            properties (Mapping[str, Any]): Original property mapping to sanitize.
+        
+        Returns:
+            dict[str, Any]: A new dictionary containing only properties with sanitized, JSON/Neo4j-compatible values and string keys.
+        """
         sanitized: dict[str, Any] = {}
         for key, value in properties.items():
             clean_value = _sanitize_property_value(value)
@@ -126,6 +163,16 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         return sanitized
 
     def _nodes_to_rows(self, nodes, lexical_graph_config):  # type: ignore[override]
+        """
+        Convert node objects into row dictionaries and sanitize each row's `properties` for JSON- and Neo4j-friendly values.
+        
+        Parameters:
+            nodes: An iterable of node objects to be converted into rows.
+            lexical_graph_config: Configuration used by the base conversion process (passed through to the superclass).
+        
+        Returns:
+            rows (list[dict]): A list of row dictionaries as produced by the superclass, with each row's "properties" replaced by a sanitized mapping suitable for Neo4j storage and JSON serialization.
+        """
         rows = super()._nodes_to_rows(nodes, lexical_graph_config)
         for row in rows:
             properties = row.get("properties") or {}
@@ -133,6 +180,16 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         return rows
 
     def _relationships_to_rows(self, relationships):  # type: ignore[override]
+        """
+        Transform relationship objects into row dictionaries and sanitize each row's `properties` mapping.
+        
+        Parameters:
+            relationships: An iterable of relationship objects to convert into rows.
+        
+        Returns:
+            rows (list[dict]): A list of row dictionaries for each relationship where the `properties`
+            entry has been sanitized into JSON/Neo4j-friendly primitive values.
+        """
         rows = super()._relationships_to_rows(relationships)
         for row in rows:
             properties = row.get("properties") or {}
@@ -145,6 +202,15 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         graph,
         lexical_graph_config: LexicalGraphConfig = LexicalGraphConfig(),
     ) -> KGWriterModel:
+        """
+        Run the writer against the provided lexical graph using the given configuration.
+        
+        Parameters:
+        	lexical_graph_config (LexicalGraphConfig): Configuration that controls how lexical graph elements are translated into nodes and relationships; used to influence property/label mapping and other writer behavior.
+        
+        Returns:
+        	KGWriterModel: Model summarizing the result of the write operation (nodes/relationships created or updated and related metadata).
+        """
         return await super().run(graph, lexical_graph_config)
 
 
@@ -152,11 +218,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
     Parse command-line arguments for the KG build script.
     
-    Parameters:
-        argv (Sequence[str] | None): Optional list of argument strings to parse (defaults to process argv when None).
-    
-    Returns:
-        argparse.Namespace: Parsed arguments with attributes `source`, `chunk_size`, `chunk_overlap`, `database`, and `log_path`.
+    Accepts an optional list of argument strings (typically None to use sys.argv) and returns a Namespace containing the parsed options:
+    - source: path to the sample content to ingest.
+    - chunk_size: character chunk size for the text splitter.
+    - chunk_overlap: character overlap between chunks.
+    - database: optional Neo4j database name (None uses server default).
+    - log_path: file path for the structured JSON run log.
     """
     parser = argparse.ArgumentParser(
         description="Run the SimpleKGPipeline against local sample content, persisting results to Neo4j with structured logging and retries.",
@@ -525,7 +592,17 @@ class SharedOpenAILLM(LLMInterface):
 
 
 def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
-    """Collect counts of documents, chunks, and relationships from Neo4j."""
+    """
+    Return counts of Document nodes, Chunk nodes, and HAS_CHUNK relationships from the Neo4j database.
+    
+    Queries three counts ("documents", "chunks", "relationships") against the provided driver and returns a mapping from those keys to integer counts. Keys are included only for queries that returned a usable result; a failed query will be skipped (logged) and not appear in the result.
+    
+    Parameters:
+        database (str | None): Optional database name to run the queries against. Use None for the driver's default database.
+    
+    Returns:
+        Mapping[str, int]: A mapping with any of the keys `"documents"`, `"chunks"`, and `"relationships"` mapped to their respective integer counts.
+    """
 
     queries = {
         "documents": "MATCH (:Document) RETURN count(*) AS value",
@@ -575,7 +652,17 @@ def _execute_pipeline(
     llm: SharedOpenAILLM,
     splitter: FixedSizeSplitter,
 ) -> str | None:
-    """Run the SimpleKGPipeline using the synchronous Neo4j driver."""
+    """
+    Execute the knowledge-graph pipeline against a Neo4j instance and return the pipeline run identifier.
+    
+    This call resets the target Neo4j database before running the pipeline and writes sanitized nodes and relationships via the provided writer and components.
+    
+    Parameters:
+        database (str | None): Name of the Neo4j database to use; pass `None` to use the server default.
+    
+    Returns:
+        run_id (str | None): The pipeline run identifier if produced, `None` otherwise.
+    """
 
     with GraphDatabase.driver(uri, auth=auth) as driver:
         _reset_database(driver, database=database)
@@ -592,6 +679,12 @@ def _execute_pipeline(
         )
 
         async def _run() -> str | None:
+            """
+            Execute the configured pipeline on the prepared source text and return its run identifier.
+            
+            Returns:
+                run_id (str | None): Identifier of the completed pipeline run, or None if a run ID was not produced.
+            """
             result = await pipeline.run_async(text=source_text)
             return result.run_id
 
@@ -604,7 +697,15 @@ def _ensure_document_relationships(
     database: str | None,
     source_path: Path,
 ) -> None:
-    """Ensure chunk nodes are linked to a document with HAS_CHUNK relationships."""
+    """
+    Ensure a Document node exists for the given source file and link all Chunk nodes to it with HAS_CHUNK relationships.
+    
+    Creates or merges a Document node with its name and title set to the source file name on creation, sets each Chunk.node's `source_path` property to the provided path, assigns a sequential `chunk_id` when one is not already present, and creates a HAS_CHUNK relationship from the Document to each Chunk.
+    
+    Parameters:
+        database (str | None): Optional Neo4j database name to execute the query against; pass None to use the default.
+        source_path (Path): Filesystem path of the source document; used as the Document.source_path value and to derive the Document.name/title.
+    """
 
     driver.execute_query(
         """
@@ -629,20 +730,20 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     """
     Builds a knowledge graph from a source file and writes a structured JSON run log.
     
-    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, runs the SimpleKGPipeline to ingest the source text into Neo4j using OpenAI-based embedder and LLM adapters, collects database counts, writes a sanitized JSON log to disk, and returns the log dictionary.
+    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, ingests the source text into Neo4j using configured OpenAI clients and the pipeline, ensures document–chunk relationships, collects database counts, writes a sanitized JSON log to disk, prints the log, and returns the log dictionary.
     
     Parameters:
-        argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv; when None, defaults from the environment/argument parser are used.
+        argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv; when None the process uses default argument parsing.
     
     Returns:
-        dict[str, Any]: A structured log dictionary containing keys such as:
+        dict[str, Any]: A structured run log containing keys including:
             - timestamp: ISO 8601 UTC timestamp of completion
             - operation: the operation name ("kg_build")
             - status: operation status ("success" on normal completion)
             - duration_ms: elapsed time in milliseconds
             - source: path to the input source file
             - input_bytes: size of the input in bytes
-            - chunking: mapping with "size" and "overlap" values used for splitting
+            - chunking: mapping with "size" and "overlap" used for splitting
             - database: Neo4j database name (or None)
             - openai: OpenAI settings used (chat_model, embedding_model, embedding_dimensions, max_attempts)
             - counts: mapping with counts of ingested entities (documents, chunks, relationships)
