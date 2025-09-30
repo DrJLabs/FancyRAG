@@ -12,6 +12,7 @@ else
 fi
 SCRIPT_NAME=$(basename "$0")
 
+# usage prints the script usage help text describing commands and options, then exits with status 1.
 usage() {
   cat <<USAGE
 Usage: ${SCRIPT_NAME} [--config|--up|--status|--down] [options]
@@ -29,6 +30,7 @@ USAGE
   exit 1
 }
 
+# require_command checks that the specified command exists in PATH and, if missing, prints an error to stderr and exits with status 127.
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "\u001b[31merror:\u001b[0m required command '$1' not found" >&2
@@ -36,6 +38,7 @@ require_command() {
   fi
 }
 
+# ensure_compose_file verifies that the resolved compose file exists and prints an error and exits with status 1 if it is missing.
 ensure_compose_file() {
   if [[ ! -f "${COMPOSE_PATH}" ]]; then
     echo "\u001b[31merror:\u001b[0m compose file '${COMPOSE_PATH}' not found" >&2
@@ -43,14 +46,18 @@ ensure_compose_file() {
   fi
 }
 
+# compose runs Docker Compose using the resolved COMPOSE_PATH as the compose file.
 compose() {
   docker compose -f "${COMPOSE_PATH}" "$@"
 }
 
+# status_table prints a tab-separated table of Docker Compose services showing service name, state, and health (if present).
 status_table() {
   compose ps --format '{{.Service}}\t{{.State}}\t{{if .Health}}{{.Health}}{{end}}'
 }
 
+# all_healthy checks whether every service reported by status_table is in a running state and, when a health value is present, that it is `healthy`.
+# Exits with status 0 if all services are acceptable, 1 if there are no services or any service is not running/healthy.
 all_healthy() {
   local rows
   rows=$(status_table)
@@ -67,6 +74,8 @@ all_healthy() {
   return 0
 }
 
+# wait_for_health polls the compose services until every service is running and healthy, then prints the status table and exits successfully.
+# On timeout it prints an error, outputs the status table, and returns a non-zero status.
 wait_for_health() {
   local max_attempts=30
   local sleep_seconds=5
@@ -84,6 +93,7 @@ wait_for_health() {
   return 1
 }
 
+# main parses command-line arguments, ensures Docker and the compose file are available, and dispatches subcommands (--config, --up, --status [--wait], --down [--destroy-volumes]) to control the local Docker Compose stack.
 main() {
   [[ $# -eq 0 ]] && usage
 

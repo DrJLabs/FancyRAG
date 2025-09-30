@@ -24,6 +24,20 @@ REQUIRED_SCRIPTS = [
 
 
 def run_command(*args: str, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
+    """
+    Run a subprocess command with stdout/stderr captured and optionally assert success.
+    
+    Parameters:
+        *args (str): Command and its arguments as separate strings (executable followed by args).
+        env (dict[str, str]): Environment mapping to use for the subprocess.
+        check (bool): If true, raise AssertionError when the command exits with a non-zero status.
+    
+    Returns:
+        subprocess.CompletedProcess[str]: The completed process object; `stdout` contains combined stdout and stderr.
+    
+    Raises:
+        AssertionError: If `check` is true and the subprocess exit code is non-zero. 
+    """
     result = subprocess.run(
         args,
         env=env,
@@ -40,6 +54,11 @@ def run_command(*args: str, env: dict[str, str], check: bool = True) -> subproce
 @pytest.mark.integration
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker command not available")
 def test_minimal_path_smoke(tmp_path: Path) -> None:
+    """
+    Integration test that boots a local Docker stack, runs a minimal end-to-end workflow, and tears the stack down.
+    
+    Skips the test if required Docker assets or helper scripts are missing. When run, the test configures environment variables and required bind-mount directories, brings up the local stack, waits for readiness, executes the sequence of minimal-path scripts that create a vector index, build the knowledge graph, export to Qdrant, and query Qdrant, then tears the stack down and destroys volumes on completion.
+    """
     if not COMPOSE_FILE.exists():
         pytest.skip("Compose file missing; ensure Story 2.4 assets are generated.")
     if not CHECK_SCRIPT.exists():

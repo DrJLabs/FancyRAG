@@ -12,6 +12,18 @@ import datetime as _dt
 
 
 def ensure_env(var: str) -> str:
+    """
+    Retrieve the value of an environment variable or exit the process if it is missing.
+    
+    Parameters:
+        var (str): Name of the environment variable to read.
+    
+    Returns:
+        value (str): The environment variable's value.
+    
+    Raises:
+        SystemExit: If the environment variable is not set.
+    """
     value = os.getenv(var)
     if not value:
         raise SystemExit(f"Missing required environment variable: {var}")
@@ -19,6 +31,11 @@ def ensure_env(var: str) -> str:
 
 
 def main() -> None:
+    """
+    Create a stub export log for exporting embeddings to Qdrant and persist it to artifacts/local_stack.
+    
+    Parses an optional `--collection` argument, verifies that the `QDRANT_URL` and `NEO4J_URI` environment variables are present, creates the artifacts/local_stack directory if needed, writes a structured JSON log file at artifacts/local_stack/export_to_qdrant.json (containing timestamp, operation, collection, status, and message), and prints the same JSON log to standard output.
+    """
     parser = argparse.ArgumentParser(description="Export embeddings to Qdrant (stub)")
     parser.add_argument("--collection", default="chunks_main")
     args = parser.parse_args()
