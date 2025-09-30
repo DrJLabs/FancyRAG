@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import sys
+import types
 from types import SimpleNamespace
 
 import pytest
@@ -12,50 +13,40 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+stub = sys.modules.get("pandas")
+if stub is None:
+    stub = types.ModuleType("pandas")
+    sys.modules["pandas"] = stub
+if not hasattr(stub, "NA"):
+    stub.NA = object()
+if not hasattr(stub, "Series"):
+    stub.Series = type("Series", (), {})
+if not hasattr(stub, "DataFrame"):
+    stub.DataFrame = type("DataFrame", (), {})
+if not hasattr(stub, "Categorical"):
+    stub.Categorical = type("Categorical", (), {})
+if not hasattr(stub, "core"):
+    stub.core = types.SimpleNamespace()
+if not hasattr(stub.core, "arrays"):
+    stub.core.arrays = types.SimpleNamespace()
+if not hasattr(stub.core.arrays, "ExtensionArray"):
+    stub.core.arrays.ExtensionArray = type("ExtensionArray", (), {})
+
 import scripts.kg_build as kg
 from cli.openai_client import OpenAIClientError
 
 
 class FakeSharedClient:
     def __init__(self) -> None:
-        """
-        Initialize the fake client and set up empty call-recording lists.
-        
-        The instance will track embedding requests in `self.embedding_calls` (list of input texts)
-        and chat invocations in `self.chat_calls` (list of message lists).
-        """
         self.embedding_calls: list[str] = []
         self.chat_calls: list[list[dict[str, str]]] = []
 
     def embedding(self, *, input_text: str) -> SimpleNamespace:
-        """
-        Record the input text and return a stub embedding result.
-        
-        Appends the provided input_text to the instance's embedding_calls list as a record of the call.
-        
-        Parameters:
-            input_text (str): Text to embed.
-        
-        Returns:
-            SimpleNamespace: An object with two attributes:
-                - vector (list[float]): Embedding vector (list of floats).
-                - tokens_consumed (int): Number of tokens attributed to the embedding.
-        """
         self.embedding_calls.append(input_text)
         vector = [0.0] * 5
         return SimpleNamespace(vector=vector, tokens_consumed=10)
 
     def chat_completion(self, *, messages, temperature: float) -> SimpleNamespace:
-        """
-        Produce a stubbed chat completion response containing a single acknowledgement message.
-        
-        Parameters:
-        	messages (list): Sequence of message objects sent to the chat model (each typically contains `role` and `content`).
-        	temperature (float): Sampling temperature for the model's response.
-        
-        Returns:
-        	SimpleNamespace: An object with a `raw_response` attribute that mimics an OpenAI chat completion response; `raw_response` contains a single choice whose `message.content` is "Acknowledged".
-        """
         self.chat_calls.append(messages)
         response = {
             "choices": [
@@ -81,14 +72,6 @@ class FakePipeline:
         text_splitter,
         neo4j_database,
     ) -> None:
-        """
-        Initialize the fake pipeline with its LLM, database driver, embedder, schema, source format, and text splitter.
-        
-        Parameters:
-            schema (optional): Graph schema or schema-like object used by the pipeline, if any.
-            from_pdf (bool): True if the pipeline input originates from a PDF source.
-            neo4j_database (str): Name of the Neo4j database to use for queries and writes.
-        """
         self.llm = llm
         self.driver = driver
         self.embedder = embedder
@@ -99,16 +82,6 @@ class FakePipeline:
         self.run_args: dict[str, str] = {}
 
     async def run_async(self, *, text: str = "", file_path: str | None = None):
-        """
-        Record the provided text and file path, invoke the embedder and LLM with the text to simulate a pipeline run, and return a test run identifier.
-        
-        Parameters:
-            text (str): Text to process (may be empty).
-            file_path (str | None): Optional source file path associated with the text.
-        
-        Returns:
-            SimpleNamespace: Object with attribute `run_id` equal to `"test-run"`.
-        """
         self.run_args = {"text": text, "file_path": file_path}
         # Simulate embedder and LLM usage to exercise client stubs
         self.embedder.embed_query(text)
@@ -118,42 +91,12 @@ class FakePipeline:
 
 class FakeDriver:
     def __enter__(self) -> "FakeDriver":
-        """
-        Enter the context manager and provide the FakeDriver instance.
-        
-        Returns:
-            The FakeDriver instance.
-        """
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        """
-        Context manager exit method that performs no action and does not suppress exceptions.
-        
-        Parameters:
-            exc_type (type | None): Exception type if an exception was raised inside the context, otherwise None.
-            exc (BaseException | None): Exception instance if raised inside the context, otherwise None.
-            tb (types.TracebackType | None): Traceback object for the exception, otherwise None.
-        
-        Notes:
-            This method intentionally returns None so any exception raised in the with-block is propagated.
-        """
         return None
 
     def execute_query(self, query: str, *, database_: str | None = None):
-        """
-        Return a fake query result whose reported `value` is determined by keywords found in `query`.
-        
-        Parameters:
-        	query (str): The Cypher-like query string to inspect; the presence of the substrings "Document" or "Chunk" and the absence of "HAS_CHUNK" influence the returned value.
-        	database_ (str | None): Optional database name (ignored by this fake driver).
-        
-        Returns:
-        	SimpleNamespace: An object with a `records` attribute containing a single dict `{"value": <int>}`, where the int is:
-        	- 2 if "Document" appears in `query` and "HAS_CHUNK" does not,
-        	- 4 if "Chunk" appears in `query` and "HAS_CHUNK" does not,
-        	- 4 in all other cases.
-        """
         if "Document" in query and "HAS_CHUNK" not in query:
             value = 2
         elif "Chunk" in query and "HAS_CHUNK" not in query:
@@ -165,11 +108,6 @@ class FakeDriver:
 
 @pytest.fixture(autouse=True)
 def _ensure_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Add any local Neo4j wheel files found in /tmp to the Python import path using the provided pytest monkeypatch.
-    
-    Searches /tmp for files ending with `.whl` whose names start with `neo4j_graphrag-` or `neo4j-` and prepends each matching wheel's path to sys.path via monkeypatch.syspath_prepend so tests can import those packages.
-    """
     wheel_dir = "/tmp"
     for name in os.listdir(wheel_dir):
         if name.startswith("neo4j_graphrag-") and name.endswith(".whl"):
@@ -180,11 +118,6 @@ def _ensure_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Configure environment variables required by the tests.
-    
-    Sets OPENAI_API_KEY, NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD to deterministic test values.
-    """
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("NEO4J_URI", "bolt://example")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
@@ -241,15 +174,6 @@ def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_pa
 
     class FailingClient(FakeSharedClient):
         def embedding(self, *, input_text: str):  # type: ignore[override]
-            """
-            Simulates a failing embedding request by always raising an OpenAIClientError.
-            
-            Parameters:
-                input_text (str): Text that would be embedded.
-            
-            Raises:
-                OpenAIClientError: Always raised with message "boom" and remediation "retry later".
-            """
             raise OpenAIClientError("boom", remediation="retry later")
 
     settings = kg.OpenAISettings(
@@ -274,14 +198,223 @@ def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_pa
 
 
 def test_missing_file_raises(monkeypatch: pytest.MonkeyPatch, env) -> None:
-    """
-    Verifies that running the pipeline with a non-existent source file raises FileNotFoundError.
-    
-    Replaces the GraphDatabase.driver with a FakeDriver to isolate the test from external services before invoking kg.run with a missing source path.
-    
-    Parameters:
-        monkeypatch (pytest.MonkeyPatch): Fixture used to patch GraphDatabase.driver for the duration of the test.
-    """
     monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
     with pytest.raises(FileNotFoundError):
         kg.run(["--source", "does-not-exist.txt"])
+
+# --- Additional tests for scripts/kg_build.py (pytest) ---
+
+def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEO4J_DATABASE", raising=False)
+    args = kg._parse_args([])
+    assert args.source == str(kg.DEFAULT_SOURCE)
+    assert args.chunk_size == kg.DEFAULT_CHUNK_SIZE
+    assert args.chunk_overlap == kg.DEFAULT_CHUNK_OVERLAP
+    assert args.database is None
+    assert args.log_path == str(kg.DEFAULT_LOG_PATH)
+
+
+def test_parse_args_overrides() -> None:
+    args = kg._parse_args([
+        "--source", "/tmp/foo.txt",
+        "--chunk-size", "42",
+        "--chunk-overlap", "7",
+        "--database", "neo4j",
+        "--log-path", "/tmp/log.json",
+    ])
+    assert args.source == "/tmp/foo.txt"
+    assert args.chunk_size == 42
+    assert args.chunk_overlap == 7
+    assert args.database == "neo4j"
+    assert args.log_path == "/tmp/log.json"
+
+
+def test_ensure_positive_and_non_negative() -> None:
+    assert kg._ensure_positive(1, name="x") == 1
+    assert kg._ensure_non_negative(0, name="y") == 0
+    with pytest.raises(ValueError):
+        kg._ensure_positive(0, name="x")
+    with pytest.raises(ValueError):
+        kg._ensure_non_negative(-1, name="y")
+
+
+def test_ensure_directory_creates_parents(tmp_path) -> None:
+    target = tmp_path / "deep" / "nested" / "log.json"
+    kg._ensure_directory(target)
+    assert (tmp_path / "deep" / "nested").exists()
+
+
+def test_extract_content_variants_mapping_and_list() -> None:
+    # Simple string content
+    raw1 = {"choices": [{"message": {"content": "Hello"}}]}
+    assert kg._extract_content(raw1) == "Hello"
+
+    # Content as list of items with { "text": { "value": ... } }
+    raw2 = {"choices": [{"message": {"content": [{"text": {"value": "Hi"}}, {"text": {"value": "\!"}}]}}]}
+    assert kg._extract_content(raw2) == "Hi\!"
+
+    # Missing/empty choices returns empty string
+    assert kg._extract_content({}) == ""
+
+
+def test_strip_code_fence_variants() -> None:
+    fenced = "```json\npayload\n```"
+    assert kg._strip_code_fence(fenced) == "payload"
+    single_line = "no fences here"
+    assert kg._strip_code_fence(single_line) == "no fences here"
+
+
+def test_shared_openai_embedder_calls_dimension_enforcer(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {"flag": False}
+    def _fake_ensure(vec, settings):
+        called["flag"] = True
+        assert isinstance(vec, list)
+        assert len(vec) == 5
+        assert settings.actor == "kg_build"
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=1,
+        backoff_seconds=0.0,
+        enable_fallback=False,
+    )
+    client = FakeSharedClient()
+    monkeypatch.setattr(kg, "ensure_embedding_dimensions", _fake_ensure)
+    embedder = kg.SharedOpenAIEmbedder(client, settings)
+    vec = embedder.embed_query("hello")
+    assert called["flag"] is True
+    assert isinstance(vec, list) and len(vec) == 5
+
+
+def test_shared_openai_embedder_converts_openai_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailEmbed(FakeSharedClient):
+        def embedding(self, *, input_text: str):  # type: ignore[override]
+            raise kg.OpenAIClientError("nope")
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=1,
+        backoff_seconds=0.0,
+        enable_fallback=False,
+    )
+    emb = kg.SharedOpenAIEmbedder(FailEmbed(), settings)
+    with pytest.raises(kg.EmbeddingsGenerationError):
+        emb.embed_query("x")
+
+
+def test_shared_openai_llm_invoke_strips_code_fences(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Client(FakeSharedClient):
+        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
+            return SimpleNamespace(raw_response={"choices": [{"message": {"content": "```OK```"}}]})
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=1,
+        backoff_seconds=0.0,
+        enable_fallback=False,
+    )
+    llm = kg.SharedOpenAILLM(Client(), settings)
+    out = llm.invoke("prompt")
+    assert out.content == "OK"
+
+
+def test_shared_openai_llm_invoke_empty_raises() -> None:
+    class Client(FakeSharedClient):
+        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
+            return SimpleNamespace(raw_response={"choices": [{"message": {"content": ""}}]})
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=1,
+        backoff_seconds=0.0,
+        enable_fallback=False,
+    )
+    llm = kg.SharedOpenAILLM(Client(), settings)
+    with pytest.raises(kg.LLMGenerationError):
+        llm.invoke("prompt")
+
+
+def test_shared_openai_llm_converts_openai_error_to_llm_error() -> None:
+    class Client(FakeSharedClient):
+        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
+            raise kg.OpenAIClientError("failure")
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=1,
+        backoff_seconds=0.0,
+        enable_fallback=False,
+    )
+    llm = kg.SharedOpenAILLM(Client(), settings)
+    with pytest.raises(kg.LLMGenerationError):
+        llm.invoke("prompt")
+
+
+def test_shared_openai_llm_ainvoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    class Client(FakeSharedClient):
+        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
+            return SimpleNamespace(raw_response={"choices": [{"message": {"content": "ACK"}}]})
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=1,
+        backoff_seconds=0.0,
+        enable_fallback=False,
+    )
+    llm = kg.SharedOpenAILLM(Client(), settings)
+    res = asyncio.run(llm.ainvoke("asynchronous"))
+    assert res.content == "ACK"
+
+
+def test_collect_counts_handles_neo4j_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyNeo4jError(Exception):
+        pass
+    monkeypatch.setattr(kg, "Neo4jError", DummyNeo4jError)
+
+    class Driver:
+        def execute_query(self, query: str, *, database_: str | None = None):
+            if "Chunk" in query and "HAS_CHUNK" not in query:
+                raise DummyNeo4jError("boom")
+            if "Document" in query:
+                return SimpleNamespace(records=[{"value": 1}])
+            return SimpleNamespace(records=[{"value": 3}])
+
+    counts = kg._collect_counts(Driver(), database=None)
+    assert counts["documents"] == 1
+    assert counts["relationships"] == 3
+    assert "chunks" not in counts  # skipped due to error
+
+
+def test_main_success_and_error_paths(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
+    # Success path
+    monkeypatch.setattr(kg, "run", lambda argv=None: {"status": "ok"})
+    assert kg.main(["--source", str(tmp_path / "x.txt")]) == 0
+
+    # Error path: raise RuntimeError -> exit code 1 and stderr message
+    def raise_run(argv=None):
+        raise RuntimeError("explode")
+    monkeypatch.setattr(kg, "run", raise_run)
+    rc = kg.main(["--source", str(tmp_path / "x.txt")])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "error:" in err
