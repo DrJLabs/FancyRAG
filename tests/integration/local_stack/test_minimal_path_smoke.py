@@ -57,7 +57,7 @@ def test_minimal_path_smoke() -> None:
     """
     Integration test that boots a local Docker stack, runs a minimal end-to-end workflow, and tears the stack down.
     
-    Skips the test if required Docker assets or helper scripts are missing. When run, the test configures environment variables and required bind-mount directories, brings up the local stack, waits for readiness, executes the sequence of minimal-path scripts that create a vector index, build the knowledge graph, export to Qdrant, and query Qdrant, then tears the stack down and destroys volumes on completion.
+    Skips if required Docker compose file, helper script, or minimal-path scripts are missing. When executed, the test brings up the local stack, waits for readiness, runs the minimal sequence of scripts to create a vector index, build the knowledge graph, export data to Qdrant, and query Qdrant, then tears the stack down and destroys volumes.
     """
     if not COMPOSE_FILE.exists():
         pytest.skip("Compose file missing; ensure Story 2.4 assets are generated.")

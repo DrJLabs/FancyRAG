@@ -70,6 +70,15 @@ DEFAULT_SCHEMA = GraphSchema.model_validate(_RAW_DEFAULT_SCHEMA)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """
+    Parse command-line arguments for the KG build script.
+    
+    Parameters:
+        argv (Sequence[str] | None): Optional list of argument strings to parse (defaults to process argv when None).
+    
+    Returns:
+        argparse.Namespace: Parsed arguments with attributes `source`, `chunk_size`, `chunk_overlap`, `database`, and `log_path`.
+    """
     parser = argparse.ArgumentParser(
         description="Run the SimpleKGPipeline against local sample content, persisting results to Neo4j with structured logging and retries.",
     )
@@ -104,6 +113,19 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _read_source(path: Path) -> str:
+    """
+    Read UTF-8 text content from a file path and ensure it is not empty.
+    
+    Parameters:
+        path (Path): Filesystem path to the source file to read.
+    
+    Returns:
+        str: The file contents decoded as UTF-8.
+    
+    Raises:
+        FileNotFoundError: If the given path does not exist.
+        ValueError: If the file contains only whitespace or is empty.
+    """
     if not path.exists():
         raise FileNotFoundError(f"source file not found: {path}")
     content = path.read_text(encoding="utf-8")
@@ -113,22 +135,65 @@ def _read_source(path: Path) -> str:
 
 
 def _ensure_positive(value: int, *, name: str) -> int:
+    """
+    Ensure the provided integer is greater than zero.
+    
+    Parameters:
+        value (int): The integer to validate; must be greater than zero.
+        name (str): Parameter name used in the error message if validation fails.
+    
+    Returns:
+        int: The validated value.
+    
+    Raises:
+        ValueError: If `value` is less than or equal to zero.
+    """
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
 
 
 def _ensure_non_negative(value: int, *, name: str) -> int:
+    """
+    Validate that `value` is zero or positive.
+    
+    Parameters:
+    	value (int): Integer to validate.
+    	name (str): Identifier used in the ValueError message when validation fails.
+    
+    Returns:
+    	int: The same `value` when it is zero or greater.
+    
+    Raises:
+    	ValueError: If `value` is less than zero; message will include `name`.
+    """
     if value < 0:
         raise ValueError(f"{name} must be zero or positive")
     return value
 
 
 def _ensure_directory(path: Path) -> None:
+    """
+    Ensure the parent directory of the given path exists by creating it if necessary.
+    
+    Parameters:
+    	path (Path): The filesystem path whose parent directory will be created.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _extract_content(raw_response: Any) -> str:
+    """
+    Extracts the textual content from a raw chat-completion or embedding API response.
+    
+    This function navigates common response shapes (objects with attributes or mappings/dicts) produced by chat-style APIs, looking for a top-level `choices` sequence, then a `message` entry, and finally `content`. If `content` is a string it is returned directly. If `content` is a sequence, textual parts are concatenated from each item (from `text.value` or `content` fields when present). If no text can be found, an empty string is returned.
+    
+    Parameters:
+        raw_response (Any): The raw response object or mapping returned by a chat/completion API.
+    
+    Returns:
+        str: The extracted text content, or an empty string if no content could be located.
+    """
     choices = getattr(raw_response, "choices", None)
     if choices is None and isinstance(raw_response, Mapping):
         choices = raw_response.get("choices")
@@ -166,6 +231,12 @@ def _extract_content(raw_response: Any) -> str:
 
 
 def _strip_code_fence(text: str) -> str:
+    """
+    Remove surrounding Markdown code fences (``` blocks) from the given text.
+    
+    Returns:
+        The text with a leading and trailing triple-backtick fence removed if present, then trimmed of leading and trailing whitespace.
+    """
     if text.startswith("```"):
         lines = text.splitlines()
         if lines and lines[0].startswith("```"):
@@ -180,10 +251,29 @@ class SharedOpenAIEmbedder(Embedder):
     """Embedder adapter that reuses the SharedOpenAIClient."""
 
     def __init__(self, client: SharedOpenAIClient, settings: OpenAISettings) -> None:
+        """
+        Create a SharedOpenAIEmbedder that will use the provided shared OpenAI client and settings for embedding requests.
+        
+        Parameters:
+            client: SharedOpenAIClient used to perform embedding API calls.
+            settings: OpenAISettings that configure model selection and embedding dimensionality.
+        """
         self._client = client
         self._settings = settings
 
     def embed_query(self, text: str) -> list[float]:
+        """
+        Generate an embedding vector for the given text using the shared OpenAI client.
+        
+        Parameters:
+            text (str): Text to encode into an embedding.
+        
+        Returns:
+            list[float]: Embedding vector for the input text; dimensions are validated or adjusted per settings.
+        
+        Raises:
+            EmbeddingsGenerationError: If the embedding request to the OpenAI client fails.
+        """
         try:
             result = self._client.embedding(input_text=text)
         except OpenAIClientError as exc:
@@ -197,6 +287,13 @@ class SharedOpenAILLM(LLMInterface):
     """LLM adapter that routes generation through SharedOpenAIClient."""
 
     def __init__(self, client: SharedOpenAIClient, settings: OpenAISettings) -> None:
+        """
+        Create a SharedOpenAILLM that routes LLM requests through a shared OpenAI client using the provided settings.
+        
+        Parameters:
+            client (SharedOpenAIClient): Shared client used to perform chat completions.
+            settings (OpenAISettings): Configuration that supplies the chat model name and any model-specific defaults; the constructor uses it to set the model name and default model parameters.
+        """
         super().__init__(
             model_name=settings.chat_model,
             model_params={"temperature": 0.0, "max_tokens": 512},
@@ -209,6 +306,17 @@ class SharedOpenAILLM(LLMInterface):
         message_history: Sequence[Mapping[str, str]] | None,
         system_instruction: str | None,
     ) -> list[Mapping[str, str]]:
+        """
+        Builds a list of chat-style message dictionaries suitable for the chat API.
+        
+        Parameters:
+            input_text (str): The user's message content to append as the final message.
+            message_history (Sequence[Mapping[str, str]] | None): Optional prior messages (each with "role" and "content") to include in order.
+            system_instruction (str | None): Optional system-level instruction to prepend as the first message.
+        
+        Returns:
+            list[Mapping[str, str]]: Ordered list of messages where each message is a mapping with keys "role" and "content".
+        """
         messages: list[Mapping[str, str]] = []
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
@@ -223,6 +331,20 @@ class SharedOpenAILLM(LLMInterface):
         message_history: Sequence[Mapping[str, str]] | None = None,
         system_instruction: str | None = None,
     ) -> LLMResponse:
+        """
+        Generate a chat completion for the given input using the configured OpenAI client and return the extracted text.
+        
+        Parameters:
+            input (str): The user prompt or input text to send to the LLM.
+            message_history (Sequence[Mapping[str, str]] | None): Optional prior messages to include in the conversation (each message a mapping with typical keys like "role" and "content").
+            system_instruction (str | None): Optional system-level instruction to prepend to the message sequence.
+        
+        Returns:
+            LLMResponse: An LLMResponse containing the extracted and code-fence-stripped text from the model's reply.
+        
+        Raises:
+            LLMGenerationError: If the OpenAI client fails or the model returns an empty response.
+        """
         messages = self._build_messages(input, message_history, system_instruction)
         try:
             result = self._client.chat_completion(
@@ -244,6 +366,17 @@ class SharedOpenAILLM(LLMInterface):
         message_history: Sequence[Mapping[str, str]] | None = None,
         system_instruction: str | None = None,
     ) -> LLMResponse:
+        """
+        Asynchronously invoke the LLM with the given input, optional message history, and optional system instruction.
+        
+        Parameters:
+            input (str): User prompt or input text for the LLM.
+            message_history (Sequence[Mapping[str, str]] | None): Optional sequence of prior messages where each message is a mapping with keys like `"role"` and `"content"`.
+            system_instruction (str | None): Optional system-level instruction to prepend to the message stream.
+        
+        Returns:
+            LLMResponse: The model's response containing the generated content.
+        """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
@@ -255,6 +388,21 @@ class SharedOpenAILLM(LLMInterface):
 
 
 def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
+    """
+    Collects counts of documents, chunks, and document→chunk relationships from the specified Neo4j database.
+    
+    Queries the database for:
+    - number of Document nodes,
+    - number of Chunk nodes,
+    - number of HAS_CHUNK relationships from Document to Chunk.
+    
+    Parameters:
+        database (str | None): Name of the Neo4j database to query; pass `None` to use the driver's default.
+    
+    Returns:
+        Mapping[str, int]: A mapping with keys "documents", "chunks", and "relationships" containing integer counts.
+        Keys for which the query failed are omitted from the mapping.
+    """
     queries = {
         "documents": "MATCH (:Document) RETURN count(*) AS value",
         "chunks": "MATCH (:Chunk) RETURN count(*) AS value",
@@ -275,6 +423,31 @@ def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
+    """
+    Builds a knowledge graph from a source file and writes a structured JSON run log.
+    
+    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, runs the SimpleKGPipeline to ingest the source text into Neo4j using OpenAI-based embedder and LLM adapters, collects database counts, writes a sanitized JSON log to disk, and returns the log dictionary.
+    
+    Parameters:
+        argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv; when None, defaults from the environment/argument parser are used.
+    
+    Returns:
+        dict[str, Any]: A structured log dictionary containing keys such as:
+            - timestamp: ISO 8601 UTC timestamp of completion
+            - operation: the operation name ("kg_build")
+            - status: operation status ("success" on normal completion)
+            - duration_ms: elapsed time in milliseconds
+            - source: path to the input source file
+            - input_bytes: size of the input in bytes
+            - chunking: mapping with "size" and "overlap" values used for splitting
+            - database: Neo4j database name (or None)
+            - openai: OpenAI settings used (chat_model, embedding_model, embedding_dimensions, max_attempts)
+            - counts: mapping with counts of ingested entities (documents, chunks, relationships)
+            - run_id: pipeline run identifier (if available)
+    
+    Raises:
+        RuntimeError: if OpenAI requests or Neo4j operations fail.
+    """
     args = _parse_args(argv)
     args.chunk_size = _ensure_positive(args.chunk_size, name="chunk_size")
     args.chunk_overlap = _ensure_non_negative(args.chunk_overlap, name="chunk_overlap")
@@ -353,6 +526,15 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """
+    Run the CLI workflow for building the knowledge graph and yield a process-style exit code.
+    
+    Parameters:
+        argv (Sequence[str] | None): Command-line arguments to pass to the run() function; if None, the program default is used.
+    
+    Returns:
+        exit_code (int): 0 on successful completion, 1 if an error occurred.
+    """
     try:
         run(argv)
         return 0
