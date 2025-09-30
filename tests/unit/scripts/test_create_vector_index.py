@@ -5,6 +5,7 @@ import os
 import pathlib
 import sys
 import types
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +32,42 @@ if not hasattr(stub.core, "arrays"):
 if not hasattr(stub.core.arrays, "ExtensionArray"):
     stub.core.arrays.ExtensionArray = type("ExtensionArray", (), {})
 
+neo_stub = sys.modules.get("neo4j")
+if neo_stub is None:
+    neo_stub = types.ModuleType("neo4j")
+    sys.modules["neo4j"] = neo_stub
+if not hasattr(neo_stub, "GraphDatabase"):
+    class _GraphDatabase:
+        @staticmethod
+        def driver(*_args, **_kwargs):  # pragma: no cover - placeholder stub
+            raise ImportError("neo4j driver not available in test stub")
+
+    neo_stub.GraphDatabase = _GraphDatabase
+if not hasattr(neo_stub, "Record"):
+    neo_stub.Record = type("Record", (), {})
+if not hasattr(neo_stub, "Driver"):
+    neo_stub.Driver = type("Driver", (), {})
+if not hasattr(neo_stub, "Query"):
+    neo_stub.Query = type("Query", (), {})
+if not hasattr(neo_stub, "exceptions"):
+    exceptions_module = types.ModuleType("neo4j.exceptions")
+
+    def _make_exc(name: str) -> type[RuntimeError]:
+        return type(name, (RuntimeError,), {})
+
+    def _exceptions_getattr(name: str) -> type[RuntimeError]:  # pragma: no cover - dynamic
+        exc_type = _make_exc(name)
+        setattr(exceptions_module, name, exc_type)
+        return exc_type
+
+    exceptions_module.__getattr__ = _exceptions_getattr  # type: ignore[attr-defined]
+    for _name in ("Neo4jError", "ClientError", "DriverError", "CypherSyntaxError", "CypherTypeError"):
+        setattr(exceptions_module, _name, _make_exc(_name))
+    sys.modules["neo4j.exceptions"] = exceptions_module
+    neo_stub.exceptions = exceptions_module
+else:
+    sys.modules.setdefault("neo4j.exceptions", neo_stub.exceptions)
+
 import scripts.create_vector_index as civ
 
 
@@ -51,6 +88,9 @@ class FakeDriver:
 
     def close(self) -> None:  # pragma: no cover - compatibility shim
         return None
+
+    def execute_query(self, *_args, **_kwargs):  # pragma: no cover - simple stub
+        return SimpleNamespace(records=[])
 
 
 @pytest.fixture(autouse=True)
@@ -585,6 +625,7 @@ def test_empty_username(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_URI", "bolt://example:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "")
     monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
+    monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
 
     with pytest.raises((ValueError, RuntimeError)):
         civ.run([])
@@ -595,6 +636,7 @@ def test_empty_password(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_URI", "bolt://example:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "")
+    monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
 
     with pytest.raises((ValueError, RuntimeError)):
         civ.run([])
