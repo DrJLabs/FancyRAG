@@ -192,7 +192,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_PASSWORD", "secret")
 
 
-def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
+def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:
     pytest.mark.usefixtures("env")
     source = tmp_path / "sample.txt"
     source.write_text("sample content", encoding="utf-8")
@@ -224,7 +224,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
         return driver
 
     _patch_driver(monkeypatch, driver_factory)
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda _: settings))
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, **kwargs: settings))
 
     log = kg.run(
         [
@@ -251,7 +251,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
     assert saved["status"] == "success"
 
 
-def test_run_handles_openai_failure(tmp_path, monkeypatch):
+def test_run_handles_openai_failure(tmp_path, monkeypatch, env):
     pytest.mark.usefixtures("env")
     source = tmp_path / "sample.txt"
     source.write_text("content", encoding="utf-8")
@@ -272,8 +272,12 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda _: FailingClient())
-    _patch_driver(monkeypatch, lambda *_: FakeDriver())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda _: settings))
+
+    def failing_driver_factory(*_args, **_kwargs):
+        return FakeDriver()
+
+    _patch_driver(monkeypatch, failing_driver_factory)
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, **kwargs: settings))
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -281,7 +285,7 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch):
     assert "OpenAI request failed" in str(excinfo.value)
 
 
-def test_missing_file_raises():
+def test_missing_file_raises(env):
     pytest.mark.usefixtures("env")
     _patch_driver(pytest.MonkeyPatch(), lambda *_: FakeDriver())
     with pytest.raises(FileNotFoundError):
