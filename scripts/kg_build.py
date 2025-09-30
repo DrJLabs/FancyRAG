@@ -31,7 +31,15 @@ from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter i
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.llm.base import LLMInterface
 from neo4j_graphrag.llm.types import LLMResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError
+
+# Maintain compatibility with earlier async driver import paths used in tests.
+AsyncGraphDatabase = GraphDatabase
+
+try:  # pragma: no cover - optional dependency in some environments
+    from openai.types.chat import ChatCompletion as OpenAIChatCompletion
+except Exception:  # pragma: no cover - fall back when OpenAI SDK is absent
+    OpenAIChatCompletion = None  # type: ignore[assignment]
 
 logger = get_logger(__name__)
 
@@ -178,90 +186,80 @@ def _ensure_directory(path: Path) -> None:
 def _coerce_text(value: Any) -> str | None:
     """Best-effort conversion of heterogeneous content payloads to text."""
 
+    if value is None:
+        return None
     if isinstance(value, str):
         return value
-    if isinstance(value, Mapping):
-        inner = value.get("value")
-        return str(inner) if inner else None
+    if hasattr(value, "text"):
+        text = _coerce_text(getattr(value, "text"))
+        if text:
+            return text
+    if hasattr(value, "input_text"):
+        text = _coerce_text(getattr(value, "input_text"))
+        if text:
+            return text
     if hasattr(value, "value"):
-        inner = getattr(value, "value")
-        return str(inner) if inner else None
+        text = _coerce_text(getattr(value, "value"))
+        if text:
+            return text
+    if hasattr(value, "content") and not isinstance(value, Mapping):
+        content = getattr(value, "content")
+        if isinstance(content, str) and content:
+            return content
+    if isinstance(value, Mapping):
+        for key in ("text", "input_text", "value", "content"):
+            inner = value.get(key)
+            if inner is None:
+                continue
+            text = _coerce_text(inner)
+            if text:
+                return text
     return None
 
 
-class ChatContentPart(BaseModel):
-    """Pydantic model for tool and text content entries."""
+def _normalise_choice_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+        parts = [part for item in content if (part := _coerce_text(item))]
+        if parts:
+            return "".join(parts)
+    text = _coerce_text(content)
+    return text or ""
 
-    model_config = ConfigDict(extra="allow")
 
-    text: Any = None
-    content: Any = None
-
-    def as_text(self) -> str | None:
-        text = _coerce_text(self.text)
+def _content_from_completion(completion: Any) -> str:
+    for choice in getattr(completion, "choices", []):
+        message = getattr(choice, "message", None)
+        if message is None:
+            continue
+        content = getattr(message, "content", None)
+        text = _normalise_choice_content(content)
         if text:
             return text
-        return _coerce_text(self.content)
+    return ""
 
 
-class ChatMessage(BaseModel):
-    """Pydantic model for OpenAI chat messages supporting rich content."""
-
-    model_config = ConfigDict(extra="allow")
-
-    content: Any = None
-
-    def parts(self) -> list[str]:
-        content = self.content
-        if isinstance(content, str):
-            return [content]
-        parts: list[str] = []
-        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
-            for item in content:
-                if isinstance(item, str):
-                    if item:
-                        parts.append(item)
-                    continue
-                if isinstance(item, Mapping):
-                    text = ChatContentPart.model_validate(item).as_text()
-                else:
-                    text = _coerce_text(item)
-                if text:
-                    parts.append(text)
-        elif isinstance(content, Mapping):
-            text = ChatContentPart.model_validate(content).as_text()
-            if text:
-                parts.append(text)
+def _content_from_payload(payload: Any) -> str:
+    if isinstance(payload, Mapping):
+        choices = payload.get("choices") or []
+    else:
+        choices = getattr(payload, "choices", [])
+    for choice in choices:
+        if isinstance(choice, Mapping):
+            message = choice.get("message")
         else:
-            text = _coerce_text(content)
-            if text:
-                parts.append(text)
-        return parts
-
-
-class ChatChoice(BaseModel):
-    """Pydantic model for chat completion choices."""
-
-    model_config = ConfigDict(extra="allow")
-
-    message: ChatMessage | None = Field(default=None)
-
-
-class ChatCompletion(BaseModel):
-    """Pydantic model covering the subset of fields used by kg_build."""
-
-    model_config = ConfigDict(extra="allow")
-
-    choices: list[ChatChoice] = Field(default_factory=list)
-
-    def first_text(self) -> str:
-        for choice in self.choices:
-            if not choice.message:
-                continue
-            parts = choice.message.parts()
-            if parts:
-                return "".join(parts)
-        return ""
+            message = getattr(choice, "message", None)
+        if message is None:
+            continue
+        if isinstance(message, Mapping):
+            content = message.get("content")
+        else:
+            content = getattr(message, "content", None)
+        text = _normalise_choice_content(content)
+        if text:
+            return text
+    return ""
 
 
 def _extract_content(raw_response: Any) -> str:
@@ -272,8 +270,23 @@ def _extract_content(raw_response: Any) -> str:
         payload = raw_response.model_dump()
     elif hasattr(raw_response, "to_dict"):
         payload = raw_response.to_dict()
-    completion = ChatCompletion.model_validate(payload)
-    return completion.first_text()
+
+    if OpenAIChatCompletion is not None:
+        if isinstance(raw_response, OpenAIChatCompletion):
+            text = _content_from_completion(raw_response)
+            if text:
+                return text
+        else:
+            try:
+                completion = OpenAIChatCompletion.model_validate(payload)
+            except ValidationError:
+                completion = None
+            if completion is not None:
+                text = _content_from_completion(completion)
+                if text:
+                    return text
+
+    return _content_from_payload(payload)
 
 
 def _strip_code_fence(text: str) -> str:
@@ -450,10 +463,19 @@ def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
                 records = result[0]
             else:
                 records = getattr(result, "records", result)
-            if records:
-                record = records[0]
-                value = record.get("value") if isinstance(record, Mapping) else record[0]
-                counts[key] = int(value or 0)
+            if not records:
+                continue
+            record = records[0]
+            if isinstance(record, Mapping):
+                value = record.get("value")
+            elif hasattr(record, "value"):
+                value = getattr(record, "value")
+            else:
+                try:
+                    value = record[0]  # type: ignore[index]
+                except Exception:  # pragma: no cover - defensive guard
+                    value = None
+            counts[key] = int(value or 0)
         except Neo4jError:
             logger.warning("kg_build.count_failed", query=key)
     return counts

@@ -68,6 +68,14 @@ if not hasattr(neo_stub, "exceptions"):
 else:
     sys.modules.setdefault("neo4j.exceptions", neo_stub.exceptions)
 
+
+def _patch_driver(monkeypatch: pytest.MonkeyPatch, factory) -> None:
+    """Patch both sync and async driver entry points with a factory."""
+
+    monkeypatch.setattr(kg.GraphDatabase, "driver", factory)
+    if hasattr(kg, "AsyncGraphDatabase"):
+        monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", factory)
+
 import scripts.kg_build as kg
 from cli.openai_client import OpenAIClientError
 
@@ -127,18 +135,18 @@ class FakePipeline:
 
 class FakeDriver:
     def __enter__(self) -> "FakeDriver":
-        """Return the driver context manager instance."""
-
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        """Context manager exit hook that performs no cleanup."""
+        return None
 
+    async def __aenter__(self) -> "FakeDriver":  # pragma: no cover - async compatibility
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover
         return None
 
     def execute_query(self, query: str, *, database_: str | None = None):
-        """Return deterministic counts matching the Cypher query text."""
-
         if "Document" in query and "HAS_CHUNK" not in query:
             value = 2
         elif "Chunk" in query and "HAS_CHUNK" not in query:
@@ -187,7 +195,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: fake_client)
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs)))
-    monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth=None: FakeDriver())
+    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
     monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
 
     log = kg.run([
@@ -230,7 +238,7 @@ def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_pa
     )
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: FailingClient())
-    monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth=None: FakeDriver())
+    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
     monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
@@ -243,12 +251,12 @@ def test_missing_file_raises(monkeypatch: pytest.MonkeyPatch, env) -> None:
     """
     Verifies that running the pipeline with a non-existent source file raises FileNotFoundError.
 
-    Replaces the GraphDatabase.driver with FakeDriver to isolate the test from external services before invoking kg.run with a missing source path.
+    Replaces the GraphDatabase driver with FakeDriver to isolate the test from external services before invoking kg.run with a missing source path.
 
     Parameters:
-        monkeypatch (pytest.MonkeyPatch): Fixture used to patch GraphDatabase.driver for the duration of the test.
+        monkeypatch (pytest.MonkeyPatch): Fixture used to patch AsyncGraphDatabase.driver for the duration of the test.
     """
-    monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth=None: FakeDriver())
+    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
     with pytest.raises(FileNotFoundError):
         kg.run(["--source", "does-not-exist.txt"])
 
