@@ -76,17 +76,17 @@ graph TD
 2. Validate compose configuration: `scripts/check_local_stack.sh --config` (wraps `docker compose config`).
 3. Start containers: `scripts/check_local_stack.sh --up` (or run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` directly).
 4. Wait for health checks to pass (`scripts/check_local_stack.sh --status` polls container health).
-5. Create vector index: `PYTHONPATH=src python scripts/create_vector_index.py --dimensions 1536 --name chunks_vec`.
-6. Build KG: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt` (accepts `--from-pdf`).
+5. Create the vector index (idempotent): `PYTHONPATH=src python scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine`.
+6. Build the minimal knowledge graph: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
 7. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
 8. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
 9. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).
 
-> **Note:** Current scripts provide placeholder behaviour for smoke automation. Story 2.5 will replace them with the full ingestion/export pipeline and update smoke assertions accordingly.
+Both scripts load credentials from `.env`, reuse `SharedOpenAIClient` for retries/telemetry, and emit sanitized JSON logs under `artifacts/local_stack/` for smoke assertions. Adjust options as needed for managed deployments (e.g., `--database`, alternative chunk sizes).
 
 All scripts honour `.env` overrides for connection details and exit non-zero on errors. Review `docs/architecture/coding-standards.md` before changing default retry or logging behaviour.
 
 ## Local Stack Automation
 - `scripts/check_local_stack.sh` wraps common compose lifecycle commands (`--config`, `--up`, `--status`, `--down`). It emits structured logs and ensures health checks pass before succeeding.
-- `tests/integration/local_stack/test_minimal_path_smoke.py` runs the automation end-to-end; the test skips with guidance until Story 2.5 delivers ingestion scripts.
+- `tests/integration/local_stack/test_minimal_path_smoke.py` orchestrates the full minimal path once Docker and required API keys are available.
 - GitHub Actions workflow `local-stack-smoke.yml` enforces `docker compose config` linting and executes the smoke suite on pushes/PRs (requires Docker on runners).

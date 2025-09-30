@@ -57,7 +57,7 @@ def test_minimal_path_smoke() -> None:
     """
     Integration test that boots a local Docker stack, runs a minimal end-to-end workflow, and tears the stack down.
     
-    Skips the test if required Docker assets or helper scripts are missing. When run, the test configures environment variables and required bind-mount directories, brings up the local stack, waits for readiness, executes the sequence of minimal-path scripts that create a vector index, build the knowledge graph, export to Qdrant, and query Qdrant, then tears the stack down and destroys volumes on completion.
+    Skips if required Docker compose file, helper script, or minimal-path scripts are missing. When executed, the test brings up the local stack, waits for readiness, runs the minimal sequence of scripts to create a vector index, build the knowledge graph, export data to Qdrant, and query Qdrant, then tears the stack down and destroys volumes.
     """
     if not COMPOSE_FILE.exists():
         pytest.skip("Compose file missing; ensure Story 2.4 assets are generated.")
@@ -71,16 +71,21 @@ def test_minimal_path_smoke() -> None:
         )
 
     env = os.environ.copy()
-    env.setdefault("COMPOSE_FILE", str(COMPOSE_FILE))
-    env.setdefault("PYTHONPATH", "src")
-    env.setdefault("NEO4J_USERNAME", "neo4j")
-    env.setdefault("NEO4J_PASSWORD", "neo4j")
-    env.setdefault("NEO4J_URI", "bolt://localhost:7687")
-    env.setdefault("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
-    env.setdefault("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
-    env.setdefault("QDRANT_URL", "http://localhost:6333")
-    env.setdefault("QDRANT_API_KEY", "")
-    env.setdefault("OPENAI_API_KEY", "local-smoke-test-key")
+    env["COMPOSE_FILE"] = str(COMPOSE_FILE)
+    env["PYTHONPATH"] = "stubs:src"
+    env["NEO4J_USERNAME"] = os.environ.get("NEO4J_USERNAME", "neo4j")
+    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "neo4j")
+    env["NEO4J_AUTH"] = f"{env['NEO4J_USERNAME']}/{env['NEO4J_PASSWORD']}"
+    env["NEO4J_URI"] = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+    env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
+    env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
+    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY environment variable is required for minimal path smoke test")
+    env["OPENAI_API_KEY"] = api_key
 
     # Ensure bind-mount directories exist before starting the stack.
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
@@ -98,7 +103,21 @@ def test_minimal_path_smoke() -> None:
 
         # Execute minimal path scripts sequentially.
         python = sys.executable
-        run_command(python, "scripts/create_vector_index.py", "--dimensions", "1536", "--name", "chunks_vec", env=env)
+        run_command(
+            python,
+            "scripts/create_vector_index.py",
+            "--index-name",
+            "chunks_vec",
+            "--label",
+            "Chunk",
+            "--embedding-property",
+            "embedding",
+            "--dimensions",
+            "1536",
+            "--similarity",
+            "cosine",
+            env=env,
+        )
         run_command(python, "scripts/kg_build.py", "--source", "docs/samples/pilot.txt", env=env)
         run_command(python, "scripts/export_to_qdrant.py", "--collection", "chunks_main", env=env)
         run_command(

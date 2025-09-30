@@ -1,1 +1,5 @@
 Acme Corp launched GraphRAG Pilot on May 14, 2025 to accelerate knowledge graph experimentation.
+The pilot ingests internal architecture memos, product FAQs, and public release notes into Neo4j.
+Operators run create_vector_index.py followed by kg_build.py to generate Document and Chunk nodes.
+Each ingestion stores embeddings on Chunk.embedding with 1536 dimensions using cosine similarity.
+Generated metrics and sanitized logs feed into artifacts/local_stack for smoke and CI validation.

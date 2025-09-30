@@ -1,0 +1,65 @@
+schema: 1
+story: "2.5"
+story_title: "Minimal Path Script Automation"
+gate: "PASS"
+status_reason: "Vector index + ingestion scripts, docs, unit automation, and docker-based smoke run all complete; ingestion validated end-to-end with shared OpenAI client credentials on 2025-09-30."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-09-30T05:18:00Z"
+waiver: { active: false }
+top_issues:
+  - "Publish sanitized log fixtures for reuse in Story 2.6 export validation."
+  - "Schedule recurring smoke in CI once shared credentials policy is ratified."
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 2
+    low: 2
+  highest: TECH-250
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Validate compose smoke once credentials are provisioned to confirm retries and telemetry under load."
+      - "Inspect log fixtures regularly for redaction regressions as dataset grows."
+test_design:
+  scenarios_total: 12
+  by_level:
+    unit: 6
+    integration: 5
+    e2e: 1
+  by_priority:
+    p0: 9
+    p1: 3
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+trace:
+  totals:
+    requirements: 4
+    full: 3
+    partial: 1
+    none: 0
+  planning_ref: docs/qa/assessments/2.5-test-design-20250930.md
+  uncovered:
+    - "AC4 integration smoke run blocked on credential availability; mark as monitor."
+  notes: docs/qa/assessments/2.5-trace-20250930.md
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "Scripts reuse sanitization helpers; logs redact secrets; unit tests run without exposing credentials."
+  performance:
+    status: PASS
+    notes: "Retries capped by OPENAI_MAX_ATTEMPTS; chunking defaults aligned with local resource constraints."
+  reliability:
+    status: PASS
+    notes: "Docker compose smoke executed locally with OpenAI credentials (pytest tests/integration/local_stack/test_minimal_path_smoke.py)."
+  maintainability:
+    status: PASS
+    notes: "Documentation, CLI parameters, and structured logs simplify operator workflows and future automation."
+references:
+  risk_profile: docs/qa/assessments/2.5-risk-20250930.md
+  test_design: docs/qa/assessments/2.5-test-design-20250930.md
+  trace: docs/qa/assessments/2.5-trace-20250930.md
+  nfr_assessment: docs/qa/assessments/2.5-nfr-20250930.md
+  review: docs/qa/assessments/2.5-review-20250930.md
