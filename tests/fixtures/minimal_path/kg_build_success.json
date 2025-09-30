@@ -1,0 +1,25 @@
+{
+  "timestamp": "2025-09-30T20:14:08.669582+00:00",
+  "operation": "kg_build",
+  "status": "success",
+  "duration_ms": 10688,
+  "source": "docs/samples/pilot.txt",
+  "input_bytes": 490,
+  "chunking": {
+    "size": 600,
+    "overlap": 100
+  },
+  "database": null,
+  "openai": {
+    "chat_model": "gpt-4.1-mini",
+    "embedding_model": "text-embedding-3-small",
+    "embedding_dimensions": 1536,
+    "max_attempts": 3
+  },
+  "counts": {
+    "documents": 1,
+    "chunks": 1,
+    "relationships": 1
+  },
+  "run_id": "RUN-ID-EXAMPLE"
+}

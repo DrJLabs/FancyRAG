@@ -85,3 +85,4 @@ Thumbs.db
 
 # Diagnostics artifacts
 artifacts/
+.data/

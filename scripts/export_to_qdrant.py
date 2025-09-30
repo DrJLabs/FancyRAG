@@ -1,46 +1,173 @@
 #!/usr/bin/env python
-"""Stub export script for Story 2.4 smoke automation."""
+"""Export chunk embeddings from Neo4j into a Qdrant collection."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-import datetime as _dt
+from typing import Any, Iterable
 
+from neo4j import GraphDatabase
+from neo4j.exceptions import Neo4jError
+from qdrant_client import QdrantClient
+from qdrant_client import models as qmodels
+
+from cli.sanitizer import scrub_object
 from fancyrag.utils import ensure_env
 
 
+def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
+    """Fetch chunk data (id, source path, text, embeddings) from Neo4j."""
+
+    records, _, _ = driver.execute_query(
+        """
+        MATCH (chunk:Chunk)
+        RETURN chunk.chunk_id AS chunk_id,
+               chunk.index AS chunk_index,
+               chunk.text AS text,
+               chunk.embedding AS embedding,
+               chunk.source_path AS source_path
+        ORDER BY chunk_index ASC
+        """,
+        database_=database,
+    )
+    return [dict(record) for record in records]
+
+
+def _batched(iterable: Iterable[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
+    batch: list[dict[str, Any]] = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) == size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _coerce_point_id(value: Any, fallback: int) -> int | str:
+    """Convert chunk identifiers into a Qdrant-compatible point id."""
+
+    if value is None:
+        return fallback
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
+        return stripped
+    return str(value)
+
+
 def main() -> None:
-    """
-    Create a stub export log for exporting embeddings to Qdrant and persist it to artifacts/local_stack.
-    
-    Parses an optional `--collection` argument, verifies that the `QDRANT_URL` and `NEO4J_URI` environment variables are present, creates the artifacts/local_stack directory if needed, writes a structured JSON log file at artifacts/local_stack/export_to_qdrant.json (containing timestamp, operation, collection, status, and message), and prints the same JSON log to standard output.
-    """
-    parser = argparse.ArgumentParser(description="Export embeddings to Qdrant (stub)")
+    """Export chunk embeddings to Qdrant using the current Neo4j dataset."""
+
+    parser = argparse.ArgumentParser(description="Export embeddings to Qdrant")
     parser.add_argument("--collection", default="chunks_main")
+    parser.add_argument("--batch-size", type=int, default=256)
     args = parser.parse_args()
 
     ensure_env("QDRANT_URL")
     ensure_env("NEO4J_URI")
+    ensure_env("NEO4J_USERNAME")
+    ensure_env("NEO4J_PASSWORD")
 
+    qdrant_url = os.environ.get("QDRANT_URL")
+    qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
+    neo4j_uri = os.environ["NEO4J_URI"]
+    neo4j_auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
+    neo4j_database = os.environ.get("NEO4J_DATABASE")
+
+    start = time.perf_counter()
+    status = "success"
+    message = ""
+    exported = 0
+
+    try:
+        with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
+            chunks = _fetch_chunks(driver, database=neo4j_database)
+            if not chunks:
+                status = "skipped"
+                message = "No chunk nodes available to export"
+            else:
+                dimensions = len(chunks[0]["embedding"] or [])
+                if dimensions == 0:
+                    raise RuntimeError("Chunk embeddings missing or empty")
+
+                client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+                if client.collection_exists(args.collection):
+                    client.delete_collection(args.collection)
+                client.create_collection(
+                    collection_name=args.collection,
+                    vectors_config=qmodels.VectorParams(
+                        size=dimensions,
+                        distance=qmodels.Distance.COSINE,
+                    ),
+                )
+
+                for batch in _batched(chunks, max(1, args.batch_size)):
+                    payloads = []
+                    ids = []
+                    vectors = []
+                    for idx, record in enumerate(batch):
+                        fallback_id = exported + idx + 1
+                        chunk_id = _coerce_point_id(record.get("chunk_id"), fallback=fallback_id)
+                        ids.append(chunk_id)
+                        vectors.append(record["embedding"])
+                        payloads.append(
+                            {
+                                "chunk_id": chunk_id,
+                                "chunk_index": record.get("chunk_index"),
+                                "source_path": record.get("source_path"),
+                                "text": record.get("text"),
+                            }
+                        )
+                    client.upsert(
+                        collection_name=args.collection,
+                        points=qmodels.Batch(ids=ids, vectors=vectors, payloads=payloads),
+                    )
+                    exported += len(batch)
+
+    except (Neo4jError, Exception) as exc:  # pragma: no cover - defensive guard
+        status = "error"
+        message = str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    else:
+        if not message:
+            message = f"Exported {exported} chunks"
+
+    duration_ms = int((time.perf_counter() - start) * 1000)
     log = {
-        "timestamp": _dt.datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "operation": "export_to_qdrant",
         "collection": args.collection,
-        "status": "skipped",
-        "message": "Stub implementation - full pipeline delivered in Story 2.5",
+        "status": status,
+        "message": message,
+        "count": exported,
+        "duration_ms": duration_ms,
     }
 
-    Path("artifacts/local_stack").mkdir(parents=True, exist_ok=True)
-    Path("artifacts/local_stack/export_to_qdrant.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
-    print(json.dumps(log))
+    artifacts_dir = Path("artifacts/local_stack")
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    sanitized = scrub_object(log)
+    (artifacts_dir / "export_to_qdrant.json").write_text(json.dumps(sanitized, indent=2), encoding="utf-8")
+    print(json.dumps(sanitized))
+
+    if status == "error":
+        raise SystemExit(1)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
     try:
         main()
+    except SystemExit:
+        raise
     except Exception as exc:  # pragma: no cover
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

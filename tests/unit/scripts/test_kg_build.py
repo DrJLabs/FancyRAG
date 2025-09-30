@@ -49,6 +49,8 @@ if not hasattr(neo_stub, "Driver"):
     neo_stub.Driver = type("Driver", (), {})
 if not hasattr(neo_stub, "Query"):
     neo_stub.Query = type("Query", (), {})
+if not hasattr(neo_stub, "RoutingControl"):
+    neo_stub.RoutingControl = types.SimpleNamespace(READ="READ")
 if not hasattr(neo_stub, "exceptions"):
     exceptions_module = types.ModuleType("neo4j.exceptions")
 
@@ -115,6 +117,7 @@ class FakePipeline:
         from_pdf,
         text_splitter,
         neo4j_database,
+        kg_writer=None,
     ) -> None:
         self.llm = llm
         self.driver = driver
@@ -124,6 +127,7 @@ class FakePipeline:
         self.text_splitter = text_splitter
         self.database = neo4j_database
         self.run_args: dict[str, str] = {}
+        self.kg_writer = kg_writer
 
     async def run_async(self, *, text: str = "", file_path: str | None = None):
         self.run_args = {"text": text, "file_path": file_path}
@@ -134,6 +138,10 @@ class FakePipeline:
 
 
 class FakeDriver:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self._pool = types.SimpleNamespace(pool_config=types.SimpleNamespace(user_agent=None))
+
     def __enter__(self) -> "FakeDriver":
         return self
 
@@ -146,14 +154,22 @@ class FakeDriver:
     async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover
         return None
 
-    def execute_query(self, query: str, *, database_: str | None = None):
-        if "Document" in query and "HAS_CHUNK" not in query:
-            value = 2
-        elif "Chunk" in query and "HAS_CHUNK" not in query:
-            value = 4
-        else:
-            value = 4
-        return ([{"value": value}], None, None)
+    def execute_query(self, query: str, *params, database_: str | None = None, **kwargs):
+        query_text = query.strip()
+        self.queries.append(query_text)
+        if "DETACH DELETE" in query_text:
+            return ([], None, None)
+        if "MERGE (doc:Document" in query_text:
+            return ([], None, None)
+        if "CALL dbms.components" in query_text:
+            return ([{"versions": ["5.26.0"], "edition": "enterprise"}], None, None)
+        if "MATCH (:Document) RETURN count" in query_text:
+            return ([{"value": 2}], None, None)
+        if "MATCH (:Chunk) RETURN count" in query_text and "HAS_CHUNK" not in query_text:
+            return ([{"value": 4}], None, None)
+        if "MATCH (:Document)-[:HAS_CHUNK]" in query_text:
+            return ([{"value": 4}], None, None)
+        return ([{"value": 0}], None, None)
 
 
 @pytest.fixture(autouse=True)
@@ -181,6 +197,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
 
     fake_client = FakeSharedClient()
     captured_pipeline: dict[str, FakePipeline] = {}
+    created_drivers: list[FakeDriver] = []
 
     settings = kg.OpenAISettings(
         chat_model="gpt-4.1-mini",
@@ -195,7 +212,13 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: fake_client)
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs)))
-    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, driver_factory)
     monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
 
     log = kg.run([
@@ -214,6 +237,9 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
     assert fake_client.embedding_calls
     assert fake_client.chat_calls
     assert captured_pipeline["pipeline"].run_args["text"] == "sample content"
+    assert isinstance(captured_pipeline["pipeline"].kg_writer, kg.SanitizingNeo4jWriter)
+    assert created_drivers, "Expected GraphDatabase.driver to be invoked"
+    assert any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
     saved = json.loads(log_path.read_text())
     assert saved["status"] == "success"
 
@@ -308,11 +334,25 @@ def test_extract_content_variants_mapping_and_list() -> None:
     assert kg._extract_content(raw1) == "Hello"
 
     # Content as list of items with { "text": { "value": ... } }
-    raw2 = {"choices": [{"message": {"content": [{"text": {"value": "Hi"}}, {"text": {"value": "\!"}}]}}]}
-    assert kg._extract_content(raw2) == "Hi\!"
+    raw2 = {"choices": [{"message": {"content": [{"text": {"value": "Hi"}}, {"text": {"value": r"\!"}}]}}]}
+    assert kg._extract_content(raw2) == r"Hi\!"
 
     # Missing/empty choices returns empty string
     assert kg._extract_content({}) == ""
+
+
+def test_sanitize_property_value_serializes_nested_map() -> None:
+    value = {"note": "Initial", "meta": {"flag": True, "count": 2}}
+    result = kg._sanitize_property_value(value)
+    assert isinstance(result, str)
+    parsed = json.loads(result)
+    assert parsed["note"] == "Initial"
+    assert parsed["meta"]["flag"] is True
+
+
+def test_sanitize_property_value_preserves_primitive_list() -> None:
+    value = [1, 2, 3]
+    assert kg._sanitize_property_value(value) == [1, 2, 3]
 
 
 def test_strip_code_fence_variants() -> None:

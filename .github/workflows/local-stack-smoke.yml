@@ -34,10 +34,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.lock
 
+      - name: Prepare environment file
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cp .env.example .env
+          python - <<'PY'
+import os
+from pathlib import Path
+
+env_path = Path('.env')
+lines = []
+with env_path.open() as fh:
+    for line in fh:
+        if line.startswith('OPENAI_API_KEY='):
+            lines.append(f"OPENAI_API_KEY=\"{os.environ['OPENAI_API_KEY']}\"\n")
+        else:
+            lines.append(line)
+env_path.write_text(''.join(lines))
+PY
+
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config
 
-      - name: Run minimal path smoke test (skips until Story 2.5 scripts land)
+      - name: Run minimal path smoke test
         env:
-          PYTHONPATH: src
-        run: pytest tests/integration/local_stack/test_minimal_path_smoke.py -m integration
+          PYTHONPATH: stubs:src
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: pytest tests/integration/local_stack/test_minimal_path_smoke.py

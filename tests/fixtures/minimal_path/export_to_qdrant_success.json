@@ -1,0 +1,9 @@
+{
+  "timestamp": "2025-09-30T20:14:18.133459+00:00",
+  "operation": "export_to_qdrant",
+  "collection": "chunks_main",
+  "status": "success",
+  "message": "Exported 1 chunks",
+  "count": 1,
+  "duration_ms": 466
+}

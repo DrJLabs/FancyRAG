@@ -9,9 +9,10 @@ import json
 import os
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError, Neo4jError
@@ -24,6 +25,8 @@ from config.settings import DEFAULT_EMBEDDING_DIMENSIONS, OpenAISettings
 from fancyrag.utils import ensure_env
 from neo4j_graphrag.embeddings.base import Embedder
 from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
+from neo4j_graphrag.experimental.components.kg_writer import KGWriterModel, Neo4jWriter
+from neo4j_graphrag.experimental.components.lexical_graph import LexicalGraphConfig
 from neo4j_graphrag.experimental.components.schema import GraphSchema
 from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
     FixedSizeSplitter,
@@ -31,7 +34,7 @@ from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter i
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.llm.base import LLMInterface
 from neo4j_graphrag.llm.types import LLMResponse
-from pydantic import ValidationError
+from pydantic import ValidationError, validate_call
 
 # Maintain compatibility with earlier async driver import paths used in tests.
 AsyncGraphDatabase = GraphDatabase
@@ -68,6 +71,81 @@ def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
 
 
 DEFAULT_SCHEMA = _load_default_schema()
+
+
+PRIMITIVE_TYPES = (str, int, float, bool)
+
+
+def _ensure_jsonable(value: Any) -> Any:
+    """Recursively coerce a value into a JSON-serialisable structure."""
+
+    if value is None or isinstance(value, PRIMITIVE_TYPES):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _ensure_jsonable(sub_value) for key, sub_value in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_ensure_jsonable(item) for item in value]
+    return str(value)
+
+
+def _sanitize_property_value(value: Any) -> Any:
+    """Sanitize a Neo4j property value to primitives or primitive lists."""
+
+    if value is None or isinstance(value, PRIMITIVE_TYPES):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        sanitized_items = []
+        coerced_type: type[Any] | None = None
+        for item in value:
+            sanitised = _sanitize_property_value(item)
+            if isinstance(sanitised, list):
+                return json.dumps(_ensure_jsonable(value), sort_keys=True)
+            if sanitised is None:
+                continue
+            if coerced_type is None:
+                coerced_type = type(sanitised)
+            if coerced_type not in PRIMITIVE_TYPES or type(sanitised) is not coerced_type:
+                return json.dumps(_ensure_jsonable(value), sort_keys=True)
+            sanitized_items.append(sanitised)
+        return sanitized_items
+    if isinstance(value, Mapping):
+        return json.dumps(_ensure_jsonable(value), sort_keys=True)
+    return str(value)
+
+
+class SanitizingNeo4jWriter(Neo4jWriter):
+    """Neo4j writer that coerces complex properties into Neo4j-friendly primitives."""
+
+    def _sanitize_properties(self, properties: Mapping[str, Any]) -> dict[str, Any]:
+        sanitized: dict[str, Any] = {}
+        for key, value in properties.items():
+            clean_value = _sanitize_property_value(value)
+            if clean_value is None:
+                continue
+            sanitized[str(key)] = clean_value
+        return sanitized
+
+    def _nodes_to_rows(self, nodes, lexical_graph_config):  # type: ignore[override]
+        rows = super()._nodes_to_rows(nodes, lexical_graph_config)
+        for row in rows:
+            properties = row.get("properties") or {}
+            row["properties"] = self._sanitize_properties(properties)
+        return rows
+
+    def _relationships_to_rows(self, relationships):  # type: ignore[override]
+        rows = super()._relationships_to_rows(relationships)
+        for row in rows:
+            properties = row.get("properties") or {}
+            row["properties"] = self._sanitize_properties(properties)
+        return rows
+
+    @validate_call
+    async def run(  # type: ignore[override]
+        self,
+        graph,
+        lexical_graph_config: LexicalGraphConfig = LexicalGraphConfig(),
+    ) -> KGWriterModel:
+        return await super().run(graph, lexical_graph_config)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -481,6 +559,12 @@ def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
     return counts
 
 
+def _reset_database(driver, *, database: str | None) -> None:
+    """Remove previously ingested nodes to guarantee a clean ingest for the run."""
+
+    driver.execute_query("MATCH (n) DETACH DELETE n", database_=database)
+
+
 def _execute_pipeline(
     *,
     uri: str,
@@ -490,10 +574,12 @@ def _execute_pipeline(
     embedder: Embedder,
     llm: SharedOpenAILLM,
     splitter: FixedSizeSplitter,
-) -> tuple[str | None, Mapping[str, int]]:
+) -> str | None:
     """Run the SimpleKGPipeline using the synchronous Neo4j driver."""
 
     with GraphDatabase.driver(uri, auth=auth) as driver:
+        _reset_database(driver, database=database)
+        writer = SanitizingNeo4jWriter(driver=driver, neo4j_database=database)
         pipeline = SimpleKGPipeline(
             llm=llm,
             driver=driver,
@@ -501,19 +587,42 @@ def _execute_pipeline(
             schema=DEFAULT_SCHEMA,
             from_pdf=False,
             text_splitter=splitter,
+            kg_writer=writer,
             neo4j_database=database,
         )
 
-        async def _run() -> tuple[str | None, Mapping[str, int]]:
+        async def _run() -> str | None:
             result = await pipeline.run_async(text=source_text)
-            loop = asyncio.get_running_loop()
-            counts = await loop.run_in_executor(
-                None,
-                lambda: _collect_counts(driver, database=database),
-            )
-            return result.run_id, counts
+            return result.run_id
 
         return asyncio.run(_run())
+
+
+def _ensure_document_relationships(
+    driver,
+    *,
+    database: str | None,
+    source_path: Path,
+) -> None:
+    """Ensure chunk nodes are linked to a document with HAS_CHUNK relationships."""
+
+    driver.execute_query(
+        """
+        MERGE (doc:Document {source_path: $source_path})
+          ON CREATE SET doc.name = $document_name,
+                        doc.title = $document_name
+        WITH doc
+        MATCH (chunk:Chunk)
+        WITH doc, collect(chunk) AS chunks
+        UNWIND range(0, size(chunks) - 1) AS idx
+        WITH doc, chunks[idx] AS chunk, idx + 1 AS seq
+        SET chunk.source_path = $source_path,
+            chunk.chunk_id = coalesce(chunk.chunk_id, seq)
+        MERGE (doc)-[:HAS_CHUNK]->(chunk)
+        """,
+        {"source_path": str(source_path), "document_name": source_path.name},
+        database_=database,
+    )
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
@@ -564,11 +673,8 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
 
     start = time.perf_counter()
-    run_id: str | None = None
-    counts: Mapping[str, int] = {}
-
     try:
-        run_id, counts = _execute_pipeline(
+        run_id = _execute_pipeline(
             uri=uri,
             auth=auth,
             source_text=source_text,
@@ -581,6 +687,15 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         raise RuntimeError(f"OpenAI request failed: {exc}") from exc
     except (Neo4jError, ClientError) as exc:
         raise RuntimeError(f"Neo4j error: {exc}") from exc
+
+    counts: Mapping[str, int] = {}
+    with GraphDatabase.driver(uri, auth=auth) as driver:
+        _ensure_document_relationships(
+            driver,
+            database=args.database,
+            source_path=source_path,
+        )
+        counts = _collect_counts(driver, database=args.database)
 
     duration_ms = int((time.perf_counter() - start) * 1000)
 

@@ -8,7 +8,7 @@ updated: "2025-09-30T05:18:00Z"
 waiver: { active: false }
 top_issues:
   - "Publish sanitized log fixtures for reuse in Story 2.6 export validation."
-  - "Schedule recurring smoke in CI once shared credentials policy is ratified."
+  - "Automate compose smoke in CI once shared OpenAI credential policy is ratified."
 risk_summary:
   totals:
     critical: 0
@@ -19,7 +19,7 @@ risk_summary:
   recommendations:
     must_fix: []
     monitor:
-      - "Validate compose smoke once credentials are provisioned to confirm retries and telemetry under load."
+      - "Promote the locally verified compose smoke to CI when credentials are available, ensuring telemetry and retries remain under observation."
       - "Inspect log fixtures regularly for redaction regressions as dataset grows."
 test_design:
   scenarios_total: 12
