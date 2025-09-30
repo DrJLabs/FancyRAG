@@ -53,11 +53,20 @@ jobs:
                       lines.append(line)
           env_path.write_text(''.join(lines))
           PY
-          while IFS= read -r line; do
-            if [ -n "$line" ] && [ "${line##\#}" = "$line" ]; then
-              echo "$line" >> "$GITHUB_ENV"
-            fi
-          done < .env
+          python - <<'PY' >> "$GITHUB_ENV"
+import os
+from pathlib import Path
+
+for raw in Path('.env').read_text().splitlines():
+    line = raw.strip()
+    if not line or line.startswith('#'):
+        continue
+    key, _, remainder = line.partition('=')
+    value = remainder.split('#', 1)[0].strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        value = value[1:-1]
+    print(f"{key}={value}")
+PY
           grep NEO4J_PASSWORD .env
           grep NEO4J_PASSWORD .env
 
