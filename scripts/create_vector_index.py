@@ -60,7 +60,24 @@ class VectorIndexConfig:
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> "VectorIndexConfig":
-        """Create a configuration snapshot from SHOW INDEXES output."""
+        """
+        Constructs a VectorIndexConfig from a Neo4j SHOW INDEXES-style record.
+        
+        Parameters:
+            record (Mapping[str, Any]): A mapping produced by `SHOW INDEXES` (or similar)
+                which may contain the keys `name`, `labelsOrTypes`, `properties`, and
+                `options` (including `indexConfig`).
+        
+        Returns:
+            VectorIndexConfig: Configuration populated from the record. Behavior:
+            - `name` is taken from `record["name"]` (converted to string).
+            - `label` and `embedding_property` use the first element of
+              `labelsOrTypes` and `properties` respectively, or an empty string if absent.
+            - `dimensions` is parsed from `indexConfig["vector.dimensions"]` as an int;
+              if parsing fails or the value is missing, defaults to DEFAULT_EMBEDDING_DIMENSIONS.
+            - `similarity` is taken from `indexConfig["vector.similarity_function"]`
+              and normalized to a lowercase string (empty string if missing).
+        """
 
         labels = list(record.get("labelsOrTypes") or [])
         properties = list(record.get("properties") or [])
@@ -85,6 +102,22 @@ class VectorIndexConfig:
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """
+    Parse command-line arguments for creating or validating the Neo4j vector index.
+    
+    Parameters:
+        argv (Sequence[str] | None): Optional list of argument strings to parse; when None the function reads from the process arguments.
+    
+    Returns:
+        argparse.Namespace: Parsed arguments with attributes:
+            - index_name: Vector index name.
+            - label: Target node label for the index.
+            - embedding_property: Node property holding the embedding vectors.
+            - dimensions: Expected embedding dimensionality (int).
+            - similarity: Similarity function to configure (`"cosine"` or `"euclidean"`).
+            - database: Optional Neo4j database name or None to use the server default.
+            - log_path: Filesystem path for the structured JSON log.
+    """
     parser = argparse.ArgumentParser(description="Create or validate the Neo4j vector index used by the minimal path workflow.")
     parser.add_argument(
         "--index-name",
@@ -127,20 +160,52 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _validate_dimensions(value: int) -> int:
+    """
+    Validate that the embedding dimensionality is greater than zero.
+    
+    Parameters:
+        value (int): The number of embedding dimensions to validate.
+    
+    Returns:
+        int: The same `value` if it is greater than zero.
+    
+    Raises:
+        ValueError: If `value` is less than or equal to zero.
+    """
     if value <= 0:
         raise ValueError("dimensions must be a positive integer")
     return value
 
 
 def _normalise_similarity(value: str) -> str:
+    """
+    Normalize a similarity identifier for index configuration.
+    
+    Parameters:
+        value (str): Similarity name (e.g., "cosine", "euclidean") possibly with surrounding whitespace or mixed case.
+    
+    Returns:
+        str: The input trimmed of surrounding whitespace and converted to lowercase.
+    """
     return value.strip().lower()
 
 
 def _ensure_directory(path: Path) -> None:
+    """
+    Ensure the parent directory of the given path exists, creating any missing parent directories.
+    
+    If the parent directory already exists this function does nothing.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _fetch_existing_config(driver, *, index_name: str, label: str, embedding_property: str, database: str | None) -> VectorIndexConfig | None:
+    """
+    Retrieve the existing vector index configuration for the given index, label, and embedding property from Neo4j.
+    
+    Returns:
+        VectorIndexConfig | None: A VectorIndexConfig built from the index record if found, `None` if no matching index exists.
+    """
     record = retrieve_vector_index_info(
         driver,
         index_name=index_name,
@@ -154,6 +219,18 @@ def _fetch_existing_config(driver, *, index_name: str, label: str, embedding_pro
 
 
 def _compare_configs(requested: VectorIndexConfig, existing: VectorIndexConfig) -> None:
+    """
+    Verify that an existing VectorIndexConfig matches the requested VectorIndexConfig and raise if any field differs.
+    
+    Compares the `label`, `embedding_property`, `dimensions`, and `similarity` fields of `existing` against `requested`. If any values differ, raises VectorIndexMismatchError with a message that lists each differing field showing the current and expected values.
+    
+    Parameters:
+        requested (VectorIndexConfig): Desired index configuration.
+        existing (VectorIndexConfig): Currently observed index configuration.
+    
+    Raises:
+        VectorIndexMismatchError: If one or more fields differ between `existing` and `requested`. The exception message includes details for each mismatched field.
+    """
     mismatches: dict[str, tuple[Any, Any]] = {}
     if existing.label != requested.label:
         mismatches["label"] = (existing.label, requested.label)
@@ -174,6 +251,13 @@ def _compare_configs(requested: VectorIndexConfig, existing: VectorIndexConfig) 
 
 
 def _create_index(driver, *, cfg: VectorIndexConfig, database: str | None) -> None:
+    """
+    Create the vector index in the specified Neo4j database using the provided configuration.
+    
+    Parameters:
+        cfg (VectorIndexConfig): Normalized index configuration (name, label, embedding_property, dimensions, similarity).
+        database (str | None): Target Neo4j database name, or `None` to use the driver's default.
+    """
     create_vector_index(
         driver,
         cfg.name,
@@ -186,6 +270,26 @@ def _create_index(driver, *, cfg: VectorIndexConfig, database: str | None) -> No
 
 
 def _build_log(*, status: str, cfg: VectorIndexConfig, existing: VectorIndexConfig | None, duration_ms: int, database: str | None) -> dict[str, Any]:
+    """
+    Builds a structured log dictionary describing the vector index operation.
+    
+    Parameters:
+        status (str): Outcome of the operation (e.g., "created", "exists", "mismatch", "runtime_error").
+        cfg (VectorIndexConfig): Requested/target index configuration included under the `index` key.
+        existing (VectorIndexConfig | None): Existing index configuration to include under the `existing` key when present.
+        duration_ms (int): Operation duration in milliseconds.
+        database (str | None): Neo4j database name associated with the operation.
+    
+    Returns:
+        dict[str, Any]: A log dictionary containing:
+            - timestamp: UTC ISO timestamp of the log record
+            - operation: always "create_vector_index"
+            - status: provided status
+            - duration_ms: provided duration in milliseconds
+            - database: provided database name or None
+            - index: snapshot of the requested index configuration
+            - existing: snapshot of the existing index configuration if present
+    """
     log: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "operation": "create_vector_index",
@@ -212,6 +316,26 @@ def _build_log(*, status: str, cfg: VectorIndexConfig, existing: VectorIndexConf
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
+    """
+    Ensure a Neo4j vector index exists (create it if missing) and produce a structured operation log.
+    
+    Parameters:
+        argv (Sequence[str] | None): Optional command-line arguments to override defaults. If None, environment variables and default CLI settings are used.
+    
+    Returns:
+        dict[str, Any]: A structured log dictionary describing the operation, including keys such as
+            - timestamp: ISO 8601 UTC time of completion
+            - operation: the performed operation (e.g., "create_vector_index")
+            - status: "created" or "exists"
+            - duration_ms: elapsed time in milliseconds
+            - database: target Neo4j database name (or None)
+            - index: details of the requested index (name, label, embedding_property, dimensions, similarity)
+            - existing: snapshot of the existing index configuration when present
+    
+    Raises:
+        VectorIndexMismatchError: If an existing index is found but its configuration does not match the requested configuration.
+        RuntimeError: For Neo4j-related errors or if index creation fails after retries.
+    """
     args = _parse_args(argv)
     args.dimensions = _validate_dimensions(args.dimensions)
     args.similarity = _normalise_similarity(args.similarity)
@@ -284,6 +408,15 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """
+    Run the create_vector_index workflow and return an appropriate process exit code.
+    
+    Parameters:
+    	argv (Sequence[str] | None): Command-line arguments to pass to the workflow; pass None to use defaults.
+    
+    Returns:
+    	exit_code (int): 0 on success, 1 if an error occurred.
+    """
     try:
         run(argv)
         return 0
