@@ -53,6 +53,12 @@ jobs:
                       lines.append(line)
           env_path.write_text(''.join(lines))
           PY
+          while IFS= read -r line; do
+            if [ -n "$line" ] && [ "${line##\#}" = "$line" ]; then
+              echo "$line" >> "$GITHUB_ENV"
+            fi
+          done < .env
+          grep NEO4J_PASSWORD .env
           grep NEO4J_PASSWORD .env
 
       - name: Validate compose configuration
