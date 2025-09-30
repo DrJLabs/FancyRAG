@@ -1,0 +1,1 @@
+Acme Corp launched GraphRAG Pilot on May 14, 2025 to accelerate knowledge graph experimentation.

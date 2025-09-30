@@ -51,9 +51,11 @@ graph TD
 | 2025-09-28 | 0.5     | Added Docker Compose stack and minimal path scripts | Codex CLI |
 
 ## Environment Configuration
-- Run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` to start Neo4j and Qdrant locally; the file mounts data under `./.data/neo4j` and `./.data/qdrant` and reads credentials from `.env` (defaults `neo4j/password`).
-- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4.1-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `QDRANT_URL`, and `QDRANT_API_KEY` (optional locally).
+- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4.1-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), and local stack defaults (`NEO4J_URI=bolt://localhost:7687`, `NEO4J_USERNAME=neo4j`, `NEO4J_PASSWORD=neo4j`, `QDRANT_URL=http://localhost:6333`). `QDRANT_API_KEY` may remain blank for local usage.
 - Optional guardrails: `OPENAI_MAX_ATTEMPTS` (default 3) controls retry ceilings, `OPENAI_BACKOFF_SECONDS` adjusts the initial exponential backoff, and `OPENAI_ENABLE_FALLBACK` toggles whether operators may use the documented fallback chat model. Leave unset to accept defaults.
+- Create data directories (`mkdir -p ./.data/neo4j/{data,logs,import} ./.data/qdrant/storage`) before starting the stack to ensure Docker bind-mounts use project-scoped storage.
+- Validate configuration with `docker compose -f docker-compose.neo4j-qdrant.yml config` (or `scripts/check_local_stack.sh --config`) to confirm environment substitution before launching services.
+- Start the stack with `scripts/check_local_stack.sh --up` (equivalent to `docker compose -f docker-compose.neo4j-qdrant.yml up -d`); stop it with `scripts/check_local_stack.sh --down` (adds `--volumes` when you want a clean reset).
 - Keep `.env` git-ignored; never commit real credentials or paste secrets into shared channels.
 - To target managed services, override the same variables without modifying script code.
 
@@ -70,11 +72,21 @@ graph TD
 - Guardrails include exponential backoff for 429/`RateLimitError` responses with token-budget remediation messaging, reusable sanitization helpers shared with other diagnostics, and structured telemetry that records fallback usage (`gpt-4o-mini`) without leaking prompts or API keys. Golden fixtures protect report/metrics schemas when updating the shared client.
 
 ## Minimal Path Workflow
-1. Start containers: `docker compose -f docker-compose.neo4j-qdrant.yml up -d`.
-2. Create vector index: `PYTHONPATH=src python scripts/create_vector_index.py --dimensions 1536 --name chunks_vec`.
-3. Build KG: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt` (accepts `--from-pdf`).
-4. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
-5. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
-6. Tear down containers when finished: `docker compose -f docker-compose.neo4j-qdrant.yml down` (add `--volumes` to reset state).
+1. Bootstrap workspace + `.env` (`scripts/bootstrap.sh`, then copy `.env.example`).
+2. Validate compose configuration: `scripts/check_local_stack.sh --config` (wraps `docker compose config`).
+3. Start containers: `scripts/check_local_stack.sh --up` (or run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` directly).
+4. Wait for health checks to pass (`scripts/check_local_stack.sh --status` polls container health).
+5. Create vector index: `PYTHONPATH=src python scripts/create_vector_index.py --dimensions 1536 --name chunks_vec`.
+6. Build KG: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt` (accepts `--from-pdf`).
+7. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
+8. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
+9. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).
+
+> **Note:** Current scripts provide placeholder behaviour for smoke automation. Story 2.5 will replace them with the full ingestion/export pipeline and update smoke assertions accordingly.
 
 All scripts honour `.env` overrides for connection details and exit non-zero on errors. Review `docs/architecture/coding-standards.md` before changing default retry or logging behaviour.
+
+## Local Stack Automation
+- `scripts/check_local_stack.sh` wraps common compose lifecycle commands (`--config`, `--up`, `--status`, `--down`). It emits structured logs and ensures health checks pass before succeeding.
+- `tests/integration/local_stack/test_minimal_path_smoke.py` runs the automation end-to-end; the test skips with guidance until Story 2.5 delivers ingestion scripts.
+- GitHub Actions workflow `local-stack-smoke.yml` enforces `docker compose config` linting and executes the smoke suite on pushes/PRs (requires Docker on runners).
