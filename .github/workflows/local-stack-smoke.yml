@@ -53,6 +53,7 @@ jobs:
                       lines.append(line)
           env_path.write_text(''.join(lines))
           PY
+          grep NEO4J_PASSWORD .env
 
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config
