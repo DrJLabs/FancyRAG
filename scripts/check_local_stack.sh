@@ -56,6 +56,27 @@ status_table() {
   compose ps --format '{{.Service}}\t{{.State}}\t{{if .Health}}{{.Health}}{{end}}'
 }
 
+# qdrant_present reports success when the qdrant service appears in the compose
+# status table. When absent it returns a non-zero status so callers can skip
+# readiness checks until the container is scheduled.
+qdrant_present() {
+  status_table | awk -F'\t' '$1 == "qdrant" { exit 0 } END { exit 1 }' >/dev/null
+}
+
+# qdrant_ready probes the HTTP readiness endpoint using curl when the qdrant
+# service is part of the compose stack. If curl is unavailable the helper exits
+# with an error so callers know to install it locally.
+qdrant_ready() {
+  if ! qdrant_present; then
+    return 0
+  fi
+  require_command curl
+  local base_url
+  base_url=${QDRANT_HEALTH_URL:-${QDRANT_URL:-http://localhost:6333}}
+  local readyz="${base_url%/}/readyz"
+  curl --fail --silent --show-error "$readyz" >/dev/null 2>&1
+}
+
 # all_healthy checks whether every service reported by status_table is in a running state and, when a health value is present, that it is `healthy`.
 # Exits with status 0 if all services are acceptable, 1 if there are no services or any service is not running/healthy.
 all_healthy() {
@@ -81,7 +102,7 @@ wait_for_health() {
   local sleep_seconds=5
   local attempt=1
   while (( attempt <= max_attempts )); do
-    if all_healthy; then
+    if all_healthy && qdrant_ready; then
       status_table
       return 0
     fi

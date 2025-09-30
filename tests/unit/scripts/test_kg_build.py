@@ -116,51 +116,27 @@ class FakePipeline:
         return SimpleNamespace(run_id="test-run")
 
 
-class FakeDriver:
-    def __enter__(self) -> "FakeDriver":
-        """
-        Enter the context manager and provide the FakeDriver instance.
-        
-        Returns:
-            The FakeDriver instance.
-        """
+class FakeAsyncDriver:
+    async def __aenter__(self) -> "FakeAsyncDriver":
+        """Return the async driver context manager instance."""
+
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        """
-        Context manager exit method that performs no action and does not suppress exceptions.
-        
-        Parameters:
-            exc_type (type | None): Exception type if an exception was raised inside the context, otherwise None.
-            exc (BaseException | None): Exception instance if raised inside the context, otherwise None.
-            tb (types.TracebackType | None): Traceback object for the exception, otherwise None.
-        
-        Notes:
-            This method intentionally returns None so any exception raised in the with-block is propagated.
-        """
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        """Async context manager exit hook that performs no cleanup."""
+
         return None
 
-    def execute_query(self, query: str, *, database_: str | None = None):
-        """
-        Return a fake query result whose reported `value` is determined by keywords found in `query`.
-        
-        Parameters:
-        	query (str): The Cypher-like query string to inspect; the presence of the substrings "Document" or "Chunk" and the absence of "HAS_CHUNK" influence the returned value.
-        	database_ (str | None): Optional database name (ignored by this fake driver).
-        
-        Returns:
-        	SimpleNamespace: An object with a `records` attribute containing a single dict `{"value": <int>}`, where the int is:
-        	- 2 if "Document" appears in `query` and "HAS_CHUNK" does not,
-        	- 4 if "Chunk" appears in `query` and "HAS_CHUNK" does not,
-        	- 4 in all other cases.
-        """
+    async def execute_query(self, query: str, *, database_: str | None = None):
+        """Return deterministic counts matching the Cypher query text."""
+
         if "Document" in query and "HAS_CHUNK" not in query:
             value = 2
         elif "Chunk" in query and "HAS_CHUNK" not in query:
             value = 4
         else:
             value = 4
-        return SimpleNamespace(records=[{"value": value}])
+        return ([{"value": value}], None, None)
 
 
 @pytest.fixture(autouse=True)
@@ -212,7 +188,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: fake_client)
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs)))
-    monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
+    monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", lambda uri, auth=None: FakeAsyncDriver())
     monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
 
     log = kg.run([
@@ -264,7 +240,7 @@ def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_pa
     )
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: FailingClient())
-    monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
+    monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", lambda uri, auth=None: FakeAsyncDriver())
     monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
@@ -282,6 +258,6 @@ def test_missing_file_raises(monkeypatch: pytest.MonkeyPatch, env) -> None:
     Parameters:
         monkeypatch (pytest.MonkeyPatch): Fixture used to patch GraphDatabase.driver for the duration of the test.
     """
-    monkeypatch.setattr(kg.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
+    monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", lambda uri, auth=None: FakeAsyncDriver())
     with pytest.raises(FileNotFoundError):
         kg.run(["--source", "does-not-exist.txt"])

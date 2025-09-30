@@ -9,12 +9,11 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 from neo4j.exceptions import ClientError, Neo4jError
 
 from _compat.structlog import get_logger
@@ -32,6 +31,7 @@ from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter i
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.llm.base import LLMInterface
 from neo4j_graphrag.llm.types import LLMResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = get_logger(__name__)
 
@@ -39,35 +39,27 @@ DEFAULT_SOURCE = Path("docs/samples/pilot.txt")
 DEFAULT_LOG_PATH = Path("artifacts/local_stack/kg_build.json")
 DEFAULT_CHUNK_SIZE = 600
 DEFAULT_CHUNK_OVERLAP = 100
-_RAW_DEFAULT_SCHEMA = {
-    "node_types": [
-        {"label": "Document", "additional_properties": True},
-        {"label": "Chunk", "additional_properties": True},
-        {"label": "Company", "additional_properties": True},
-        {"label": "Product", "additional_properties": True},
-        {"label": "Operator", "additional_properties": True},
-    ],
-    "relationship_types": [
-        {"label": "HAS_CHUNK", "additional_properties": True},
-        {"label": "LAUNCHED", "additional_properties": True},
-        {"label": "INGESTED_BY", "additional_properties": True},
-    ],
-    "patterns": [
-        ["Document", "HAS_CHUNK", "Chunk"],
-        ["Company", "LAUNCHED", "Product"],
-        ["Chunk", "INGESTED_BY", "Operator"],
-    ],
-    "additional_node_types": False,
-    "additional_relationship_types": False,
-    "additional_patterns": False,
-}
+DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent / "config" / "kg_schema.json"
 
-# GraphSchema defaults rely on pydantic default factories that expect a validated
-# payload. Pydantic 2.9+ stopped forwarding that context, which makes the
-# upstream default factories incompatible when only labels are supplied.  Eagerly
-# validating here ensures the pipeline receives a ready GraphSchema instance and
-# sidesteps the incompatibility without relaxing validation downstream.
-DEFAULT_SCHEMA = GraphSchema.model_validate(_RAW_DEFAULT_SCHEMA)
+
+def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
+    """Load and validate the default GraphSchema definition from disk."""
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:  # pragma: no cover - installation defect
+        raise RuntimeError(f"default schema file not found: {path}") from exc
+    except json.JSONDecodeError as exc:  # pragma: no cover - installation defect
+        raise RuntimeError(f"invalid schema JSON: {path}") from exc
+    # GraphSchema defaults rely on pydantic default factories that expect a validated
+    # payload. Pydantic 2.9+ stopped forwarding that context, which makes the
+    # upstream default factories incompatible when only labels are supplied.  Eagerly
+    # validating here ensures the pipeline receives a ready GraphSchema instance and
+    # sidesteps the incompatibility without relaxing validation downstream.
+    return GraphSchema.model_validate(raw)
+
+
+DEFAULT_SCHEMA = _load_default_schema()
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -183,26 +175,8 @@ def _ensure_directory(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _attr_or_key(obj: Any, name: str) -> Any:
-    """Return an attribute or mapping entry, preferring attribute access."""
-
-    if hasattr(obj, name):
-        return getattr(obj, name)
-    if isinstance(obj, Mapping):
-        return obj.get(name)
-    return None
-
-
-def _is_sequence(obj: Any) -> bool:
-    return isinstance(obj, Sequence) and not isinstance(obj, (str, bytes, bytearray))
-
-
-def _iterable(value: Any) -> Iterable[Any]:
-    return value if _is_sequence(value) else ()
-
-
-def _extract_text(value: Any) -> str | None:
-    """Normalise common text container shapes to a plain string."""
+def _coerce_text(value: Any) -> str | None:
+    """Best-effort conversion of heterogeneous content payloads to text."""
 
     if isinstance(value, str):
         return value
@@ -215,65 +189,86 @@ def _extract_text(value: Any) -> str | None:
     return None
 
 
-@dataclass(frozen=True)
-class ChatContent:
-    parts: tuple[str, ...]
+class ChatContentPart(BaseModel):
+    """Pydantic model for tool and text content entries."""
 
-    @classmethod
-    def from_raw(cls, message: Any) -> "ChatContent":
-        raw_content = _attr_or_key(message, "content")
-        if isinstance(raw_content, str):
-            return cls((raw_content,))
+    model_config = ConfigDict(extra="allow")
+
+    text: Any = None
+    content: Any = None
+
+    def as_text(self) -> str | None:
+        text = _coerce_text(self.text)
+        if text:
+            return text
+        return _coerce_text(self.content)
+
+
+class ChatMessage(BaseModel):
+    """Pydantic model for OpenAI chat messages supporting rich content."""
+
+    model_config = ConfigDict(extra="allow")
+
+    content: Any = None
+
+    def parts(self) -> list[str]:
+        content = self.content
+        if isinstance(content, str):
+            return [content]
         parts: list[str] = []
-        for item in _iterable(raw_content):
-            text = _extract_text(_attr_or_key(item, "text"))
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+            for item in content:
+                if isinstance(item, str):
+                    if item:
+                        parts.append(item)
+                    continue
+                if isinstance(item, Mapping):
+                    text = ChatContentPart.model_validate(item).as_text()
+                else:
+                    text = _coerce_text(item)
+                if text:
+                    parts.append(text)
+        elif isinstance(content, Mapping):
+            text = ChatContentPart.model_validate(content).as_text()
             if text:
                 parts.append(text)
+        else:
+            text = _coerce_text(content)
+            if text:
+                parts.append(text)
+        return parts
+
+
+class ChatChoice(BaseModel):
+    """Pydantic model for chat completion choices."""
+
+    model_config = ConfigDict(extra="allow")
+
+    message: ChatMessage | None = Field(default=None)
+
+
+class ChatCompletion(BaseModel):
+    """Pydantic model covering the subset of fields used by kg_build."""
+
+    model_config = ConfigDict(extra="allow")
+
+    choices: list[ChatChoice] = Field(default_factory=list)
+
+    def first_text(self) -> str:
+        for choice in self.choices:
+            if not choice.message:
                 continue
-            fallback = _attr_or_key(item, "content")
-            fallback_text = _extract_text(fallback)
-            if fallback_text:
-                parts.append(fallback_text)
-        return cls(tuple(parts))
-
-
-@dataclass(frozen=True)
-class ChatChoice:
-    content: ChatContent
-
-    @classmethod
-    def from_raw(cls, raw_choice: Any) -> "ChatChoice | None":
-        message = _attr_or_key(raw_choice, "message")
-        if message is None:
-            return None
-        return cls(ChatContent.from_raw(message))
-
-
-@dataclass(frozen=True)
-class ChatCompletion:
-    choices: tuple[ChatChoice, ...]
-
-    @classmethod
-    def from_raw(cls, raw_response: Any) -> "ChatCompletion":
-        raw_choices = _attr_or_key(raw_response, "choices")
-        normalised: list[ChatChoice] = []
-        for raw_choice in _iterable(raw_choices):
-            choice = ChatChoice.from_raw(raw_choice)
-            if choice is not None:
-                normalised.append(choice)
-        return cls(tuple(normalised))
-
-    def first_content(self) -> str:
-        if not self.choices:
-            return ""
-        return "".join(self.choices[0].content.parts)
+            parts = choice.message.parts()
+            if parts:
+                return "".join(parts)
+        return ""
 
 
 def _extract_content(raw_response: Any) -> str:
     """Extract textual content from a chat-completion style response."""
 
-    completion = ChatCompletion.from_raw(raw_response)
-    return completion.first_content()
+    completion = ChatCompletion.model_validate(raw_response)
+    return completion.first_text()
 
 
 def _strip_code_fence(text: str) -> str:
@@ -433,7 +428,7 @@ class SharedOpenAILLM(LLMInterface):
         )
 
 
-def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
+async def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
     """
     Collects counts of documents, chunks, and document→chunk relationships from the specified Neo4j database.
     
@@ -457,8 +452,12 @@ def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
     counts: dict[str, int] = {}
     for key, query in queries.items():
         try:
-            result = driver.execute_query(query, database_=database)
-            records = getattr(result, "records", result)
+            result = await driver.execute_query(query, database_=database)
+            records = result
+            if isinstance(result, tuple):
+                records = result[0]
+            else:
+                records = getattr(result, "records", result)
             if records:
                 record = records[0]
                 value = record.get("value") if isinstance(record, Mapping) else record[0]
@@ -466,6 +465,33 @@ def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
         except Neo4jError:
             logger.warning("kg_build.count_failed", query=key)
     return counts
+
+
+async def _execute_pipeline(
+    *,
+    uri: str,
+    auth: tuple[str, str],
+    source_text: str,
+    database: str | None,
+    embedder: Embedder,
+    llm: SharedOpenAILLM,
+    splitter: FixedSizeSplitter,
+) -> tuple[str | None, Mapping[str, int]]:
+    """Run the SimpleKGPipeline using the async Neo4j driver."""
+
+    async with AsyncGraphDatabase.driver(uri, auth=auth) as driver:
+        pipeline = SimpleKGPipeline(
+            llm=llm,
+            driver=driver,
+            embedder=embedder,
+            schema=DEFAULT_SCHEMA,
+            from_pdf=False,
+            text_splitter=splitter,
+            neo4j_database=database,
+        )
+        result = await pipeline.run_async(text=source_text)
+        counts = await _collect_counts(driver, database=database)
+        return result.run_id, counts
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
@@ -520,19 +546,17 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     counts: Mapping[str, int] = {}
 
     try:
-        with GraphDatabase.driver(uri, auth=auth) as driver:
-            pipeline = SimpleKGPipeline(
-                llm=llm,
-                driver=driver,
+        run_id, counts = asyncio.run(
+            _execute_pipeline(
+                uri=uri,
+                auth=auth,
+                source_text=source_text,
+                database=args.database,
                 embedder=embedder,
-                schema=DEFAULT_SCHEMA,
-                from_pdf=False,
-                text_splitter=splitter,
-                neo4j_database=args.database,
+                llm=llm,
+                splitter=splitter,
             )
-            result = asyncio.run(pipeline.run_async(text=source_text))
-            run_id = result.run_id
-            counts = _collect_counts(driver, database=args.database)
+        )
     except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
         raise RuntimeError(f"OpenAI request failed: {exc}") from exc
     except (Neo4jError, ClientError) as exc:

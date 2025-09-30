@@ -74,7 +74,7 @@ def test_minimal_path_smoke() -> None:
     env["COMPOSE_FILE"] = str(COMPOSE_FILE)
     env["PYTHONPATH"] = "stubs:src"
     env["NEO4J_USERNAME"] = os.environ.get("NEO4J_USERNAME", "neo4j")
-    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "local-neo4j")
+    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "neo4j")
     env["NEO4J_AUTH"] = f"{env['NEO4J_USERNAME']}/{env['NEO4J_PASSWORD']}"
     env["NEO4J_URI"] = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
     env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
