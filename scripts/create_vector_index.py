@@ -18,6 +18,18 @@ import datetime as _dt
 
 
 def ensure_env(var: str) -> str:
+    """
+    Retrieve the value of a required environment variable.
+    
+    Parameters:
+        var (str): Name of the environment variable to read.
+    
+    Returns:
+        str: The environment variable's value.
+    
+    Raises:
+        SystemExit: If the environment variable is not set (message: "Missing required environment variable: {var}").
+    """
     value = os.getenv(var)
     if not value:
         raise SystemExit(f"Missing required environment variable: {var}")
@@ -25,6 +37,11 @@ def ensure_env(var: str) -> str:
 
 
 def main() -> None:
+    """
+    Create a stub Neo4j vector index log for local-stack smoke tests.
+    
+    Validates the required environment variables NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD; accepts CLI options --dimensions (default 1536) and --name (default "chunks_vec"); writes a structured JSON log to artifacts/local_stack/create_vector_index.json and prints the same JSON to stdout. Exits with SystemExit if any required environment variable is missing.
+    """
     parser = argparse.ArgumentParser(description="Create Neo4j vector index (stub)")
     parser.add_argument("--dimensions", default="1536")
     parser.add_argument("--name", default="chunks_vec")

@@ -12,6 +12,18 @@ import datetime as _dt
 
 
 def ensure_env(var: str) -> str:
+    """
+    Ensure that the named environment variable is set and return its value.
+    
+    Parameters:
+        var (str): Name of the environment variable to retrieve.
+    
+    Returns:
+        The value of the environment variable.
+    
+    Raises:
+        SystemExit: If the environment variable is not set.
+    """
     value = os.getenv(var)
     if not value:
         raise SystemExit(f"Missing required environment variable: {var}")
@@ -19,6 +31,11 @@ def ensure_env(var: str) -> str:
 
 
 def main() -> None:
+    """
+    Run a stub knowledge-graph build pipeline that validates environment configuration and emits a JSON log.
+    
+    Parses an optional `--source` argument (default "docs/samples/pilot.txt"), verifies that the environment variables OPENAI_API_KEY, NEO4J_URI, and QDRANT_URL are present (exits if any are missing), and constructs a log record with a UTC ISO-8601 timestamp, operation "kg_build", the provided source, status "skipped", and a stub message. The log is written to artifacts/local_stack/kg_build.json (creating the directory if needed) and also printed to stdout as JSON.
+    """
     parser = argparse.ArgumentParser(description="Run SimpleKGPipeline (stub)")
     parser.add_argument("--source", default="docs/samples/pilot.txt")
     args = parser.parse_args()

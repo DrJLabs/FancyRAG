@@ -15,6 +15,11 @@ COMPOSE_FILE = PROJECT_ROOT / "docker-compose.neo4j-qdrant.yml"
 @pytest.mark.integration
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker command not available")
 def test_check_local_stack_config_renders_successfully() -> None:
+    """
+    Verify that the local stack check script renders the Docker Compose configuration including Neo4j and Qdrant.
+    
+    Runs the check script with the test compose file and asserts the process exits with code 0 and that the rendered output contains the strings "neo4j:" and "qdrant:".
+    """
     env = os.environ.copy()
     env["COMPOSE_FILE"] = str(COMPOSE_FILE)
 
