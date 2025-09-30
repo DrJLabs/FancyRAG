@@ -5,29 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 import datetime as _dt
 
-
-def ensure_env(var: str) -> str:
-    """
-    Ensure that the named environment variable is set and return its value.
-    
-    Parameters:
-        var (str): Name of the environment variable to retrieve.
-    
-    Returns:
-        The value of the environment variable.
-    
-    Raises:
-        SystemExit: If the environment variable is not set.
-    """
-    value = os.getenv(var)
-    if not value:
-        raise SystemExit(f"Missing required environment variable: {var}")
-    return value
+from fancyrag.utils import ensure_env
 
 
 def main() -> None:
@@ -49,7 +31,7 @@ def main() -> None:
         "operation": "kg_build",
         "source": args.source,
         "status": "skipped",
-        "message": "Stub implementation – full pipeline delivered in Story 2.5",
+        "message": "Stub implementation - full pipeline delivered in Story 2.5",
     }
 
     Path("artifacts/local_stack").mkdir(parents=True, exist_ok=True)
@@ -62,4 +44,4 @@ if __name__ == "__main__":
         main()
     except Exception as exc:  # pragma: no cover
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

@@ -33,7 +33,7 @@ USAGE
 # require_command checks that the specified command exists in PATH and, if missing, prints an error to stderr and exits with status 127.
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    echo "\u001b[31merror:\u001b[0m required command '$1' not found" >&2
+    printf '\033[31merror:\033[0m required command '\''%s'\'' not found\n' "$1" >&2
     exit 127
   fi
 }
@@ -41,7 +41,7 @@ require_command() {
 # ensure_compose_file verifies that the resolved compose file exists and prints an error and exits with status 1 if it is missing.
 ensure_compose_file() {
   if [[ ! -f "${COMPOSE_PATH}" ]]; then
-    echo "\u001b[31merror:\u001b[0m compose file '${COMPOSE_PATH}' not found" >&2
+    printf '\033[31merror:\033[0m compose file '\''%s'\'' not found\n' "${COMPOSE_PATH}" >&2
     exit 1
   fi
 }
@@ -88,7 +88,7 @@ wait_for_health() {
     sleep "${sleep_seconds}"
     (( attempt++ ))
   done
-  echo "\u001b[31merror:\u001b[0m services failed to reach healthy state" >&2
+  printf '\033[31merror:\033[0m services failed to reach healthy state\n' >&2
   status_table
   return 1
 }

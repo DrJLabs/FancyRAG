@@ -53,7 +53,7 @@ def run_command(*args: str, env: dict[str, str], check: bool = True) -> subproce
 
 @pytest.mark.integration
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker command not available")
-def test_minimal_path_smoke(tmp_path: Path) -> None:
+def test_minimal_path_smoke() -> None:
     """
     Integration test that boots a local Docker stack, runs a minimal end-to-end workflow, and tears the stack down.
     
@@ -80,6 +80,7 @@ def test_minimal_path_smoke(tmp_path: Path) -> None:
     env.setdefault("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
     env.setdefault("QDRANT_URL", "http://localhost:6333")
     env.setdefault("QDRANT_API_KEY", "")
+    env.setdefault("OPENAI_API_KEY", "local-smoke-test-key")
 
     # Ensure bind-mount directories exist before starting the stack.
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):

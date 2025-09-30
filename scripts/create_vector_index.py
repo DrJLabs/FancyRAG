@@ -10,30 +10,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 import datetime as _dt
 
-
-def ensure_env(var: str) -> str:
-    """
-    Retrieve the value of a required environment variable.
-    
-    Parameters:
-        var (str): Name of the environment variable to read.
-    
-    Returns:
-        str: The environment variable's value.
-    
-    Raises:
-        SystemExit: If the environment variable is not set (message: "Missing required environment variable: {var}").
-    """
-    value = os.getenv(var)
-    if not value:
-        raise SystemExit(f"Missing required environment variable: {var}")
-    return value
+from fancyrag.utils import ensure_env
 
 
 def main() -> None:
@@ -57,11 +39,10 @@ def main() -> None:
         "index_name": args.name,
         "dimensions": int(args.dimensions),
         "status": "skipped",
-        "message": "Stub implementation – full pipeline delivered in Story 2.5",
+        "message": "Stub implementation - full pipeline delivered in Story 2.5",
     }
 
-    Path("artifacts").mkdir(exist_ok=True)
-    Path("artifacts/local_stack").mkdir(exist_ok=True)
+    Path("artifacts/local_stack").mkdir(parents=True, exist_ok=True)
     output = Path("artifacts/local_stack/create_vector_index.json")
     output.write_text(json.dumps(log, indent=2), encoding="utf-8")
     print(json.dumps(log))
@@ -70,8 +51,8 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except SystemExit as exc:  # pragma: no cover - allow friendly error
+    except SystemExit:  # pragma: no cover - allow friendly error
         raise
     except Exception as exc:  # pragma: no cover
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
