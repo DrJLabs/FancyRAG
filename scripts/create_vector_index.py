@@ -40,6 +40,8 @@ DEFAULT_LABEL = "Chunk"
 DEFAULT_PROPERTY = "embedding"
 DEFAULT_SIMILARITY = "cosine"
 DEFAULT_LOG_PATH = Path("artifacts/local_stack/create_vector_index.json")
+INITIAL_BACKOFF_SECONDS = 0.25
+MAX_CREATE_RETRIES = 3
 
 
 class VectorIndexMismatchError(RuntimeError):
@@ -371,13 +373,13 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                 _compare_configs(cfg, existing_cfg)
                 status = "exists"
             else:
-                backoff = 0.25
-                for attempt in range(3):
+                backoff = INITIAL_BACKOFF_SECONDS
+                for attempt in range(MAX_CREATE_RETRIES):
                     try:
                         _create_index(driver, cfg=cfg, database=args.database)
                         break
                     except (Neo4jIndexError, Neo4jError, ClientError) as exc:
-                        if attempt == 2:
+                        if attempt == MAX_CREATE_RETRIES - 1:
                             raise RuntimeError(f"Neo4j error: {exc}") from exc
                         time.sleep(backoff)
                         backoff *= 2

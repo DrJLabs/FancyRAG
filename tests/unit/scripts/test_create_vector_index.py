@@ -4,32 +4,12 @@ import json
 import os
 import pathlib
 import sys
-import types
 
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-stub = sys.modules.get("pandas")
-if stub is None:
-    stub = types.ModuleType("pandas")
-    sys.modules["pandas"] = stub
-if not hasattr(stub, "NA"):
-    stub.NA = object()
-if not hasattr(stub, "Series"):
-    stub.Series = type("Series", (), {})
-if not hasattr(stub, "DataFrame"):
-    stub.DataFrame = type("DataFrame", (), {})
-if not hasattr(stub, "Categorical"):
-    stub.Categorical = type("Categorical", (), {})
-if not hasattr(stub, "core"):
-    stub.core = types.SimpleNamespace()
-if not hasattr(stub.core, "arrays"):
-    stub.core.arrays = types.SimpleNamespace()
-if not hasattr(stub.core.arrays, "ExtensionArray"):
-    stub.core.arrays.ExtensionArray = type("ExtensionArray", (), {})
 
 import scripts.create_vector_index as civ
 
