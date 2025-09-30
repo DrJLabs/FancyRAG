@@ -48,7 +48,11 @@ services:
         source: ./.data/qdrant/storage
         target: /qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:6333/readyz"]
+      test:
+        [
+          "CMD-SHELL",
+          "command -v curl >/dev/null 2>&1 || (apt-get update >/dev/null && apt-get install -y curl >/dev/null); curl -fsS http://127.0.0.1:6333/readyz || exit 1",
+        ]
       interval: 30s
       timeout: 10s
       retries: 5

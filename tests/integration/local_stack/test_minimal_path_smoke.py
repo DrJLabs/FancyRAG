@@ -71,16 +71,29 @@ def test_minimal_path_smoke() -> None:
         )
 
     env = os.environ.copy()
-    env.setdefault("COMPOSE_FILE", str(COMPOSE_FILE))
-    env.setdefault("PYTHONPATH", "src")
-    env.setdefault("NEO4J_USERNAME", "neo4j")
-    env.setdefault("NEO4J_PASSWORD", "neo4j")
-    env.setdefault("NEO4J_URI", "bolt://localhost:7687")
-    env.setdefault("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
-    env.setdefault("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
-    env.setdefault("QDRANT_URL", "http://localhost:6333")
-    env.setdefault("QDRANT_API_KEY", "")
-    env.setdefault("OPENAI_API_KEY", "local-smoke-test-key")
+    env["COMPOSE_FILE"] = str(COMPOSE_FILE)
+    env["PYTHONPATH"] = "stubs:src"
+    env["NEO4J_USERNAME"] = os.environ.get("NEO4J_USERNAME", "neo4j")
+    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "local-neo4j")
+    env["NEO4J_AUTH"] = f"{env['NEO4J_USERNAME']}/{env['NEO4J_PASSWORD']}"
+    env["NEO4J_URI"] = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+    env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
+    env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
+    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
+    env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
+    max_attempts = os.environ.get("OPENAI_MAX_ATTEMPTS", "")
+    env["OPENAI_MAX_ATTEMPTS"] = max_attempts if max_attempts.isdigit() and int(max_attempts) > 0 else "3"
+    backoff = os.environ.get("OPENAI_BACKOFF_SECONDS", "")
+    try:
+        float(backoff)
+    except (TypeError, ValueError):
+        backoff = "0.5"
+    env["OPENAI_BACKOFF_SECONDS"] = backoff
+    fallback = os.environ.get("OPENAI_ENABLE_FALLBACK", "true").lower()
+    if fallback not in {"1", "0", "true", "false", "yes", "no", "on", "off"}:
+        fallback = "true"
+    env["OPENAI_ENABLE_FALLBACK"] = fallback
 
     # Ensure bind-mount directories exist before starting the stack.
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
@@ -98,7 +111,21 @@ def test_minimal_path_smoke() -> None:
 
         # Execute minimal path scripts sequentially.
         python = sys.executable
-        run_command(python, "scripts/create_vector_index.py", "--dimensions", "1536", "--name", "chunks_vec", env=env)
+        run_command(
+            python,
+            "scripts/create_vector_index.py",
+            "--index-name",
+            "chunks_vec",
+            "--label",
+            "Chunk",
+            "--embedding-property",
+            "embedding",
+            "--dimensions",
+            "1536",
+            "--similarity",
+            "cosine",
+            env=env,
+        )
         run_command(python, "scripts/kg_build.py", "--source", "docs/samples/pilot.txt", env=env)
         run_command(python, "scripts/export_to_qdrant.py", "--collection", "chunks_main", env=env)
         run_command(
