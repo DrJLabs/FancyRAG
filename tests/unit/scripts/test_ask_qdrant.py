@@ -1,3 +1,4 @@
+# Testing library/framework: pytest (with monkeypatch and capsys fixtures). These tests follow existing project conventions.
 from __future__ import annotations
 
 import json
@@ -95,10 +96,10 @@ def _setup_driver(monkeypatch, record):
         def __enter__(self):
             return FakeDriver()
 
-        def __exit__(self, exc_type, exc, tb):  # noqa: ARG002
+        def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr(ask.GraphDatabase, "driver", lambda uri, auth: FakeDriverCtx())
+    monkeypatch.setattr(ask.GraphDatabase, "driver", lambda *_, **__: FakeDriverCtx())
 
 
 def _setup_qdrant(monkeypatch, points):
@@ -158,7 +159,7 @@ def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(ask, "OpenAIClientError", FakeOpenAIError)
 
     class FailingClient:
-        def __init__(self, settings):  # noqa: ARG002
+        def __init__(self, settings):
             pass
 
         def embedding(self, *, input_text: str):  # noqa: ARG002
@@ -177,3 +178,47 @@ def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
     assert saved["status"] == "error"
+
+
+def test_query_qdrant_fallback_to_search():
+    """_query_qdrant should fallback to client.search when query_points is unavailable/legacy."""
+    class LegacyClient:
+        def query_points(self, *_, **__):
+            raise AttributeError
+        def search(self, *_, **__):
+            return [SimpleNamespace(payload={"chunk_id": "x"}, id="x", score=0.1)]
+    results = ask._query_qdrant(LegacyClient(), collection="coll", vector=[0.1], limit=1)
+    assert isinstance(results, list)
+    assert results and results[0].payload["chunk_id"] == "x"
+
+
+def test_query_qdrant_query_points_modern_api():
+    """_query_qdrant should use modern query_points API when available."""
+    class ModernClient:
+        def query_points(self, *_, **__):
+            return SimpleNamespace(points=[SimpleNamespace(payload={"chunk_id": "y"}, id="y", score=0.2)])
+    results = ask._query_qdrant(ModernClient(), collection="coll", vector=[0.2], limit=1)
+    assert len(results) == 1
+    assert results[0].payload["chunk_id"] == "y"
+
+
+def test_main_with_custom_collection_populates_log(monkeypatch, tmp_path, capsys):
+    """Ensure --collection is propagated to the output log and artifact."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Which?", "--collection", "alt_collection"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.33, 0.44])
+    _setup_qdrant(monkeypatch, [SimpleNamespace(payload={"chunk_id": "c1"}, id="c1", score=0.88)])
+    _setup_driver(monkeypatch, {"text": "ctx", "source_path": "doc.txt", "document_name": "Doc", "document_source_path": "doc.txt"})
+
+    ask.main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+    assert payload["status"] == "success"
+    assert payload["collection"] == "alt_collection"
+
+    artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
+    saved = json.loads(artifact_path.read_text())
+    assert saved["collection"] == "alt_collection"

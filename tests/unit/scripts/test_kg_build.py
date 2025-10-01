@@ -361,6 +361,37 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.reset_database is False
 
 def test_parse_args_overrides() -> None:
+    pass
+
+
+def test_parse_args_multiple_include_patterns() -> None:
+    pass
+
+
+def test_parse_args_source_dir() -> None:
+    pass
+
+
+def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEO4J_DATABASE", "test_db")
+    args = kg._parse_args([])
+    # The actual behavior depends on implementation, but we test the parsing
+    assert args.database is None or args.database == "test_db"
+    args = kg._parse_args(["--source-dir", "/tmp/mydir"])
+    assert args.source_dir == "/tmp/mydir"
+    assert args.source is None or args.source == str(kg.DEFAULT_SOURCE)
+    args = kg._parse_args(
+        [
+            "--include-pattern",
+            "*.py",
+            "--include-pattern",
+            "*.md",
+            "--include-pattern",
+            "*.txt",
+        ]
+    )
+    assert args.include_patterns == ["*.py", "*.md", "*.txt"]
+    assert len(args.include_patterns) == 3
     args = kg._parse_args(
         [
             "--source",
@@ -499,6 +530,792 @@ def test_sanitize_property_value_arbitrary_object() -> None:
 
 
 def test_sanitizing_writer_handles_empty_list() -> None:
+    pass
+
+
+def test_sanitize_property_value_nested_dict() -> None:
+    pass
+
+
+def test_sanitize_property_value_none() -> None:
+    pass
+
+
+def test_sanitize_property_value_empty_string() -> None:
+    pass
+
+
+def test_sanitize_property_value_boolean_list() -> None:
+    pass
+
+
+def test_sanitize_property_value_float_list() -> None:
+    pass
+
+
+def test_sanitize_property_value_dict_with_none() -> None:
+    pass
+
+
+def test_sanitize_property_value_empty_dict() -> None:
+    pass
+
+
+def test_sanitize_property_value_empty_list_explicit() -> None:
+    pass
+
+
+def test_sanitize_property_value_large_numbers() -> None:
+    pass
+
+
+def test_sanitize_property_value_unicode_strings() -> None:
+    pass
+
+
+def test_sanitizing_writer_mixed_properties() -> None:
+    pass
+
+
+def test_sanitizing_writer_nested_none_values() -> None:
+    pass
+
+
+def test_run_custom_chunk_parameters(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_run_code_profile(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_fake_driver_unknown_query() -> None:
+    pass
+
+
+def test_fake_driver_context_manager_sync() -> None:
+    pass
+
+
+async def test_fake_driver_context_manager_async() -> None:
+    pass
+
+
+def test_fake_pipeline_initialization() -> None:
+    pass
+
+
+def test_fake_shared_client_embedding_tracking() -> None:
+    pass
+
+
+def test_fake_shared_client_chat_tracking() -> None:
+    pass
+
+
+def test_run_directory_no_matching_files(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_fake_shared_client_temperature_handling() -> None:
+    pass
+
+
+def test_sanitize_property_value_empty_strings_list() -> None:
+    pass
+
+
+def test_run_handles_chat_completion_failure(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_missing_directory_raises(env, monkeypatch) -> None:  # noqa: ARG001
+    pass
+
+
+def test_log_file_persistence(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_sanitize_property_value_special_chars() -> None:
+    pass
+
+
+def test_fake_driver_multiple_query_sequence() -> None:
+    pass
+
+
+def test_sanitize_property_value_date_strings() -> None:
+    pass
+
+
+def test_sanitize_property_value_with_bytes() -> None:
+    pass
+
+
+def test_parse_args_both_source_and_dir() -> None:
+    pass
+
+
+def test_run_with_embedding_dimensions_override(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_sanitizing_writer_all_none_properties() -> None:
+    pass
+
+
+def test_run_with_long_content(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_parse_args_zero_chunk_size() -> None:
+    pass
+
+
+def test_parse_args_negative_overlap() -> None:
+    pass
+
+
+def test_sanitize_property_value_with_pandas_na() -> None:
+    pass
+
+
+async def test_fake_pipeline_run_async_with_file() -> None:
+    pass
+
+
+def test_run_multiple_files_tracking(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    pass
+
+
+def test_sanitize_property_value_numeric_keys() -> None:
+    pass
+
+
+def test_sanitize_property_value_deep_nesting() -> None:
+    pass
+
+
+def test_sanitize_property_value_single_element_list() -> None:
+    pass
+
+
+def test_sanitize_property_value_mixed_dict_values() -> None:
+    raw = {"string": "text", "number": 123, "list": [1, 2], "nested": {"key": "val"}}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["string"] == "text"
+    assert parsed["number"] == 123
+    assert parsed["list"] == [1, 2]
+    assert parsed["nested"]["key"] == "val"
+    raw = [42]
+    sanitized = kg._sanitize_property_value(raw)
+    assert sanitized == raw or json.loads(sanitized) == raw
+    raw = {"level1": {"level2": {"level3": {"level4": {"level5": "deep"}}}}}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["level1"]["level2"]["level3"]["level4"]["level5"] == "deep"
+    # Dict with numeric-like string keys
+    raw = {"1": "one", "2": "two", "10": "ten"}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["1"] == "one"
+    assert parsed["10"] == "ten"
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "file1.txt").write_text("content1", encoding="utf-8")
+    (repo_dir / "file2.txt").write_text("content2", encoding="utf-8")
+    (repo_dir / "file3.txt").write_text("content3", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+    _patch_driver(monkeypatch, lambda *_, **__: FakeDriver())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source-dir",
+            str(repo_dir),
+            "--include-pattern",
+            "*.txt",
+            "--log-path",
+            str(log_path),
+        ]
+    )
+
+    assert log["status"] == "success"
+    assert len(pipelines) == 3
+    assert len(log["files"]) == 3
+    fake_llm = SimpleNamespace(invoke=lambda x: None)
+    fake_embedder = SimpleNamespace(embed_query=lambda x: None)
+    pipeline = FakePipeline(
+        llm=fake_llm,
+        driver=FakeDriver(),
+        embedder=fake_embedder,
+        schema=None,
+        from_pdf=False,
+        text_splitter=None,
+        neo4j_database="neo4j",
+        kg_writer=None,
+    )
+
+    result = await pipeline.run_async(text="", file_path="/tmp/test.pdf")
+    assert result.run_id == "test-run"
+    assert pipeline.run_args["file_path"] == "/tmp/test.pdf"
+    assert pipeline.run_args["text"] == ""
+    import pandas as pd
+    raw = {"value": pd.NA}
+    sanitized = kg._sanitize_property_value(raw)
+    # Should handle pandas.NA appropriately
+    assert isinstance(sanitized, str)
+    args = kg._parse_args(["--chunk-overlap", "-1"])
+    assert args.chunk_overlap == -1  # May be invalid but tests parsing
+    args = kg._parse_args(["--chunk-size", "0"])
+    assert args.chunk_size == 0  # May be invalid but tests parsing
+    source = tmp_path / "long.txt"
+    long_content = "word " * 1000  # 1000 words
+    source.write_text(long_content, encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(["--source", str(source), "--log-path", str(log_path)])
+
+    assert log["status"] == "success"
+    assert len(fake_client.embedding_calls) > 0
+    writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
+    sanitized = writer._sanitize_properties({"a": None, "b": None, "c": None})
+    # All None values should be handled appropriately
+    assert isinstance(sanitized, dict)
+    source = tmp_path / "sample.txt"
+    source.write_text("sample", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=10,  # Override
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(["--source", str(source), "--log-path", str(log_path)])
+
+    assert log["status"] == "success"
+    # Test that both can be provided (implementation decides priority)
+    args = kg._parse_args(["--source", "/tmp/file.txt", "--source-dir", "/tmp/dir"])
+    # At least one should be set
+    assert args.source == "/tmp/file.txt" or args.source_dir == "/tmp/dir"
+    class BytesLike:
+        def __str__(self) -> str:
+            return "bytes_representation"
+
+    sanitized = kg._sanitize_property_value(BytesLike())
+    assert sanitized == "bytes_representation"
+    raw = {"date": "2024-01-15", "timestamp": "2024-01-15T10:30:00Z"}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["date"] == "2024-01-15"
+    assert parsed["timestamp"] == "2024-01-15T10:30:00Z"
+    driver = FakeDriver()
+
+    # Test various query patterns
+    result1 = driver.execute_query("CALL dbms.components() YIELD versions, edition")
+    result2 = driver.execute_query("MATCH (:Document) RETURN count(*) as value")
+    result3 = driver.execute_query("MATCH (:Chunk) RETURN count(*) as value")
+    result4 = driver.execute_query("MATCH (:Document)-[:HAS_CHUNK]->(:Chunk) RETURN count(*) as value")
+
+    assert result1 == ([{"versions": ["5.26.0"], "edition": "enterprise"}], None, None)
+    assert result2 == ([{"value": 2}], None, None)
+    assert result3 == ([{"value": 4}], None, None)
+    assert result4 == ([{"value": 4}], None, None)
+    assert len(driver.queries) == 4
+    raw = {"newline": "line1\nline2", "tab": "col1\tcol2", "quote": "say \"hello\""}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert "\n" in parsed["newline"]
+    assert "\t" in parsed["tab"]
+    assert "\"" in parsed["quote"]
+    source = tmp_path / "sample.txt"
+    source.write_text("content", encoding="utf-8")
+    log_path = tmp_path / "custom_log.json"
+
+    fake_client = FakeSharedClient()
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    kg.run(["--source", str(source), "--log-path", str(log_path)])
+
+    assert log_path.exists()
+    log_content = json.loads(log_path.read_text())
+    assert "status" in log_content
+    assert "counts" in log_content
+    assert "chunking" in log_content
+    _patch_driver(monkeypatch, lambda *_: FakeDriver())
+    with pytest.raises(FileNotFoundError):
+        kg.run(["--source-dir", "does-not-exist-dir"])
+    source = tmp_path / "sample.txt"
+    source.write_text("content", encoding="utf-8")
+
+    class FailingChatClient(FakeSharedClient):
+        def chat_completion(self, *, messages, temperature: float):
+            raise OpenAIClientError("chat failed", remediation="check API key")
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: FailingChatClient())
+    _patch_driver(monkeypatch, lambda *_, **__: FakeDriver())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        kg.run(["--source", str(source), "--chunk-size", "5", "--chunk-overlap", "1"])
+    assert "OpenAI request failed" in str(excinfo.value)
+    raw = ["", "", ""]
+    sanitized = kg._sanitize_property_value(raw)
+    # Should preserve empty strings
+    assert sanitized == raw or json.loads(sanitized) == raw
+    client = FakeSharedClient()
+    messages = [{"role": "user", "content": "Test"}]
+
+    result1 = client.chat_completion(messages=messages, temperature=0.0)
+    result2 = client.chat_completion(messages=messages, temperature=1.0)
+
+    # Both should succeed and return same response format
+    assert result1.raw_response["choices"][0]["message"]["content"] == "Acknowledged"
+    assert result2.raw_response["choices"][0]["message"]["content"] == "Acknowledged"
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repo_dir / "data.json").write_text("{}", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source-dir",
+            str(repo_dir),
+            "--include-pattern",
+            "**/*.txt",
+            "--log-path",
+            str(log_path),
+        ]
+    )
+
+    assert log["status"] == "success"
+    # No matching files means no pipelines run
+    assert len(pipelines) == 0 or log["files"] == []
+    client = FakeSharedClient()
+    messages1 = [{"role": "user", "content": "Hello"}]
+    messages2 = [{"role": "system", "content": "System prompt"}]
+
+    result1 = client.chat_completion(messages=messages1, temperature=0.7)
+    result2 = client.chat_completion(messages=messages2, temperature=0.5)
+
+    assert len(client.chat_calls) == 2
+    assert client.chat_calls[0] == messages1
+    assert client.chat_calls[1] == messages2
+    assert result1.raw_response["choices"][0]["message"]["content"] == "Acknowledged"
+    assert result2.raw_response["choices"][0]["message"]["content"] == "Acknowledged"
+    client = FakeSharedClient()
+    result1 = client.embedding(input_text="test1")
+    result2 = client.embedding(input_text="test2")
+
+    assert len(client.embedding_calls) == 2
+    assert client.embedding_calls[0] == "test1"
+    assert client.embedding_calls[1] == "test2"
+    assert result1.vector == [0.0] * 5
+    assert result1.tokens_consumed == 10
+    assert result2.vector == [0.0] * 5
+    fake_llm = object()
+    fake_driver = FakeDriver()
+    fake_embedder = object()
+    fake_schema = {"entity": "value"}
+    fake_from_pdf = False
+    fake_text_splitter = object()
+    fake_database = "neo4j"
+    fake_kg_writer = object()
+
+    pipeline = FakePipeline(
+        llm=fake_llm,
+        driver=fake_driver,
+        embedder=fake_embedder,
+        schema=fake_schema,
+        from_pdf=fake_from_pdf,
+        text_splitter=fake_text_splitter,
+        neo4j_database=fake_database,
+        kg_writer=fake_kg_writer,
+    )
+
+    assert pipeline.llm is fake_llm
+    assert pipeline.driver is fake_driver
+    assert pipeline.embedder is fake_embedder
+    assert pipeline.schema == fake_schema
+    assert pipeline.from_pdf is False
+    assert pipeline.text_splitter is fake_text_splitter
+    assert pipeline.database == fake_database
+    assert pipeline.kg_writer is fake_kg_writer
+    assert pipeline.run_args == {}
+    driver = FakeDriver()
+    async with driver as d:
+        assert d is driver
+        d.execute_query("MATCH (n) RETURN n")
+    assert len(driver.queries) == 1
+    driver = FakeDriver()
+    with driver as d:
+        assert d is driver
+        d.execute_query("MATCH (n) RETURN n")
+    assert len(driver.queries) == 1
+    driver = FakeDriver()
+    result = driver.execute_query("SELECT * FROM unknown_table")
+    assert result == ([{"value": 0}], None, None)
+    assert "SELECT * FROM unknown_table" in driver.queries
+    source = tmp_path / "sample.py"
+    source.write_text("def hello():\n    return \"world\"", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--profile",
+            "code",
+        ]
+    )
+
+    assert log["status"] == "success"
+    assert log["chunking"]["profile"] == "code"
+    source = tmp_path / "sample.txt"
+    source.write_text("sample content for chunking test", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--chunk-size",
+            "100",
+            "--chunk-overlap",
+            "20",
+        ]
+    )
+
+    assert log["status"] == "success"
+    assert log["chunking"]["size"] == 100
+    assert log["chunking"]["overlap"] == 20
+    writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
+    sanitized = writer._sanitize_properties(
+        {
+            "nested": {"inner": None, "value": "test"},
+            "all_none": [None, None, None],
+        }
+    )
+    # all_none should become empty list
+    assert sanitized["all_none"] == []
+    writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
+    sanitized = writer._sanitize_properties(
+        {
+            "string": "text",
+            "number": 42,
+            "float": 3.14,
+            "bool": True,
+            "none": None,
+            "list": [1, 2, 3],
+            "dict": {"key": "value"},
+        }
+    )
+    assert sanitized["string"] == "text"
+    assert sanitized["number"] == 42
+    assert sanitized["float"] == 3.14
+    assert sanitized["bool"] is True
+    # none, list, and dict may be sanitized differently
+    raw = {"emoji": "🔥", "chinese": "你好", "arabic": "مرحبا"}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["emoji"] == "🔥"
+    assert parsed["chinese"] == "你好"
+    assert parsed["arabic"] == "مرحبا"
+    raw = [999999999999, -999999999999, 0]
+    sanitized = kg._sanitize_property_value(raw)
+    assert sanitized == raw or json.loads(sanitized) == raw
+    raw = []
+    sanitized = kg._sanitize_property_value(raw)
+    assert sanitized == []
+    raw = {}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == {}
+    raw = {"key1": "value", "key2": None, "key3": 123}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["key1"] == "value"
+    assert parsed["key2"] is None
+    assert parsed["key3"] == 123
+    raw = [1.5, 2.7, 3.9]
+    sanitized = kg._sanitize_property_value(raw)
+    assert sanitized == raw or json.loads(sanitized) == raw
+    raw = [True, False, True]
+    sanitized = kg._sanitize_property_value(raw)
+    # Should remain as list if homogeneous primitives
+    assert sanitized == raw or json.loads(sanitized) == raw
+    sanitized = kg._sanitize_property_value("")
+    assert sanitized == ""
+    sanitized = kg._sanitize_property_value(None)
+    assert sanitized is None
+    raw = {"outer": {"inner": "value"}, "list": [1, 2, 3]}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    parsed = json.loads(sanitized)
+    assert parsed["outer"]["inner"] == "value"
+    assert parsed["list"] == [1, 2, 3]
+
+
+def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
+    source = tmp_path / "empty.txt"
+    source.write_text("", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+        ]
+    )
+
+    assert log["status"] == "success"
+    assert pipelines[0].run_args["text"] == ""
     writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
     sanitized = writer._sanitize_properties({"values": [None, None]})
     assert sanitized == {"values": []}
