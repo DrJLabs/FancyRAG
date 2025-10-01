@@ -78,6 +78,8 @@ graph TD
 4. Wait for health checks to pass (`scripts/check_local_stack.sh --status` polls container health).
 5. Create the vector index (idempotent): `PYTHONPATH=src python scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine`.
 6. Build the minimal knowledge graph: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
+   - For larger corpora, choose a chunking profile (e.g., `--profile markdown` or `--profile code`) and optionally point at a directory: `PYTHONPATH=src python scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"`. Profiles auto-tune chunk size/overlap and ensure deterministic ordering.
+   - Directory ingestion skips non-text/binary files, logs warnings, and records per-chunk metadata (relative path, git commit, SHA-256 checksum, chunk indices) so downstream retrieval can filter by provenance.
 7. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
 8. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
 9. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).
@@ -88,5 +90,5 @@ All scripts honour `.env` overrides for connection details and exit non-zero on 
 
 ## Local Stack Automation
 - `scripts/check_local_stack.sh` wraps common compose lifecycle commands (`--config`, `--up`, `--status`, `--down`). It emits structured logs and ensures health checks pass before succeeding.
-- `tests/integration/local_stack/test_minimal_path_smoke.py` orchestrates the full minimal path once Docker and required API keys are available.
+- `tests/integration/local_stack/test_minimal_path_smoke.py` orchestrates the full minimal path once Docker and required API keys are available. Directory fixtures sample both documentation and code profiles for regression coverage.
 - GitHub Actions workflow `local-stack-smoke.yml` enforces `docker compose config` linting and executes the smoke suite on pushes/PRs (requires Docker on runners).

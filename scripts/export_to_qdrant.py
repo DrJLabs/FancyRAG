@@ -49,7 +49,10 @@ def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
                chunk.index AS chunk_index,
                chunk.text AS text,
                chunk.embedding AS embedding,
-               chunk.source_path AS source_path
+               chunk.source_path AS source_path,
+               chunk.relative_path AS relative_path,
+               chunk.git_commit AS git_commit,
+               chunk.checksum AS checksum
         ORDER BY chunk_index ASC
         """,
         database_=database,
@@ -234,6 +237,9 @@ def main() -> None:
                                 "chunk_id": chunk_id,
                                 "chunk_index": record.get("chunk_index"),
                                 "source_path": record.get("source_path"),
+                                "relative_path": record.get("relative_path"),
+                                "git_commit": record.get("git_commit"),
+                                "checksum": record.get("checksum"),
                                 "text": record.get("text"),
                             }
                         )

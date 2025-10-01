@@ -196,7 +196,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     log_path = tmp_path / "log.json"
 
     fake_client = FakeSharedClient()
-    captured_pipeline: dict[str, FakePipeline] = {}
+    pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
     settings = kg.OpenAISettings(
@@ -211,9 +211,13 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     )
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
-    monkeypatch.setattr(
-        kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs))
-    )
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -239,10 +243,14 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
 
     assert log["status"] == "success"
     assert log["counts"] == {"documents": 2, "chunks": 4, "relationships": 4}
+    assert log["chunking"]["size"] == 10
+    assert log["chunking"]["profile"] == "text"
+    assert log["files"]
+    assert log["chunks"]
     assert fake_client.embedding_calls
     assert fake_client.chat_calls
-    assert captured_pipeline["pipeline"].run_args["text"] == "sample content"
-    assert isinstance(captured_pipeline["pipeline"].kg_writer, kg.SanitizingNeo4jWriter)
+    assert pipelines and pipelines[0].run_args["text"] == "sample content"
+    assert isinstance(pipelines[0].kg_writer, kg.SanitizingNeo4jWriter)
     assert created_drivers, "Expected GraphDatabase.driver to be invoked"
     assert any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
     saved = json.loads(log_path.read_text())
@@ -255,7 +263,7 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
     log_path = tmp_path / "log.json"
 
     fake_client = FakeSharedClient()
-    captured_pipeline: dict[str, FakePipeline] = {}
+    pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
     settings = kg.OpenAISettings(
@@ -270,9 +278,13 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
     )
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
-    monkeypatch.setattr(
-        kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs))
-    )
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -340,8 +352,10 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEO4J_DATABASE", raising=False)
     args = kg._parse_args([])
     assert args.source == str(kg.DEFAULT_SOURCE)
-    assert args.chunk_size == kg.DEFAULT_CHUNK_SIZE
-    assert args.chunk_overlap == kg.DEFAULT_CHUNK_OVERLAP
+    assert args.chunk_size is None
+    assert args.chunk_overlap is None
+    assert args.profile is None
+    assert args.include_patterns is None
     assert args.database is None
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
     assert args.reset_database is False
@@ -360,6 +374,10 @@ def test_parse_args_overrides() -> None:
             "--log-path",
             "/tmp/log.json",  # nosec
             "--reset-database",
+            "--profile",
+            "code",
+            "--include-pattern",
+            "*.py",
         ]
     )
     assert args.source == "/tmp/foo.txt"
@@ -368,6 +386,78 @@ def test_parse_args_overrides() -> None:
     assert args.database == "neo4j"
     assert args.log_path == "/tmp/log.json"
     assert args.reset_database is True
+    assert args.profile == "code"
+    assert args.include_patterns == ["*.py"]
+
+
+def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "docs").mkdir()
+    text_file = repo_dir / "docs" / "note.md"
+    text_file.write_text("Doc content for ingestion.", encoding="utf-8")
+    code_file = repo_dir / "module.py"
+    code_file.write_text("print('hello world')", encoding="utf-8")
+    binary_file = repo_dir / "image.png"
+    binary_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source-dir",
+            str(repo_dir),
+            "--include-pattern",
+            "**/*.md",
+            "--include-pattern",
+            "**/*.py",
+            "--log-path",
+            str(log_path),
+            "--profile",
+            "markdown",
+        ]
+    )
+
+    assert log["status"] == "success"
+    assert log["source_mode"] == "directory"
+    assert len(pipelines) == 2  # binary file skipped
+    assert len(log["files"]) == 2
+    assert all(entry["chunks"] >= 1 for entry in log["files"])
+    assert log["chunks"]
+    assert created_drivers, "Expected GraphDatabase.driver to be invoked"
+    saved = json.loads(log_path.read_text())
+    assert saved["files"] == log["files"]
 
 
 def test_sanitize_property_value_handles_only_none() -> None:

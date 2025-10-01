@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,6 +55,61 @@ DEFAULT_CHUNK_SIZE = 600
 DEFAULT_CHUNK_OVERLAP = 100
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent / "config" / "kg_schema.json"
 
+DEFAULT_PROFILE = "text"
+PROFILE_PRESETS: dict[str, dict[str, Any]] = {
+    "text": {
+        "chunk_size": 600,
+        "chunk_overlap": 100,
+        "include": ("**/*.txt", "**/*.md", "**/*.rst"),
+    },
+    "markdown": {
+        "chunk_size": 800,
+        "chunk_overlap": 120,
+        "include": ("**/*.md", "**/*.markdown", "**/*.mdx", "**/*.txt", "**/*.rst"),
+    },
+    "code": {
+        "chunk_size": 400,
+        "chunk_overlap": 40,
+        "include": (
+            "**/*.py",
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.java",
+            "**/*.go",
+            "**/*.rs",
+            "**/*.rb",
+            "**/*.php",
+            "**/*.cs",
+            "**/*.c",
+            "**/*.cpp",
+            "**/*.hpp",
+            "**/*.proto",
+        ),
+    },
+}
+
+
+@dataclass
+class SourceSpec:
+    """Represents a resolved ingestion source."""
+
+    path: Path
+    relative_path: str
+    text: str
+    checksum: str
+
+
+@dataclass
+class ChunkMetadata:
+    """Metadata captured for each chunk written to Neo4j/Qdrant."""
+
+    sequence: int
+    index: int
+    checksum: str
+    relative_path: str
+    git_commit: str | None
+
 
 def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
     """Load and validate the default GraphSchema definition from disk."""
@@ -74,6 +132,82 @@ DEFAULT_SCHEMA = _load_default_schema()
 
 
 PRIMITIVE_TYPES = (str, int, float, bool)
+
+
+def _resolve_git_commit() -> str | None:
+    """Resolve the current git commit SHA if available."""
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _relative_to_repo(path: Path) -> str:
+    """Return a repo-relative path when possible."""
+
+    try:
+        return str(path.resolve().relative_to(Path.cwd()))
+    except ValueError:
+        return path.name
+
+
+def _discover_source_files(directory: Path, patterns: Iterable[str]) -> list[Path]:
+    """Return deterministically ordered files matching the given glob patterns."""
+
+    base = directory.resolve()
+    candidates: set[Path] = set()
+    for pattern in patterns:
+        candidates.update(p for p in base.rglob(pattern) if p.is_file())
+    resolved = {path.resolve() for path in candidates}
+    return sorted(resolved, key=lambda p: str(p.relative_to(base)))
+
+
+def _read_directory_source(path: Path) -> str | None:
+    """Read UTF-8 text from `path`, skipping binary or empty files."""
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        logger.warning("kg_build.skip_binary", path=str(path))
+        return None
+    if not content.strip():
+        logger.warning("kg_build.skip_empty", path=str(path))
+        return None
+    return content
+
+
+def _compute_checksum(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _build_chunk_metadata(
+    chunks: Sequence[Any],
+    *,
+    relative_path: str,
+    git_commit: str | None,
+) -> list[ChunkMetadata]:
+    metadata: list[ChunkMetadata] = []
+    for sequence, chunk in enumerate(chunks, start=1):
+        text = getattr(chunk, "text", "") or ""
+        index = getattr(chunk, "index", sequence - 1)
+        metadata.append(
+            ChunkMetadata(
+                sequence=sequence,
+                index=index,
+                checksum=_compute_checksum(text),
+                relative_path=relative_path,
+                git_commit=git_commit,
+            )
+        )
+    return metadata
 
 
 def _ensure_jsonable(value: Any) -> Any:
@@ -233,19 +367,36 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--source",
         default=str(DEFAULT_SOURCE),
-        help="Path to the sample content to ingest (default: %(default)s)",
+        help="Path to a single content file to ingest (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--source-dir",
+        default=None,
+        help="Directory containing files to ingest; overrides --source when provided.",
+    )
+    parser.add_argument(
+        "--include-pattern",
+        action="append",
+        dest="include_patterns",
+        help="Glob pattern (relative to --source-dir) to include. Can be provided multiple times.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILE_PRESETS.keys()),
+        default=None,
+        help="Chunking profile to apply (sets default chunk size, overlap, and include patterns).",
     )
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=DEFAULT_CHUNK_SIZE,
-        help="Character chunk size for the text splitter (default: %(default)s)",
+        default=None,
+        help="Character chunk size for the text splitter (overrides profile/default).",
     )
     parser.add_argument(
         "--chunk-overlap",
         type=int,
-        default=DEFAULT_CHUNK_OVERLAP,
-        help="Character overlap between chunks (default: %(default)s)",
+        default=None,
+        help="Character overlap between chunks (overrides profile/default).",
     )
     parser.add_argument(
         "--database",
@@ -706,6 +857,10 @@ def _ensure_document_relationships(
     *,
     database: str | None,
     source_path: Path,
+    relative_path: str,
+    git_commit: str | None,
+    document_checksum: str,
+    chunks_metadata: Sequence[ChunkMetadata],
 ) -> None:
     """
     Ensure a Document node exists for the given source file and link all Chunk nodes to it with HAS_CHUNK relationships.
@@ -716,25 +871,65 @@ def _ensure_document_relationships(
         database (str | None): Optional Neo4j database name to execute the query against; pass None to use the default.
         source_path (Path): Filesystem path of the source document; used as the Document.source_path value and to derive the Document.name/title.
     """
+    chunk_payload = [
+        {
+            "sequence": meta.sequence,
+            "index": meta.index,
+            "checksum": meta.checksum,
+            "relative_path": meta.relative_path,
+            "git_commit": meta.git_commit,
+        }
+        for meta in chunks_metadata
+    ]
 
     driver.execute_query(
         """
         MERGE (doc:Document {source_path: $source_path})
           ON CREATE SET doc.name = $document_name,
                         doc.title = $document_name
+        SET doc.relative_path = $relative_path,
+            doc.git_commit = coalesce($git_commit, doc.git_commit),
+            doc.checksum = $document_checksum
         WITH doc
         MATCH (chunk:Chunk)
         WHERE chunk.source_path IS NULL OR chunk.source_path = $source_path
+        WITH doc, chunk
+        ORDER BY coalesce(chunk.index, chunk.chunk_id, 0) ASC, chunk.uid ASC
         WITH doc, collect(chunk) AS chunks
         UNWIND range(0, size(chunks) - 1) AS idx
-        WITH doc, chunks[idx] AS chunk, idx + 1 AS seq
+        WITH doc, chunks[idx] AS chunk, idx
         SET chunk.source_path = $source_path,
-            chunk.chunk_id = coalesce(chunk.chunk_id, seq)
+            chunk.chunk_id = idx + 1
         MERGE (doc)-[:HAS_CHUNK]->(chunk)
         """,
-        {"source_path": str(source_path), "document_name": source_path.name},
+        {
+            "source_path": str(source_path),
+            "document_name": source_path.name,
+            "relative_path": relative_path,
+            "git_commit": git_commit,
+            "document_checksum": document_checksum,
+        },
         database_=database,
     )
+
+    if chunk_payload:
+        driver.execute_query(
+            """
+            MATCH (doc:Document {source_path: $source_path})-[:HAS_CHUNK]->(chunk:Chunk)
+            WITH doc, chunk, $chunks AS metadata_list
+            UNWIND metadata_list AS metadata
+            WITH chunk, metadata
+            WHERE chunk.chunk_id = metadata.sequence
+            SET chunk.relative_path = metadata.relative_path,
+                chunk.git_commit = coalesce(metadata.git_commit, chunk.git_commit),
+                chunk.checksum = metadata.checksum
+            """,
+            {
+                "source_path": str(source_path),
+                "chunks": chunk_payload,
+            },
+            database_=database,
+        )
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
@@ -765,67 +960,155 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         RuntimeError: if OpenAI requests or Neo4j operations fail.
     """
     args = _parse_args(argv)
-    args.chunk_size = _ensure_positive(args.chunk_size, name="chunk_size")
-    args.chunk_overlap = _ensure_non_negative(args.chunk_overlap, name="chunk_overlap")
+
+    profile = args.profile or DEFAULT_PROFILE
+    preset = PROFILE_PRESETS.get(profile, PROFILE_PRESETS[DEFAULT_PROFILE])
+    chunk_size = args.chunk_size if args.chunk_size is not None else preset["chunk_size"]
+    chunk_overlap = args.chunk_overlap if args.chunk_overlap is not None else preset["chunk_overlap"]
+    include_patterns = tuple(args.include_patterns) if args.include_patterns else tuple(preset.get("include", ()))
+
+    chunk_size = _ensure_positive(chunk_size, name="chunk_size")
+    chunk_overlap = _ensure_non_negative(chunk_overlap, name="chunk_overlap")
 
     ensure_env("OPENAI_API_KEY")
     ensure_env("NEO4J_URI")
     ensure_env("NEO4J_USERNAME")
     ensure_env("NEO4J_PASSWORD")
 
-    source_path = Path(args.source).expanduser()
-    source_text = _read_source(source_path)
+    git_commit = _resolve_git_commit()
+
+    source_specs: list[SourceSpec]
+    if args.source_dir:
+        directory = Path(args.source_dir).expanduser()
+        if not directory.is_dir():
+            raise ValueError(f"source directory not found: {directory}")
+        patterns = include_patterns or preset.get("include", ())
+        files = _discover_source_files(directory, patterns)
+        source_specs = []
+        for file_path in files:
+            content = _read_directory_source(file_path)
+            if content is None:
+                continue
+            source_specs.append(
+                SourceSpec(
+                    path=file_path,
+                    relative_path=_relative_to_repo(file_path),
+                    text=content,
+                    checksum=_compute_checksum(content),
+                )
+            )
+        if not source_specs:
+            raise ValueError(
+                "No ingestible files matched the supplied directory and include patterns."
+            )
+    else:
+        source_path = Path(args.source).expanduser()
+        source_text = _read_source(source_path)
+        source_specs = [
+            SourceSpec(
+                path=source_path,
+                relative_path=_relative_to_repo(source_path),
+                text=source_text,
+                checksum=_compute_checksum(source_text),
+            )
+        ]
 
     settings = OpenAISettings.load(actor="kg_build")
     shared_client = SharedOpenAIClient(settings)
     embedder = SharedOpenAIEmbedder(shared_client, settings)
     llm = SharedOpenAILLM(shared_client, settings)
-    splitter = FixedSizeSplitter(chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap)
+    splitter = FixedSizeSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     uri = os.environ["NEO4J_URI"]
     auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
 
     start = time.perf_counter()
-    try:
-        run_id = _execute_pipeline(
-            uri=uri,
-            auth=auth,
-            source_text=source_text,
-            database=args.database,
-            embedder=embedder,
-            llm=llm,
-            splitter=splitter,
-            reset_database=args.reset_database,
+    run_ids: list[str | None] = []
+    log_files: list[dict[str, Any]] = []
+    log_chunks: list[dict[str, Any]] = []
+    processed_specs: list[tuple[SourceSpec, list[ChunkMetadata]]] = []
+
+    reset_pending = bool(args.reset_database)
+
+    for spec in source_specs:
+        chunk_result = asyncio.run(splitter.run(spec.text))
+        chunk_metadata = _build_chunk_metadata(
+            chunk_result.chunks,
+            relative_path=spec.relative_path,
+            git_commit=git_commit,
         )
-    except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
-        raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-    except (Neo4jError, ClientError) as exc:
-        raise RuntimeError(f"Neo4j error: {exc}") from exc
+        processed_specs.append((spec, chunk_metadata))
+        try:
+            run_id = _execute_pipeline(
+                uri=uri,
+                auth=auth,
+                source_text=spec.text,
+                database=args.database,
+                embedder=embedder,
+                llm=llm,
+                splitter=splitter,
+                reset_database=reset_pending,
+            )
+        except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
+            raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+        except (Neo4jError, ClientError) as exc:
+            raise RuntimeError(f"Neo4j error: {exc}") from exc
+        run_ids.append(run_id)
+        reset_pending = False
+
+        log_files.append(
+            {
+                "source": str(spec.path),
+                "relative_path": spec.relative_path,
+                "checksum": spec.checksum,
+                "chunks": len(chunk_metadata),
+            }
+        )
+        for meta in chunk_metadata:
+            log_chunks.append(
+                {
+                    "source": str(spec.path),
+                    "relative_path": meta.relative_path,
+                    "chunk_index": meta.index,
+                    "chunk_id": meta.sequence,
+                    "checksum": meta.checksum,
+                    "git_commit": meta.git_commit,
+                }
+            )
 
     counts: Mapping[str, int] = {}
     with GraphDatabase.driver(uri, auth=auth) as driver:
-        _ensure_document_relationships(
-            driver,
-            database=args.database,
-            source_path=source_path,
-        )
+        for spec, chunk_metadata in processed_specs:
+            _ensure_document_relationships(
+                driver,
+                database=args.database,
+                source_path=spec.path,
+                relative_path=spec.relative_path,
+                git_commit=git_commit,
+                document_checksum=spec.checksum,
+                chunks_metadata=chunk_metadata,
+            )
         counts = _collect_counts(driver, database=args.database)
 
     duration_ms = int((time.perf_counter() - start) * 1000)
 
+    total_bytes = sum(len(spec.text.encode("utf-8")) for spec in source_specs)
     log = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "operation": "kg_build",
         "status": "success",
         "duration_ms": duration_ms,
-        "source": str(source_path),
-        "input_bytes": len(source_text.encode("utf-8")),
+        "source": str(Path(args.source_dir).expanduser()) if args.source_dir else str(source_specs[0].path),
+        "source_mode": "directory" if args.source_dir else "file",
+        "input_bytes": total_bytes,
         "chunking": {
-            "size": args.chunk_size,
-            "overlap": args.chunk_overlap,
+            "size": chunk_size,
+            "overlap": chunk_overlap,
+            "profile": profile,
+            "include_patterns": list(include_patterns),
         },
         "database": args.database,
-        "reset_database": args.reset_database,
+        "reset_database": bool(args.reset_database),
         "openai": {
             "chat_model": settings.chat_model,
             "embedding_model": settings.embedding_model,
@@ -833,7 +1116,10 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             "max_attempts": settings.max_attempts,
         },
         "counts": counts,
-        "run_id": run_id,
+        "run_id": run_ids[-1] if run_ids else None,
+        "run_ids": [run_id for run_id in run_ids if run_id],
+        "files": log_files,
+        "chunks": log_chunks,
     }
 
     log_path = Path(args.log_path)

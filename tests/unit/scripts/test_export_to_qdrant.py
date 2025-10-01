@@ -113,6 +113,9 @@ class TestFetchChunks:
             "text": "Test text content",
             "embedding": [0.1, 0.2, 0.3, 0.4],
             "source_path": "/test/path/file.md",
+            "relative_path": "docs/file.md",
+            "git_commit": "abc123",
+            "checksum": "deadbeef",
         }
         mock_driver.execute_query.return_value = ([expected_record], None, None)
 
@@ -320,6 +323,9 @@ class TestMain:
                 "text": "Sample text",
                 "embedding": [0.1, 0.2, 0.3],
                 "source_path": "/path/to/file.txt",
+                "relative_path": "docs/file.txt",
+                "git_commit": "commit1",
+                "checksum": "aaa",
             },
             {
                 "chunk_id": "2",
@@ -327,6 +333,9 @@ class TestMain:
                 "text": "Another text",
                 "embedding": [0.4, 0.5, 0.6],
                 "source_path": "/path/to/file2.txt",
+                "relative_path": "src/file2.txt",
+                "git_commit": "commit1",
+                "checksum": "bbb",
             },
         ]
         mock_driver.execute_query.return_value = (mock_chunks, None, None)
@@ -351,6 +360,10 @@ class TestMain:
         mock_graph_db.driver.assert_called_once()
         mock_client.create_collection.assert_called_once()
         mock_client.upsert.assert_called_once()
+        payload_batch = mock_client.upsert.call_args.kwargs["points"]
+        assert payload_batch.payloads[0]["relative_path"] == "docs/file.txt"
+        assert payload_batch.payloads[0]["checksum"] == "aaa"
+        assert payload_batch.payloads[1]["relative_path"] == "src/file2.txt"
 
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")

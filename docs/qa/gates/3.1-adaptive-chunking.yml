@@ -1,0 +1,64 @@
+schema: 1
+story: "3.1"
+story_title: "Adaptive Chunking Profiles & Source-Aware Ingestion"
+gate: "PASS"
+status_reason: "Adaptive chunking, directory ingestion, and metadata propagation verified via unit coverage; performance monitoring flagged for follow-up but no blockers detected."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-01T19:02:53.863120+00:00"
+waiver: { active: false }
+top_issues:
+  - "Implement optional dry-run/token estimation to give operators insight before large ingests."
+  - "Schedule compose smoke to validate directory ingest against Docker stack once credentials available."
+risk_summary:
+  totals:
+    critical: 0
+    high: 2
+    medium: 2
+    low: 1
+  highest: TECH-001
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Track ingestion duration/token usage via new log telemetry; investigate if thresholds breached."
+      - "Re-run compose smoke with directory fixtures post-merge to confirm reliability."
+test_design:
+  scenarios_total: 7
+  by_level:
+    unit: 3
+    integration: 3
+    e2e: 1
+  by_priority:
+    p0: 2
+    p1: 3
+    p2: 2
+    p3: 0
+  coverage_gaps: []
+trace:
+  totals:
+    requirements: 4
+    full: 4
+    partial: 0
+    none: 0
+  planning_ref: docs/qa/assessments/3.1-test-design-20251001.md
+  uncovered: []
+  notes: docs/qa/assessments/3.1-trace-20251001.md
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "Environment-sourced credentials; metadata additions avoid exposing secrets."
+  performance:
+    status: MONITOR
+    notes: "Directory ingest may increase runtime/token usage; monitor via log telemetry and consider dry-run estimator."    
+  reliability:
+    status: PASS
+    notes: "Unit coverage exercises new branches; rerun compose smoke with directory fixtures when resources available."
+  maintainability:
+    status: PASS
+    notes: "Documentation and structured logs updated; tests cover new scenarios."
+references:
+  risk_profile: docs/qa/assessments/3.1-risk-20251001.md
+  test_design: docs/qa/assessments/3.1-test-design-20251001.md
+  trace: docs/qa/assessments/3.1-trace-20251001.md
+  nfr_assessment: docs/qa/assessments/3.1-nfr-20251001.md
+  review: docs/qa/assessments/3.1-review-20251001.md

@@ -1,5 +1,8 @@
 # Epic 2: Local GraphRAG Minimal Path — Dockerized Stack
 
+## Status
+Done — 2025-10-01. All stories (2.1–2.5) delivered local Docker stack, automation scripts, documentation, and CI smoke coverage. Follow-up: keep compose smoke enabled with managed OpenAI credentials.
+
 ## Epic Goal
 Stand up a fully local GraphRAG evaluation stack that operators can provision end-to-end in under one hour using Docker Compose, the official `neo4j-graphrag` tooling, and scripted hand-offs between Neo4j, Qdrant, and OpenAI.
 
