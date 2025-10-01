@@ -9,6 +9,7 @@ import functools
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -35,6 +36,7 @@ from neo4j_graphrag.experimental.components.schema import GraphSchema
 from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
     FixedSizeSplitter,
 )
+from neo4j_graphrag.experimental.components.types import TextChunks
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.llm.base import LLMInterface
 from neo4j_graphrag.llm.types import LLMResponse
@@ -106,7 +108,7 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._cache: dict[str | tuple[str, ...], Any] = {}
+        self._cache: dict[str | tuple[str, ...], TextChunks] = {}
 
     @staticmethod
     def _cache_key(text: str | Sequence[str]) -> str | tuple[str, ...]:
@@ -114,7 +116,7 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
             return text
         return tuple(text)
 
-    async def run(self, text: str | Sequence[str]):  # type: ignore[override]
+    async def run(self, text: str | Sequence[str]) -> TextChunks:  # type: ignore[override]
         key = self._cache_key(text)
         cached = self._cache.get(key)
         if cached is not None:
@@ -123,7 +125,7 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         self._cache[key] = result
         return result
 
-    def get_cached(self, text: str | Sequence[str]):
+    def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
         """Return the cached chunk result for ``text`` if available."""
 
         return self._cache.get(self._cache_key(text))
@@ -167,14 +169,17 @@ PRIMITIVE_TYPES = (str, int, float, bool)
 def _resolve_git_commit() -> str | None:
     """Resolve the current git commit SHA if available."""
 
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            [git_executable, "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError:
         return None
     commit = result.stdout.strip()
     return commit or None
@@ -184,14 +189,17 @@ def _resolve_git_commit() -> str | None:
 def _resolve_repo_root() -> Path | None:
     """Return the repository root directory if git metadata is available."""
 
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            [git_executable, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
             check=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError:
         return None
     root = result.stdout.strip()
     return Path(root) if root else None
@@ -492,8 +500,8 @@ def _read_source(path: Path) -> str:
     if not path.exists():
         raise FileNotFoundError(f"source file not found: {path}")
     content = path.read_text(encoding="utf-8")
-    if not content.strip():
-        raise ValueError(f"source file is empty: {path}")
+    if not content:
+        logger.warning("kg_build.empty_source", path=str(path))
     return content
 
 
@@ -1103,9 +1111,9 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                     reset_database=reset_pending,
                 )
             except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
-                raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+                raise RuntimeError("OpenAI request failed") from exc
             except (Neo4jError, ClientError) as exc:
-                raise RuntimeError(f"Neo4j error: {exc}") from exc
+                raise RuntimeError("Neo4j error") from exc
             run_ids.append(run_id)
             reset_pending = False
 

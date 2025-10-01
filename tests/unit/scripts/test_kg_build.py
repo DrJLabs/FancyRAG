@@ -360,13 +360,16 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
     assert args.reset_database is False
 
-def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_args_database_from_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
     monkeypatch.setenv("NEO4J_DATABASE", "test_db")
     args = kg._parse_args([])
     # The actual behavior depends on implementation, but we test the parsing
     assert args.database is None or args.database == "test_db"
-    args = kg._parse_args(["--source-dir", "/tmp/mydir"])
-    assert args.source_dir == "/tmp/mydir"
+    source_dir = tmp_path / "input"
+    args = kg._parse_args(["--source-dir", str(source_dir)])
+    assert args.source_dir == str(source_dir)
     assert args.source is None or args.source == str(kg.DEFAULT_SOURCE)
     args = kg._parse_args(
         [
@@ -380,10 +383,12 @@ def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert args.include_patterns == ["*.py", "*.md", "*.txt"]
     assert len(args.include_patterns) == 3
+    src_file = tmp_path / "foo.txt"
+    log_file = tmp_path / "log.json"
     args = kg._parse_args(
         [
             "--source",
-            "/tmp/foo.txt",  # nosec
+            str(src_file),
             "--chunk-size",
             "42",
             "--chunk-overlap",
@@ -391,7 +396,7 @@ def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
             "--database",
             "neo4j",
             "--log-path",
-            "/tmp/log.json",  # nosec
+            str(log_file),
             "--reset-database",
             "--profile",
             "code",
@@ -399,11 +404,11 @@ def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
             "*.py",
         ]
     )
-    assert args.source == "/tmp/foo.txt"
+    assert args.source == str(src_file)
     assert args.chunk_size == 42
     assert args.chunk_overlap == 7
     assert args.database == "neo4j"
-    assert args.log_path == "/tmp/log.json"
+    assert args.log_path == str(log_file)
     assert args.reset_database is True
     assert args.profile == "code"
     assert args.include_patterns == ["*.py"]
@@ -568,5 +573,4 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
     writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
     sanitized = writer._sanitize_properties({"values": [None, None]})
     assert sanitized == {"values": []}
-
 
