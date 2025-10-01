@@ -7,6 +7,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock, Mock, call, patch
 
@@ -526,11 +527,124 @@ class TestMain:
 
         mock_scrub.return_value = {"status": "success"}
 
-        with patch("sys.argv", ["export_to_qdrant.py", "--collection", "existing_collection"]):
+        with patch(
+            "sys.argv",
+            ["export_to_qdrant.py", "--collection", "existing_collection", "--recreate-collection"],
+        ):
             main()
 
         mock_client.delete_collection.assert_called_once_with("existing_collection")
         mock_client.create_collection.assert_called_once()
+
+    @patch("scripts.export_to_qdrant.Path")
+    @patch("scripts.export_to_qdrant.scrub_object")
+    @patch("scripts.export_to_qdrant.QdrantClient")
+    @patch("scripts.export_to_qdrant.GraphDatabase")
+    @patch("scripts.export_to_qdrant.ensure_env")
+    @patch.dict(
+        os.environ,
+        {
+            "QDRANT_URL": "http://localhost:6333",
+            "NEO4J_URI": "bolt://localhost:7687",
+            "NEO4J_USERNAME": "neo4j",
+            "NEO4J_PASSWORD": "password",
+        },
+    )
+    def test_main_preserves_existing_collection_when_not_recreating(
+        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+    ):
+        mock_driver = Mock()
+        mock_graph_db.driver.return_value.__enter__.return_value = mock_driver
+
+        mock_chunks = [
+            {
+                "chunk_id": "1",
+                "chunk_index": 0,
+                "text": "Sample text",
+                "embedding": [0.1, 0.2, 0.3],
+                "source_path": "/path/to/file.txt",
+            }
+        ]
+        mock_driver.execute_query.return_value = (mock_chunks, None, None)
+
+        existing_vectors = SimpleNamespace(size=3)
+        collection_info = SimpleNamespace(
+            config=SimpleNamespace(params=SimpleNamespace(vectors=existing_vectors))
+        )
+
+        mock_client = Mock()
+        mock_qdrant_client.return_value = mock_client
+        mock_client.collection_exists.return_value = True
+        mock_client.get_collection.return_value = collection_info
+
+        mock_artifacts_dir = Mock()
+        mock_path.return_value = mock_artifacts_dir
+        mock_file = Mock()
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
+
+        mock_scrub.return_value = {"status": "success"}
+
+        with patch("sys.argv", ["export_to_qdrant.py"]):
+            main()
+
+        mock_client.delete_collection.assert_not_called()
+        mock_client.create_collection.assert_not_called()
+
+    @patch("scripts.export_to_qdrant.Path")
+    @patch("scripts.export_to_qdrant.scrub_object")
+    @patch("scripts.export_to_qdrant.QdrantClient")
+    @patch("scripts.export_to_qdrant.GraphDatabase")
+    @patch("scripts.export_to_qdrant.ensure_env")
+    @patch.dict(
+        os.environ,
+        {
+            "QDRANT_URL": "http://localhost:6333",
+            "NEO4J_URI": "bolt://localhost:7687",
+            "NEO4J_USERNAME": "neo4j",
+            "NEO4J_PASSWORD": "password",
+        },
+    )
+    def test_main_existing_collection_dimension_mismatch_requires_recreate(
+        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+    ):
+        mock_driver = Mock()
+        mock_graph_db.driver.return_value.__enter__.return_value = mock_driver
+
+        mock_chunks = [
+            {
+                "chunk_id": "1",
+                "chunk_index": 0,
+                "text": "Sample text",
+                "embedding": [0.1, 0.2, 0.3],
+                "source_path": "/path/to/file.txt",
+            }
+        ]
+        mock_driver.execute_query.return_value = (mock_chunks, None, None)
+
+        remote_vectors = SimpleNamespace(size=8)
+        collection_info = SimpleNamespace(
+            config=SimpleNamespace(params=SimpleNamespace(vectors=remote_vectors))
+        )
+
+        mock_client = Mock()
+        mock_qdrant_client.return_value = mock_client
+        mock_client.collection_exists.return_value = True
+        mock_client.get_collection.return_value = collection_info
+
+        mock_artifacts_dir = Mock()
+        mock_path.return_value = mock_artifacts_dir
+        mock_file = Mock()
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
+
+        mock_scrub.side_effect = lambda payload: payload
+
+        with patch("sys.argv", ["export_to_qdrant.py"]):
+            with pytest.raises(SystemExit) as excinfo:
+                main()
+
+        assert excinfo.value.code == 1
+        error_message = mock_scrub.call_args[0][0]["message"]
+        assert "--recreate-collection" in error_message
 
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")

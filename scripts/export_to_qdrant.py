@@ -17,6 +17,15 @@ from neo4j.exceptions import Neo4jError
 from qdrant_client import QdrantClient
 import qdrant_client.models as qmodels
 
+try:  # pragma: no cover - optional dependency surface
+    from qdrant_client.http.exceptions import ApiException, ResponseHandlingException
+except Exception:  # pragma: no cover - fallback when exceptions module unavailable
+    class ApiException(Exception):
+        """Fallback API exception when qdrant_client is not installed."""
+
+    class ResponseHandlingException(Exception):
+        """Fallback response exception when qdrant_client is not installed."""
+
 from cli.sanitizer import scrub_object
 from fancyrag.utils import ensure_env
 
@@ -95,12 +104,29 @@ def _coerce_point_id(value: Any, fallback: int) -> int | str:
     return str(value)
 
 
+def _resolve_remote_vector_size(info: qmodels.CollectionInfo | None) -> int | None:
+    """Extract the configured vector size from an existing collection, if available."""
+
+    if not info:
+        return None
+    config = getattr(info, "config", None)
+    params = getattr(config, "params", None)
+    vectors = getattr(params, "vectors", None)
+    if hasattr(vectors, "size"):
+        return getattr(vectors, "size")
+    if isinstance(vectors, dict):
+        for value in vectors.values():
+            if hasattr(value, "size"):
+                return getattr(value, "size")
+    return None
+
+
 def main() -> None:
     """
     Orchestrate export of chunk embeddings from Neo4j into a Qdrant collection.
     
     Connects to Neo4j using environment credentials, fetches chunk records (including text and embedding),
-    creates or replaces the target Qdrant collection configured for the embedding dimensionality,
+    ensures the target Qdrant collection exists (optionally recreating it when --recreate-collection is passed)
     and upserts points in batches. Writes a sanitized JSON log artifact to artifacts/local_stack/export_to_qdrant.json
     and prints the same sanitized log to stdout.
     
@@ -116,6 +142,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Export embeddings to Qdrant")
     parser.add_argument("--collection", default="chunks_main")
     parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument(
+        "--recreate-collection",
+        action="store_true",
+        help="Drop and recreate the target Qdrant collection before export (destructive).",
+    )
     args = parser.parse_args()
 
     ensure_env("QDRANT_URL")
@@ -151,15 +182,34 @@ def main() -> None:
                 dimensions = len(embedding)
 
                 client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
-                if client.collection_exists(args.collection):
-                    client.delete_collection(args.collection)
-                client.create_collection(
-                    collection_name=args.collection,
-                    vectors_config=qmodels.VectorParams(
-                        size=dimensions,
-                        distance=qmodels.Distance.COSINE,
-                    ),
+                vector_params = qmodels.VectorParams(
+                    size=dimensions,
+                    distance=qmodels.Distance.COSINE,
                 )
+
+                collection_exists = client.collection_exists(args.collection)
+                if args.recreate_collection:
+                    if collection_exists:
+                        client.delete_collection(args.collection)
+                    client.create_collection(
+                        collection_name=args.collection,
+                        vectors_config=vector_params,
+                    )
+                else:
+                    if not collection_exists:
+                        client.create_collection(
+                            collection_name=args.collection,
+                            vectors_config=vector_params,
+                        )
+                    else:
+                        info = client.get_collection(args.collection)
+                        remote_size = _resolve_remote_vector_size(info)
+                        if remote_size is not None and remote_size != dimensions:
+                            raise RuntimeError(
+                                "Existing collection '"
+                                f"{args.collection}' uses vector dimension {remote_size}; expected {dimensions}. "
+                                "Rerun with --recreate-collection to rebuild the collection."
+                            )
 
                 for batch in _batched(chunks, max(1, args.batch_size)):
                     payloads = []
@@ -193,9 +243,15 @@ def main() -> None:
                     )
                     exported += len(batch)
 
-    except (Neo4jError, Exception) as exc:  # pragma: no cover - defensive guard
-        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-            raise
+    except Neo4jError as exc:  # pragma: no cover - defensive guard
+        status = "error"
+        message = str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    except (ApiException, ResponseHandlingException) as exc:  # pragma: no cover - defensive guard
+        status = "error"
+        message = str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    except (RuntimeError, ValueError, TypeError) as exc:  # pragma: no cover - defensive guard
         status = "error"
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)

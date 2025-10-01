@@ -10,10 +10,12 @@ import pytest
 
 stub_neo4j = ModuleType("neo4j")
 stub_neo4j.GraphDatabase = SimpleNamespace(driver=lambda *_, **__: None)
-sys.modules.setdefault("neo4j", stub_neo4j)
+if util.find_spec("neo4j") is None:
+    sys.modules.setdefault("neo4j", stub_neo4j)
 stub_neo4j_exceptions = ModuleType("neo4j.exceptions")
 stub_neo4j_exceptions.Neo4jError = Exception
-sys.modules.setdefault("neo4j.exceptions", stub_neo4j_exceptions)
+if util.find_spec("neo4j.exceptions") is None:
+    sys.modules.setdefault("neo4j.exceptions", stub_neo4j_exceptions)
 
 stub_qdrant = ModuleType("qdrant_client")
 
@@ -24,8 +26,17 @@ class _StubQdrantClient:  # pragma: no cover - import stub
 
 
 stub_qdrant.QdrantClient = _StubQdrantClient
+stub_qdrant_http = ModuleType("qdrant_client.http")
+stub_qdrant_exceptions = ModuleType("qdrant_client.http.exceptions")
+stub_qdrant_exceptions.ApiException = Exception
+stub_qdrant_exceptions.ResponseHandlingException = Exception
+stub_qdrant_http.exceptions = stub_qdrant_exceptions
+stub_qdrant.http = SimpleNamespace(exceptions=stub_qdrant_exceptions)
 if util.find_spec("qdrant_client") is None:
     sys.modules.setdefault("qdrant_client", stub_qdrant)
+    sys.modules.setdefault("qdrant_client.http", stub_qdrant_http)
+    sys.modules.setdefault("qdrant_client.http.exceptions", stub_qdrant_exceptions)
+
 
 stub_openai_client = ModuleType("cli.openai_client")
 
@@ -43,7 +54,8 @@ class _StubSharedOpenAIClient:  # pragma: no cover - import stub
 
 stub_openai_client.OpenAIClientError = _StubOpenAIClientError
 stub_openai_client.SharedOpenAIClient = _StubSharedOpenAIClient
-sys.modules.setdefault("cli.openai_client", stub_openai_client)
+if util.find_spec("cli.openai_client") is None:
+    sys.modules.setdefault("cli.openai_client", stub_openai_client)
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "scripts" / "ask_qdrant.py"
 SPEC = util.spec_from_file_location("ask_qdrant", MODULE_PATH)

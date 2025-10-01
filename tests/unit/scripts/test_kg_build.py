@@ -233,6 +233,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
             "10",
             "--chunk-overlap",
             "2",
+            "--reset-database",
         ]
     )
 
@@ -246,6 +247,56 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     assert any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
     saved = json.loads(log_path.read_text())
     assert saved["status"] == "success"
+
+
+def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    source = tmp_path / "sample.txt"
+    source.write_text("sample content", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    captured_pipeline: dict[str, FakePipeline] = {}
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(
+        kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs))
+    )
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--chunk-size",
+            "10",
+            "--chunk-overlap",
+            "2",
+        ]
+    )
+
+    assert created_drivers, "Expected GraphDatabase.driver to be invoked"
+    assert not any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
 
 
 def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001 - env fixture ensures auth vars
@@ -293,6 +344,7 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.chunk_overlap == kg.DEFAULT_CHUNK_OVERLAP
     assert args.database is None
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
+    assert args.reset_database is False
 
 def test_parse_args_overrides() -> None:
     args = kg._parse_args(
@@ -307,6 +359,7 @@ def test_parse_args_overrides() -> None:
             "neo4j",
             "--log-path",
             "/tmp/log.json",  # nosec
+            "--reset-database",
         ]
     )
     assert args.source == "/tmp/foo.txt"
@@ -314,6 +367,7 @@ def test_parse_args_overrides() -> None:
     assert args.chunk_overlap == 7
     assert args.database == "neo4j"
     assert args.log_path == "/tmp/log.json"
+    assert args.reset_database is True
 
 
 def test_sanitize_property_value_handles_only_none() -> None:

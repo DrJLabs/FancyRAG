@@ -257,6 +257,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=str(DEFAULT_LOG_PATH),
         help="Location for the structured JSON log (default: %(default)s)",
     )
+    parser.add_argument(
+        "--reset-database",
+        action="store_true",
+        help="Delete all nodes and relationships in Neo4j before ingesting (destructive).",
+    )
     return parser.parse_args(argv)
 
 
@@ -653,21 +658,24 @@ def _execute_pipeline(
     embedder: Embedder,
     llm: SharedOpenAILLM,
     splitter: FixedSizeSplitter,
+    reset_database: bool,
 ) -> str | None:
     """
     Execute the knowledge-graph pipeline against a Neo4j instance and return the pipeline run identifier.
     
-    This call resets the target Neo4j database before running the pipeline and writes sanitized nodes and relationships via the provided writer and components.
+    When requested, this call resets the target Neo4j database before running the pipeline and writes sanitized nodes and relationships via the provided writer and components.
     
     Parameters:
         database (str | None): Name of the Neo4j database to use; pass `None` to use the server default.
+        reset_database (bool): When True, remove all nodes and relationships prior to running the pipeline.
     
     Returns:
         run_id (str | None): The pipeline run identifier if produced, `None` otherwise.
     """
 
     with GraphDatabase.driver(uri, auth=auth) as driver:
-        _reset_database(driver, database=database)
+        if reset_database:
+            _reset_database(driver, database=database)
         writer = SanitizingNeo4jWriter(driver=driver, neo4j_database=database)
         pipeline = SimpleKGPipeline(
             llm=llm,
@@ -733,7 +741,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     """
     Builds a knowledge graph from a source file and writes a structured JSON run log.
     
-    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, ingests the source text into Neo4j using configured OpenAI clients and the pipeline, ensures document-chunk relationships, collects database counts, writes a sanitized JSON log to disk, prints the log, and returns the log dictionary.
+    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, ingests the source text into Neo4j using configured OpenAI clients and the pipeline, optionally resets the database when requested, ensures document-chunk relationships, collects database counts, writes a sanitized JSON log to disk, prints the log, and returns the log dictionary.
     
     Parameters:
         argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv; when None the process uses default argument parsing.
@@ -748,6 +756,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             - input_bytes: size of the input in bytes
             - chunking: mapping with "size" and "overlap" used for splitting
             - database: Neo4j database name (or None)
+            - reset_database: boolean indicating whether the destructive reset flag was provided
             - openai: OpenAI settings used (chat_model, embedding_model, embedding_dimensions, max_attempts)
             - counts: mapping with counts of ingested entities (documents, chunks, relationships)
             - run_id: pipeline run identifier (if available)
@@ -786,6 +795,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             embedder=embedder,
             llm=llm,
             splitter=splitter,
+            reset_database=args.reset_database,
         )
     except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
         raise RuntimeError(f"OpenAI request failed: {exc}") from exc
@@ -815,6 +825,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             "overlap": args.chunk_overlap,
         },
         "database": args.database,
+        "reset_database": args.reset_database,
         "openai": {
             "chat_model": settings.chat_model,
             "embedding_model": settings.embedding_model,

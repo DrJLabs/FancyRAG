@@ -16,6 +16,15 @@ from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
 from qdrant_client import QdrantClient
 
+try:  # pragma: no cover - optional dependency surface
+    from qdrant_client.http.exceptions import ApiException, ResponseHandlingException
+except Exception:  # pragma: no cover - fallback when qdrant_client is unavailable
+    class ApiException(Exception):
+        """Fallback API exception when qdrant_client is not installed."""
+
+    class ResponseHandlingException(Exception):
+        """Fallback response exception when qdrant_client is not installed."""
+
 from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from config.settings import OpenAISettings
@@ -166,9 +175,15 @@ def main() -> None:
         status = "error"
         message = getattr(exc, "remediation", None) or str(exc)
         print(f"error: {exc}", file=sys.stderr)
-    except (Neo4jError, Exception) as exc:  # pragma: no cover - defensive guard
-        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-            raise
+    except Neo4jError as exc:  # pragma: no cover - defensive guard
+        status = "error"
+        message = str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    except (ApiException, ResponseHandlingException) as exc:  # pragma: no cover - defensive guard
+        status = "error"
+        message = str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    except (RuntimeError, ValueError, TypeError) as exc:  # pragma: no cover - defensive guard
         status = "error"
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)

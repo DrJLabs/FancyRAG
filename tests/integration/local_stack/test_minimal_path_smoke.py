@@ -23,6 +23,15 @@ REQUIRED_SCRIPTS = [
 ]
 
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy(value: str | None) -> bool:
+    """Return True when the provided string represents an affirmative value."""
+
+    return str(value or "").strip().lower() in TRUTHY_VALUES
+
+
 def run_command(*args: str, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
     """
     Run a subprocess command with stdout/stderr captured and optionally assert success.
@@ -51,9 +60,9 @@ def run_command(*args: str, env: dict[str, str], check: bool = True) -> subproce
     return result
 
 
-SKIP_FOR_DOCKER = shutil.which("docker") is None and os.environ.get(
-    "LOCAL_STACK_SKIP_DOCKER_CHECK", "0"
-) not in {"1", "true", "TRUE"}
+SKIP_FOR_DOCKER = shutil.which("docker") is None and not _is_truthy(
+    os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK")
+)
 
 
 @pytest.mark.integration
@@ -119,11 +128,7 @@ def test_minimal_path_smoke() -> None:
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
         (PROJECT_ROOT / relative).mkdir(parents=True, exist_ok=True)
 
-    skip_docker_ops = os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK", "0") in {
-        "1",
-        "true",
-        "TRUE",
-    }
+    skip_docker_ops = _is_truthy(os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK"))
 
     if not skip_docker_ops:
         run_command(str(CHECK_SCRIPT), "--config", env=env)
@@ -157,8 +162,22 @@ def test_minimal_path_smoke() -> None:
             "cosine",
             env=env,
         )
-        run_command(python, "scripts/kg_build.py", "--source", "docs/samples/pilot.txt", env=env)
-        run_command(python, "scripts/export_to_qdrant.py", "--collection", "chunks_main", env=env)
+        run_command(
+            python,
+            "scripts/kg_build.py",
+            "--source",
+            "docs/samples/pilot.txt",
+            "--reset-database",
+            env=env,
+        )
+        run_command(
+            python,
+            "scripts/export_to_qdrant.py",
+            "--collection",
+            "chunks_main",
+            "--recreate-collection",
+            env=env,
+        )
         run_command(
             python,
             "scripts/ask_qdrant.py",
