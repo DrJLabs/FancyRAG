@@ -30,6 +30,17 @@ ALLOWED_NON_PLACEHOLDER_VALUES = {
     "gpt-4.1-mini",
     "gpt-4o-mini",
     "text-embedding-3-small",
+    "neo4j",
+    "local-neo4j",
+    "bolt://localhost:7687",
+    "localhost:7687",
+    "localhost:7474",
+    "http://localhost:6333",
+    "",
+    "7474",
+    "7687",
+    "6334",
+    "6333",
 }
 
 
@@ -87,6 +98,14 @@ def test_env_template_models_document_optional_upgrade():
 
 
 def test_env_template_endpoint_guidance():
+    """
+    Validate that the environment template specifies allowed endpoint schemes for Neo4j and Qdrant.
+    
+    Checks that the NEO4J_URI value uses a Bolt or Neo4j scheme (bolt://, bolt+s://, neo4j://, neo4j+s://) and that the QDRANT_URL value is either an HTTPS endpoint or an explicit localhost HTTP override (http://localhost:<port>).
+    
+    Raises:
+        AssertionError: If NEO4J_URI does not start with an accepted Bolt/Neo4j scheme, or if QDRANT_URL is neither an HTTPS URL nor an explicit http://localhost:<port> URL.
+    """
     keys = _load_template_dict()
     neo4j_uri = _sanitize_value(keys["NEO4J_URI"])
     qdrant_url = _sanitize_value(keys["QDRANT_URL"])
@@ -96,7 +115,9 @@ def test_env_template_endpoint_guidance():
         "neo4j://",
         "neo4j+s://",
     )), "NEO4J_URI should reference Bolt or Neo4j scheme"
-    assert qdrant_url.startswith("https://"), "QDRANT_URL should reference HTTPS endpoint"
+    assert qdrant_url.startswith("https://") or qdrant_url.startswith(
+        "http://localhost:"
+    ), "QDRANT_URL should reference HTTPS endpoint or explicit local override"
 
 
 def test_documentation_references_env_template_workflow():

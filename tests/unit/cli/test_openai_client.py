@@ -63,21 +63,21 @@ class FlakyChatClient(StubOpenAIClient):
 
     def _chat(self, **kwargs):
         """
-        Simulate a chat request that may raise a rate-limit error for a configured number of initial calls.
+        Simulate a chat request that may fail with rate limiting for a configured number of initial calls.
         
-        When the client is configured to fail, this method raises a RateLimitError containing a 429 status and Retry-After headers; otherwise it delegates to the underlying client's chat implementation and returns its response.
+        If configured failures remain, this method raises a RateLimitError containing a 429 status and Retry-After headers; otherwise it returns the underlying client's chat response.
         
         Returns:
             The chat response object produced by the underlying client.
         
         Raises:
-            RateLimitError: If the client is still in its configured failure period; the error includes a 429 status and Retry-After headers.
+            RateLimitError: If the client is within its configured failure period; the error includes a 429 status and Retry-After headers.
         """
         if self._failures > 0:
             self._failures -= 1
             headers = {"Retry-After": "1", "retry-after": "1"}
             response = SimpleNamespace(headers=headers, request=SimpleNamespace(), status_code=429)
-            raise RateLimitError("slow down", response=response)
+            raise RateLimitError("slow down", response=response, body={})
         return super()._chat(**kwargs)
 
 
@@ -100,15 +100,15 @@ class SequencedRateLimitClient(StubOpenAIClient):
 
     def _chat(self, **kwargs):
         """
-        Simulates a chat call that enforces rate-limit behavior using a sequence of `Retry-After` header values.
+        Simulate a chat call that enforces rate-limit responses based on a configured Retry-After sequence.
         
-        When the configured retry sequence or the `always_fail` flag indicates a failure for the current attempt, raises a RateLimitError whose `response` includes `Retry-After` and `retry-after` headers and has HTTP status 429; otherwise delegates to and returns the superclass `_chat` result.
+        When configured to fail for the current attempt, raises a RateLimitError whose response includes "Retry-After" and "retry-after" headers and has status_code 429; otherwise returns the superclass chat response.
         
         Returns:
             The chat response returned by the superclass `_chat` when no rate-limit is applied.
         
         Raises:
-            RateLimitError: if this call is simulated as rate-limited (response.headers contains `Retry-After` and status_code is 429).
+            RateLimitError: if this call is simulated as rate-limited; the exception's `response` contains `Retry-After` and `retry-after` headers and `status_code` 429.
         """
         header_value = "1"
         if self._retry_after:
@@ -121,7 +121,7 @@ class SequencedRateLimitClient(StubOpenAIClient):
                 request=SimpleNamespace(),
                 status_code=429,
             )
-            raise RateLimitError("slow down", response=response)
+            raise RateLimitError("slow down", response=response, body={})
         return super()._chat(**kwargs)
 
 
