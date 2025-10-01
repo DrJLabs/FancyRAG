@@ -90,7 +90,7 @@ def test_minimal_path_smoke() -> None:
     env["NEO4J_HTTP_PORT"] = neo4j_http_port
 
     env["NEO4J_USERNAME"] = os.environ.get("NEO4J_USERNAME", "neo4j")
-    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "neo4j")
+    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "local-neo4j")
     env["NEO4J_AUTH"] = f"{env['NEO4J_USERNAME']}/{env['NEO4J_PASSWORD']}"
     env["NEO4J_URI"] = os.environ.get("NEO4J_URI", f"bolt://{neo4j_host}:{neo4j_bolt_port}")
     env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get(
