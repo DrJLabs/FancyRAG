@@ -51,8 +51,13 @@ def run_command(*args: str, env: dict[str, str], check: bool = True) -> subproce
     return result
 
 
+SKIP_FOR_DOCKER = shutil.which("docker") is None and os.environ.get(
+    "LOCAL_STACK_SKIP_DOCKER_CHECK", "0"
+) not in {"1", "true", "TRUE"}
+
+
 @pytest.mark.integration
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker command not available")
+@pytest.mark.skipif(SKIP_FOR_DOCKER, reason="docker command not available")
 def test_minimal_path_smoke() -> None:
     """
     Integration test that boots a local Docker stack, runs a minimal end-to-end workflow, and tears the stack down.
@@ -114,15 +119,26 @@ def test_minimal_path_smoke() -> None:
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
         (PROJECT_ROOT / relative).mkdir(parents=True, exist_ok=True)
 
-    run_command(str(CHECK_SCRIPT), "--config", env=env)
+    skip_docker_ops = os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK", "0") in {
+        "1",
+        "true",
+        "TRUE",
+    }
+
+    if not skip_docker_ops:
+        run_command(str(CHECK_SCRIPT), "--config", env=env)
 
     stack_started = False
     try:
-        up_result = run_command(str(CHECK_SCRIPT), "--up", env=env, check=False)
-        if up_result.returncode != 0:
-            pytest.skip(f"docker compose up failed: {up_result.stdout.strip()}")
-        stack_started = True
-        run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env)
+        if not skip_docker_ops:
+            up_result = run_command(str(CHECK_SCRIPT), "--up", env=env, check=False)
+            if up_result.returncode != 0:
+                pytest.skip(f"docker compose up failed: {up_result.stdout.strip()}")
+            stack_started = True
+            run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env)
+        else:
+            # Assume external orchestrator started the stack when docker CLI is unavailable.
+            stack_started = True
 
         # Execute minimal path scripts sequentially.
         python = sys.executable
@@ -154,5 +170,7 @@ def test_minimal_path_smoke() -> None:
         )
 
     finally:
-        if stack_started:
-            run_command(str(CHECK_SCRIPT), "--down", "--destroy-volumes", env=env, check=False)
+        if stack_started and not skip_docker_ops:
+            run_command(
+                str(CHECK_SCRIPT), "--down", "--destroy-volumes", env=env, check=False
+            )
