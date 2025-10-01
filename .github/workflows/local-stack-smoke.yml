@@ -20,6 +20,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,15 +30,92 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Prepare environment file
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          cp .env.example .env
+          python - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          secret = os.getenv('OPENAI_API_KEY')
+          if not secret:
+              print('error: OPENAI_API_KEY secret is missing; configure secrets.OPENAI_API_KEY', file=sys.stderr)
+              sys.exit(1)
+
+          env_path = Path('.env')
+          rendered_lines: list[str] = []
+          export_lines: list[str] = []
+          found = False
+
+          for raw_line in env_path.read_text().splitlines():
+              line = raw_line.rstrip('\n')
+              if line.startswith('OPENAI_API_KEY='):
+                  rendered = f'OPENAI_API_KEY="{secret}"'
+                  found = True
+              elif line.startswith('OPENAI_MAX_ATTEMPTS='):
+                  rendered = 'OPENAI_MAX_ATTEMPTS=3  # default 3 attempts total'
+              elif line.startswith('OPENAI_BACKOFF_SECONDS='):
+                  rendered = 'OPENAI_BACKOFF_SECONDS=0.5  # default 0.5s base delay'
+              elif line.startswith('OPENAI_ENABLE_FALLBACK='):
+                  rendered = 'OPENAI_ENABLE_FALLBACK=true  # set to true to enable fallback model selection'
+              else:
+                  rendered = line
+
+              rendered_lines.append(rendered)
+
+              stripped = rendered.strip()
+              if not stripped or stripped.startswith('#') or '=' not in stripped:
+                  continue
+              key, _, remainder = stripped.partition('=')
+              value = remainder.split('#', 1)[0].strip()
+              if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                  value = value[1:-1]
+              export_lines.append(f"{key}={value}")
+
+          if not found:
+              rendered_lines.append(f'OPENAI_API_KEY="{secret}"')
+              export_lines.append(f'OPENAI_API_KEY={secret}')
+
+          env_path.write_text('\n'.join(rendered_lines) + '\n')
+
+          if not any(line.startswith('OPENAI_API_KEY=') and secret in line for line in rendered_lines):
+              print('error: failed to inject OPENAI_API_KEY into .env', file=sys.stderr)
+              sys.exit(1)
+
+          github_env = os.getenv('GITHUB_ENV')
+          if github_env:
+              with open(github_env, 'a', encoding='utf-8') as fh:
+                  fh.write('\n'.join(export_lines) + '\n')
+          PY
+          if grep -q 'NEO4J_PASSWORD' .env; then
+            echo 'NEO4J_PASSWORD present in .env'
+          else
+            echo 'Missing NEO4J_PASSWORD in .env' >&2
+            exit 1
+          fi
 
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config
 
-      - name: Run minimal path smoke test (skips until Story 2.5 scripts land)
+      - name: Start local stack services
+        run: docker compose -f docker-compose.neo4j-qdrant.yml up -d --wait neo4j qdrant
+
+      - name: Run smoke tests inside compose
         env:
-          PYTHONPATH: src
-        run: pytest tests/integration/local_stack/test_minimal_path_smoke.py -m integration
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          docker compose -f docker-compose.neo4j-qdrant.yml run --rm \
+            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+            -e LOCAL_STACK_SKIP_DOCKER_CHECK=1 \
+            smoke-tests bash -lc "set -euo pipefail; pip install --upgrade pip >/dev/null; pip install --no-cache-dir -r requirements.lock; pytest tests/integration/local_stack/test_minimal_path_smoke.py"
+
+      - name: Collect service logs
+        if: failure()
+        run: docker compose -f docker-compose.neo4j-qdrant.yml logs neo4j qdrant
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker-compose.neo4j-qdrant.yml down --volumes

@@ -23,6 +23,15 @@ REQUIRED_SCRIPTS = [
 ]
 
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy(value: str | None) -> bool:
+    """Return True when the provided string represents an affirmative value."""
+
+    return str(value or "").strip().lower() in TRUTHY_VALUES
+
+
 def run_command(*args: str, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
     """
     Run a subprocess command with stdout/stderr captured and optionally assert success.
@@ -51,8 +60,13 @@ def run_command(*args: str, env: dict[str, str], check: bool = True) -> subproce
     return result
 
 
+SKIP_FOR_DOCKER = shutil.which("docker") is None and not _is_truthy(
+    os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK")
+)
+
+
 @pytest.mark.integration
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker command not available")
+@pytest.mark.skipif(SKIP_FOR_DOCKER, reason="docker command not available")
 def test_minimal_path_smoke() -> None:
     """
     Integration test that boots a local Docker stack, runs a minimal end-to-end workflow, and tears the stack down.
@@ -73,13 +87,36 @@ def test_minimal_path_smoke() -> None:
     env = os.environ.copy()
     env["COMPOSE_FILE"] = str(COMPOSE_FILE)
     env["PYTHONPATH"] = "stubs:src"
+
+    neo4j_host = os.environ.get("NEO4J_HOST", "localhost")
+    neo4j_http_host = os.environ.get("NEO4J_HTTP_HOST", neo4j_host)
+    neo4j_bolt_port = os.environ.get("NEO4J_BOLT_PORT", "7687")
+    neo4j_http_port = os.environ.get("NEO4J_HTTP_PORT", "7474")
+
+    env["NEO4J_HOST"] = neo4j_host
+    env["NEO4J_HTTP_HOST"] = neo4j_http_host
+    env["NEO4J_BOLT_PORT"] = neo4j_bolt_port
+    env["NEO4J_HTTP_PORT"] = neo4j_http_port
+
     env["NEO4J_USERNAME"] = os.environ.get("NEO4J_USERNAME", "neo4j")
-    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "neo4j")
+    env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "local-neo4j")
     env["NEO4J_AUTH"] = f"{env['NEO4J_USERNAME']}/{env['NEO4J_PASSWORD']}"
-    env["NEO4J_URI"] = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-    env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
-    env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
-    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    env["NEO4J_URI"] = os.environ.get("NEO4J_URI", f"bolt://{neo4j_host}:{neo4j_bolt_port}")
+    env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get(
+        "NEO4J_BOLT_ADVERTISED_ADDRESS", f"{neo4j_host}:{neo4j_bolt_port}"
+    )
+    env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get(
+        "NEO4J_HTTP_ADVERTISED_ADDRESS", f"{neo4j_http_host}:{neo4j_http_port}"
+    )
+
+    qdrant_host = os.environ.get("QDRANT_HOST", "localhost")
+    qdrant_http_port = os.environ.get("QDRANT_HTTP_PORT", "6333")
+    qdrant_grpc_port = os.environ.get("QDRANT_GRPC_PORT", "6334")
+
+    env["QDRANT_HOST"] = qdrant_host
+    env["QDRANT_HTTP_PORT"] = qdrant_http_port
+    env["QDRANT_GRPC_PORT"] = qdrant_grpc_port
+    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", f"http://{qdrant_host}:{qdrant_http_port}")
     env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -91,15 +128,22 @@ def test_minimal_path_smoke() -> None:
     for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
         (PROJECT_ROOT / relative).mkdir(parents=True, exist_ok=True)
 
-    run_command(str(CHECK_SCRIPT), "--config", env=env)
+    skip_docker_ops = _is_truthy(os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK"))
+
+    if not skip_docker_ops:
+        run_command(str(CHECK_SCRIPT), "--config", env=env)
 
     stack_started = False
     try:
-        up_result = run_command(str(CHECK_SCRIPT), "--up", env=env, check=False)
-        if up_result.returncode != 0:
-            pytest.skip(f"docker compose up failed: {up_result.stdout.strip()}")
-        stack_started = True
-        run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env)
+        if not skip_docker_ops:
+            up_result = run_command(str(CHECK_SCRIPT), "--up", env=env, check=False)
+            if up_result.returncode != 0:
+                pytest.skip(f"docker compose up failed: {up_result.stdout.strip()}")
+            stack_started = True
+            run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env)
+        else:
+            # Assume external orchestrator started the stack when docker CLI is unavailable.
+            stack_started = True
 
         # Execute minimal path scripts sequentially.
         python = sys.executable
@@ -118,8 +162,22 @@ def test_minimal_path_smoke() -> None:
             "cosine",
             env=env,
         )
-        run_command(python, "scripts/kg_build.py", "--source", "docs/samples/pilot.txt", env=env)
-        run_command(python, "scripts/export_to_qdrant.py", "--collection", "chunks_main", env=env)
+        run_command(
+            python,
+            "scripts/kg_build.py",
+            "--source",
+            "docs/samples/pilot.txt",
+            "--reset-database",
+            env=env,
+        )
+        run_command(
+            python,
+            "scripts/export_to_qdrant.py",
+            "--collection",
+            "chunks_main",
+            "--recreate-collection",
+            env=env,
+        )
         run_command(
             python,
             "scripts/ask_qdrant.py",
@@ -131,5 +189,7 @@ def test_minimal_path_smoke() -> None:
         )
 
     finally:
-        if stack_started:
-            run_command(str(CHECK_SCRIPT), "--down", "--destroy-volumes", env=env, check=False)
+        if stack_started and not skip_docker_ops:
+            run_command(
+                str(CHECK_SCRIPT), "--down", "--destroy-volumes", env=env, check=False
+            )

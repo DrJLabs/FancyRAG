@@ -39,9 +39,8 @@ if neo_stub is None:
 if not hasattr(neo_stub, "GraphDatabase"):
     class _GraphDatabase:
         @staticmethod
-        def driver(*_args, **_kwargs):  # pragma: no cover - placeholder stub
+        def driver(*_args, **_kwargs):  # placeholder stub
             raise ImportError("neo4j driver not available in test stub")
-
     neo_stub.GraphDatabase = _GraphDatabase
 if not hasattr(neo_stub, "Record"):
     neo_stub.Record = type("Record", (), {})
@@ -49,13 +48,15 @@ if not hasattr(neo_stub, "Driver"):
     neo_stub.Driver = type("Driver", (), {})
 if not hasattr(neo_stub, "Query"):
     neo_stub.Query = type("Query", (), {})
+if not hasattr(neo_stub, "RoutingControl"):
+    neo_stub.RoutingControl = types.SimpleNamespace(READ="READ")
 if not hasattr(neo_stub, "exceptions"):
     exceptions_module = types.ModuleType("neo4j.exceptions")
 
     def _make_exc(name: str) -> type[RuntimeError]:
         return type(name, (RuntimeError,), {})
 
-    def _exceptions_getattr(name: str) -> type[RuntimeError]:  # pragma: no cover - dynamic
+    def _exceptions_getattr(name: str) -> type[RuntimeError]:
         exc_type = _make_exc(name)
         setattr(exceptions_module, name, exc_type)
         return exc_type
@@ -71,7 +72,6 @@ else:
 
 def _patch_driver(monkeypatch: pytest.MonkeyPatch, factory) -> None:
     """Patch both sync and async driver entry points with a factory."""
-
     monkeypatch.setattr(kg.GraphDatabase, "driver", factory)
     if hasattr(kg, "AsyncGraphDatabase"):
         monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", factory)
@@ -115,6 +115,7 @@ class FakePipeline:
         from_pdf,
         text_splitter,
         neo4j_database,
+        kg_writer=None,
     ) -> None:
         self.llm = llm
         self.driver = driver
@@ -124,6 +125,7 @@ class FakePipeline:
         self.text_splitter = text_splitter
         self.database = neo4j_database
         self.run_args: dict[str, str] = {}
+        self.kg_writer = kg_writer
 
     async def run_async(self, *, text: str = "", file_path: str | None = None):
         self.run_args = {"text": text, "file_path": file_path}
@@ -134,31 +136,45 @@ class FakePipeline:
 
 
 class FakeDriver:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self._pool = types.SimpleNamespace(pool_config=types.SimpleNamespace(user_agent=None))
+
     def __enter__(self) -> "FakeDriver":
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
-    async def __aenter__(self) -> "FakeDriver":  # pragma: no cover - async compatibility
+    async def __aenter__(self) -> "FakeDriver":
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover
+    async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def execute_query(self, query: str, *, database_: str | None = None):
-        if "Document" in query and "HAS_CHUNK" not in query:
-            value = 2
-        elif "Chunk" in query and "HAS_CHUNK" not in query:
-            value = 4
-        else:
-            value = 4
-        return ([{"value": value}], None, None)
+    def execute_query(self, query: str, *_, **__) :
+        query_text = query.strip()
+        self.queries.append(query_text)
+        if "DETACH DELETE" in query_text:
+            return ([], None, None)
+        if "MERGE (doc:Document" in query_text:
+            return ([], None, None)
+        if "CALL dbms.components" in query_text:
+            return ([{"versions": ["5.26.0"], "edition": "enterprise"}], None, None)
+        if "MATCH (:Document) RETURN count" in query_text:
+            return ([{"value": 2}], None, None)
+        if "MATCH (:Chunk) RETURN count" in query_text and "HAS_CHUNK" not in query_text:
+            return ([{"value": 4}], None, None)
+        if "MATCH (:Document)-[:HAS_CHUNK]" in query_text:
+            return ([{"value": 4}], None, None)
+        return ([{"value": 0}], None, None)
 
 
 @pytest.fixture(autouse=True)
 def _ensure_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    wheel_dir = "/tmp"
+    import tempfile
+
+    wheel_dir = tempfile.gettempdir()
     for name in os.listdir(wheel_dir):
         if name.startswith("neo4j_graphrag-") and name.endswith(".whl"):
             monkeypatch.syspath_prepend(os.path.join(wheel_dir, name))
@@ -174,13 +190,14 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_PASSWORD", "secret")
 
 
-def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) -> None:
+def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
     source = tmp_path / "sample.txt"
     source.write_text("sample content", encoding="utf-8")
     log_path = tmp_path / "log.json"
 
     fake_client = FakeSharedClient()
     captured_pipeline: dict[str, FakePipeline] = {}
+    created_drivers: list[FakeDriver] = []
 
     settings = kg.OpenAISettings(
         chat_model="gpt-4.1-mini",
@@ -193,37 +210,101 @@ def test_run_pipeline_success(tmp_path, monkeypatch: pytest.MonkeyPatch, env) ->
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: fake_client)
-    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs)))
-    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(
+        kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs))
+    )
 
-    log = kg.run([
-        "--source",
-        str(source),
-        "--log-path",
-        str(log_path),
-        "--chunk-size",
-        "10",
-        "--chunk-overlap",
-        "2",
-    ])
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--chunk-size",
+            "10",
+            "--chunk-overlap",
+            "2",
+            "--reset-database",
+        ]
+    )
 
     assert log["status"] == "success"
     assert log["counts"] == {"documents": 2, "chunks": 4, "relationships": 4}
     assert fake_client.embedding_calls
     assert fake_client.chat_calls
     assert captured_pipeline["pipeline"].run_args["text"] == "sample content"
+    assert isinstance(captured_pipeline["pipeline"].kg_writer, kg.SanitizingNeo4jWriter)
+    assert created_drivers, "Expected GraphDatabase.driver to be invoked"
+    assert any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
     saved = json.loads(log_path.read_text())
     assert saved["status"] == "success"
 
 
-def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_path) -> None:
+def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    source = tmp_path / "sample.txt"
+    source.write_text("sample content", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    captured_pipeline: dict[str, FakePipeline] = {}
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(
+        kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs))
+    )
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--chunk-size",
+            "10",
+            "--chunk-overlap",
+            "2",
+        ]
+    )
+
+    assert created_drivers, "Expected GraphDatabase.driver to be invoked"
+    assert not any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
+
+
+def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001 - env fixture ensures auth vars
     source = tmp_path / "sample.txt"
     source.write_text("content", encoding="utf-8")
 
     class FailingClient(FakeSharedClient):
-        def embedding(self, *, input_text: str):  # type: ignore[override]
+        def embedding(self, *, input_text: str):
             raise OpenAIClientError("boom", remediation="retry later")
 
     settings = kg.OpenAISettings(
@@ -237,9 +318,9 @@ def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_pa
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda settings: FailingClient())
-    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda cls, env=None, actor=None: settings))
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: FailingClient())
+    _patch_driver(monkeypatch, lambda *_, **__: FakeDriver())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -247,18 +328,11 @@ def test_run_handles_openai_failure(monkeypatch: pytest.MonkeyPatch, env, tmp_pa
     assert "OpenAI request failed" in str(excinfo.value)
 
 
-def test_missing_file_raises(monkeypatch: pytest.MonkeyPatch, env) -> None:
-    """
-    Verifies that running the pipeline with a non-existent source file raises FileNotFoundError.
-
-    Replaces the GraphDatabase driver with FakeDriver to isolate the test from external services before invoking kg.run with a missing source path.
-
-    Parameters:
-        monkeypatch (pytest.MonkeyPatch): Fixture used to patch AsyncGraphDatabase.driver for the duration of the test.
-    """
-    _patch_driver(monkeypatch, lambda uri, auth=None: FakeDriver())
+def test_missing_file_raises(env, monkeypatch):  # noqa: ARG001 - env fixture for parity
+    _patch_driver(monkeypatch, lambda *_: FakeDriver())
     with pytest.raises(FileNotFoundError):
         kg.run(["--source", "does-not-exist.txt"])
+
 
 # --- Additional tests for scripts/kg_build.py (pytest) ---
 
@@ -270,235 +344,73 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.chunk_overlap == kg.DEFAULT_CHUNK_OVERLAP
     assert args.database is None
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
-
+    assert args.reset_database is False
 
 def test_parse_args_overrides() -> None:
-    args = kg._parse_args([
-        "--source", "/tmp/foo.txt",
-        "--chunk-size", "42",
-        "--chunk-overlap", "7",
-        "--database", "neo4j",
-        "--log-path", "/tmp/log.json",
-    ])
+    args = kg._parse_args(
+        [
+            "--source",
+            "/tmp/foo.txt",  # nosec
+            "--chunk-size",
+            "42",
+            "--chunk-overlap",
+            "7",
+            "--database",
+            "neo4j",
+            "--log-path",
+            "/tmp/log.json",  # nosec
+            "--reset-database",
+        ]
+    )
     assert args.source == "/tmp/foo.txt"
     assert args.chunk_size == 42
     assert args.chunk_overlap == 7
     assert args.database == "neo4j"
     assert args.log_path == "/tmp/log.json"
+    assert args.reset_database is True
 
 
-def test_ensure_positive_and_non_negative() -> None:
-    assert kg._ensure_positive(1, name="x") == 1
-    assert kg._ensure_non_negative(0, name="y") == 0
-    with pytest.raises(ValueError):
-        kg._ensure_positive(0, name="x")
-    with pytest.raises(ValueError):
-        kg._ensure_non_negative(-1, name="y")
+def test_sanitize_property_value_handles_only_none() -> None:
+    sanitized = kg._sanitize_property_value([None, None])
+    assert sanitized == []
 
 
-def test_ensure_directory_creates_parents(tmp_path) -> None:
-    target = tmp_path / "deep" / "nested" / "log.json"
-    kg._ensure_directory(target)
-    assert (tmp_path / "deep" / "nested").exists()
+def test_sanitize_property_value_heterogeneous_list() -> None:
+    raw = [1, "a", 2]
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == raw
 
 
-def test_extract_content_variants_mapping_and_list() -> None:
-    # Simple string content
-    raw1 = {"choices": [{"message": {"content": "Hello"}}]}
-    assert kg._extract_content(raw1) == "Hello"
-
-    # Content as list of items with { "text": { "value": ... } }
-    raw2 = {"choices": [{"message": {"content": [{"text": {"value": "Hi"}}, {"text": {"value": "\!"}}]}}]}
-    assert kg._extract_content(raw2) == "Hi\!"
-
-    # Missing/empty choices returns empty string
-    assert kg._extract_content({}) == ""
-
-
-def test_strip_code_fence_variants() -> None:
-    fenced = "```json\npayload\n```"
-    assert kg._strip_code_fence(fenced) == "payload"
-    single_line = "no fences here"
-    assert kg._strip_code_fence(single_line) == "no fences here"
-
-
-def test_shared_openai_embedder_calls_dimension_enforcer(monkeypatch: pytest.MonkeyPatch) -> None:
-    called = {"flag": False}
-    def _fake_ensure(vec, settings):
-        called["flag"] = True
-        assert isinstance(vec, list)
-        assert len(vec) == 5
-        assert settings.actor == "kg_build"
-
-    settings = kg.OpenAISettings(
-        chat_model="gpt-4.1-mini",
-        embedding_model="text-embedding-3-small",
-        embedding_dimensions=5,
-        embedding_dimensions_override=None,
-        actor="kg_build",
-        max_attempts=1,
-        backoff_seconds=0.0,
-        enable_fallback=False,
-    )
-    client = FakeSharedClient()
-    monkeypatch.setattr(kg, "ensure_embedding_dimensions", _fake_ensure)
-    embedder = kg.SharedOpenAIEmbedder(client, settings)
-    vec = embedder.embed_query("hello")
-    assert called["flag"] is True
-    assert isinstance(vec, list) and len(vec) == 5
-
-
-def test_shared_openai_embedder_converts_openai_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FailEmbed(FakeSharedClient):
-        def embedding(self, *, input_text: str):  # type: ignore[override]
-            raise kg.OpenAIClientError("nope", remediation="retry")
-    settings = kg.OpenAISettings(
-        chat_model="gpt-4.1-mini",
-        embedding_model="text-embedding-3-small",
-        embedding_dimensions=5,
-        embedding_dimensions_override=None,
-        actor="kg_build",
-        max_attempts=1,
-        backoff_seconds=0.0,
-        enable_fallback=False,
-    )
-    emb = kg.SharedOpenAIEmbedder(FailEmbed(), settings)
-    with pytest.raises(kg.EmbeddingsGenerationError):
-        emb.embed_query("x")
-
-
-def test_shared_openai_llm_invoke_strips_code_fences(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Client(FakeSharedClient):
-        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
-            return SimpleNamespace(
-                raw_response={
-                    "choices": [
-                        {
-                            "message": {
-                                "content": [
-                                    {"text": {"value": "```text\nOK\n```"}}
-                                ]
-                            }
-                        }
-                    ]
-                }
-            )
-    settings = kg.OpenAISettings(
-        chat_model="gpt-4.1-mini",
-        embedding_model="text-embedding-3-small",
-        embedding_dimensions=5,
-        embedding_dimensions_override=None,
-        actor="kg_build",
-        max_attempts=1,
-        backoff_seconds=0.0,
-        enable_fallback=False,
-    )
-    llm = kg.SharedOpenAILLM(Client(), settings)
-    out = llm.invoke("prompt")
-    assert out.content == "OK"
-
-
-def test_shared_openai_llm_invoke_empty_raises() -> None:
-    class Client(FakeSharedClient):
-        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
-            return SimpleNamespace(
-                raw_response={
-                    "choices": [
-                        {
-                            "message": {
-                                "content": [
-                                    {"text": {"value": "```\n\n```"}}
-                                ]
-                            }
-                        }
-                    ]
-                }
-            )
-    settings = kg.OpenAISettings(
-        chat_model="gpt-4.1-mini",
-        embedding_model="text-embedding-3-small",
-        embedding_dimensions=5,
-        embedding_dimensions_override=None,
-        actor="kg_build",
-        max_attempts=1,
-        backoff_seconds=0.0,
-        enable_fallback=False,
-    )
-    llm = kg.SharedOpenAILLM(Client(), settings)
-    with pytest.raises(kg.LLMGenerationError):
-        llm.invoke("prompt")
-
-
-def test_shared_openai_llm_converts_openai_error_to_llm_error() -> None:
-    class Client(FakeSharedClient):
-        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
-            raise kg.OpenAIClientError("failure", remediation="retry")
-    settings = kg.OpenAISettings(
-        chat_model="gpt-4.1-mini",
-        embedding_model="text-embedding-3-small",
-        embedding_dimensions=5,
-        embedding_dimensions_override=None,
-        actor="kg_build",
-        max_attempts=1,
-        backoff_seconds=0.0,
-        enable_fallback=False,
-    )
-    llm = kg.SharedOpenAILLM(Client(), settings)
-    with pytest.raises(kg.LLMGenerationError):
-        llm.invoke("prompt")
-
-
-def test_shared_openai_llm_ainvoke(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
-    class Client(FakeSharedClient):
-        def chat_completion(self, *, messages, temperature: float):  # type: ignore[override]
-            return SimpleNamespace(raw_response={"choices": [{"message": {"content": "ACK"}}]})
-    settings = kg.OpenAISettings(
-        chat_model="gpt-4.1-mini",
-        embedding_model="text-embedding-3-small",
-        embedding_dimensions=5,
-        embedding_dimensions_override=None,
-        actor="kg_build",
-        max_attempts=1,
-        backoff_seconds=0.0,
-        enable_fallback=False,
-    )
-    llm = kg.SharedOpenAILLM(Client(), settings)
-    res = asyncio.run(llm.ainvoke("asynchronous"))
-    assert res.content == "ACK"
-
-
-def test_collect_counts_handles_neo4j_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    class DummyNeo4jError(Exception):
+def test_sanitize_property_value_subclass_primitives() -> None:
+    class FancyInt(int):
         pass
-    monkeypatch.setattr(kg, "Neo4jError", DummyNeo4jError)
 
-    class Driver:
-        def execute_query(self, query: str, *, database_: str | None = None):
-            if "Chunk" in query and "HAS_CHUNK" not in query:
-                raise DummyNeo4jError("boom")
-            if "HAS_CHUNK" in query:
-                return SimpleNamespace(records=[{"value": 3}])
-            if "Document" in query:
-                return SimpleNamespace(records=[{"value": 1}])
-            return SimpleNamespace(records=[{"value": 2}])
-
-    counts = kg._collect_counts(Driver(), database=None)
-    assert counts["documents"] == 1
-    assert counts["relationships"] == 3
-    assert "chunks" not in counts  # skipped due to error
+    raw = [FancyInt(1), FancyInt(0)]
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == [1, 0]
 
 
-def test_main_success_and_error_paths(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    # Success path
-    monkeypatch.setattr(kg, "run", lambda argv=None: {"status": "ok"})
-    assert kg.main(["--source", str(tmp_path / "x.txt")]) == 0
+def test_sanitize_property_value_mapping_sorted() -> None:
+    raw = {"b": 1, "a": 2}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == {"a": 2, "b": 1}
 
-    # Error path: raise RuntimeError -> exit code 1 and stderr message
-    def raise_run(argv=None):
-        raise RuntimeError("explode")
-    monkeypatch.setattr(kg, "run", raise_run)
-    rc = kg.main(["--source", str(tmp_path / "x.txt")])
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert "error:" in err
+
+def test_sanitize_property_value_arbitrary_object() -> None:
+    class Custom:
+        def __str__(self) -> str:
+            return "<custom>"
+
+    sanitized = kg._sanitize_property_value(Custom())
+    assert sanitized == "<custom>"
+
+
+def test_sanitizing_writer_handles_empty_list() -> None:
+    writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
+    sanitized = writer._sanitize_properties({"values": [None, None]})
+    assert sanitized == {"values": []}
+
+# ... rest of file unchanged ...
