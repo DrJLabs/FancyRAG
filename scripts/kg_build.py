@@ -716,6 +716,7 @@ def _ensure_document_relationships(
                         doc.title = $document_name
         WITH doc
         MATCH (chunk:Chunk)
+        WHERE chunk.source_path IS NULL OR chunk.source_path = $source_path
         WITH doc, collect(chunk) AS chunks
         UNWIND range(0, size(chunks) - 1) AS idx
         WITH doc, chunks[idx] AS chunk, idx + 1 AS seq
@@ -732,7 +733,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     """
     Builds a knowledge graph from a source file and writes a structured JSON run log.
     
-    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, ingests the source text into Neo4j using configured OpenAI clients and the pipeline, ensures document–chunk relationships, collects database counts, writes a sanitized JSON log to disk, prints the log, and returns the log dictionary.
+    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, ingests the source text into Neo4j using configured OpenAI clients and the pipeline, ensures document-chunk relationships, collects database counts, writes a sanitized JSON log to disk, prints the log, and returns the log dictionary.
     
     Parameters:
         argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv; when None the process uses default argument parsing.

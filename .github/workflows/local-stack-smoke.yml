@@ -41,27 +41,65 @@ jobs:
           cp .env.example .env
           python - <<'PY'
           import os
+          import sys
           from pathlib import Path
 
+          secret = os.getenv('OPENAI_API_KEY')
+          if not secret:
+              print('error: OPENAI_API_KEY secret is missing; configure secrets.OPENAI_API_KEY', file=sys.stderr)
+              sys.exit(1)
+
           env_path = Path('.env')
-          lines = []
-          with env_path.open() as fh:
-              for raw_line in fh:
-                  line = raw_line.rstrip('\n')
-                  if line.startswith('OPENAI_API_KEY='):
-                      secret = os.environ.get('OPENAI_API_KEY', '')
-                      lines.append(f'OPENAI_API_KEY="{secret}"')
-                  elif line.startswith('OPENAI_MAX_ATTEMPTS='):
-                      lines.append('OPENAI_MAX_ATTEMPTS=3  # default 3 attempts total')
-                  elif line.startswith('OPENAI_BACKOFF_SECONDS='):
-                      lines.append('OPENAI_BACKOFF_SECONDS=0.5  # default 0.5s base delay')
-                  elif line.startswith('OPENAI_ENABLE_FALLBACK='):
-                      lines.append('OPENAI_ENABLE_FALLBACK=true  # set to true to enable fallback model selection')
-                  else:
-                      lines.append(line)
-          env_path.write_text('\n'.join(lines) + '\n')
+          rendered_lines: list[str] = []
+          export_lines: list[str] = []
+          found = False
+
+          for raw_line in env_path.read_text().splitlines():
+              line = raw_line.rstrip('\n')
+              if line.startswith('OPENAI_API_KEY='):
+                  rendered = f'OPENAI_API_KEY="{secret}"'
+                  found = True
+              elif line.startswith('OPENAI_MAX_ATTEMPTS='):
+                  rendered = 'OPENAI_MAX_ATTEMPTS=3  # default 3 attempts total'
+              elif line.startswith('OPENAI_BACKOFF_SECONDS='):
+                  rendered = 'OPENAI_BACKOFF_SECONDS=0.5  # default 0.5s base delay'
+              elif line.startswith('OPENAI_ENABLE_FALLBACK='):
+                  rendered = 'OPENAI_ENABLE_FALLBACK=true  # set to true to enable fallback model selection'
+              else:
+                  rendered = line
+
+              rendered_lines.append(rendered)
+
+              stripped = rendered.strip()
+              if not stripped or stripped.startswith('#') or '=' not in stripped:
+                  continue
+              key, _, remainder = stripped.partition('=')
+              value = remainder.split('#', 1)[0].strip()
+              if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                  value = value[1:-1]
+              export_lines.append(f"{key}={value}")
+
+          if not found:
+              rendered_lines.append(f'OPENAI_API_KEY="{secret}"')
+              export_lines.append(f'OPENAI_API_KEY={secret}')
+
+          env_path.write_text('\n'.join(rendered_lines) + '\n')
+
+          if not any(line.startswith('OPENAI_API_KEY=') and secret in line for line in rendered_lines):
+              print('error: failed to inject OPENAI_API_KEY into .env', file=sys.stderr)
+              sys.exit(1)
+
+          github_env = os.getenv('GITHUB_ENV')
+          if github_env:
+              with open(github_env, 'a', encoding='utf-8') as fh:
+                  fh.write('\n'.join(export_lines) + '\n')
           PY
-          cat .env >> "$GITHUB_ENV"
+          if grep -q 'NEO4J_PASSWORD' .env; then
+            echo 'NEO4J_PASSWORD present in .env'
+          else
+            echo 'Missing NEO4J_PASSWORD in .env' >&2
+            exit 1
+          fi
 
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config

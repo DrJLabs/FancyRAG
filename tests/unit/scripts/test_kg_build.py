@@ -281,9 +281,8 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch):
     assert "OpenAI request failed" in str(excinfo.value)
 
 
-def test_missing_file_raises():
-    pytest.mark.usefixtures("env")
-    _patch_driver(pytest.MonkeyPatch(), lambda *_: FakeDriver())
+def test_missing_file_raises(env, monkeypatch):  # noqa: ARG001 - env fixture for parity
+    _patch_driver(monkeypatch, lambda *_: FakeDriver())
     with pytest.raises(FileNotFoundError):
         kg.run(["--source", "does-not-exist.txt"])
 

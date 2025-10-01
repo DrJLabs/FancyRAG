@@ -87,7 +87,8 @@ def _fetch_chunk_context(driver, *, chunk_id: str, database: str | None) -> dict
     """
     records, _, _ = driver.execute_query(
         """
-        MATCH (doc:Document)-[:HAS_CHUNK]->(chunk:Chunk {chunk_id: $chunk_id})
+        MATCH (chunk:Chunk {chunk_id: $chunk_id})
+        OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(chunk)
         RETURN chunk.chunk_id AS chunk_id,
                chunk.text AS text,
                chunk.source_path AS source_path,
@@ -98,18 +99,6 @@ def _fetch_chunk_context(driver, *, chunk_id: str, database: str | None) -> dict
         {"chunk_id": chunk_id},
         database_=database,
     )
-    if not records:
-        records, _, _ = driver.execute_query(
-            """
-            MATCH (chunk:Chunk {chunk_id: $chunk_id})
-            RETURN chunk.chunk_id AS chunk_id,
-                   chunk.text AS text,
-                   chunk.source_path AS source_path
-            LIMIT 1
-            """,
-            {"chunk_id": chunk_id},
-            database_=database,
-        )
     return dict(records[0]) if records else {"chunk_id": chunk_id}
 
 
@@ -178,6 +167,8 @@ def main() -> None:
         message = getattr(exc, "remediation", None) or str(exc)
         print(f"error: {exc}", file=sys.stderr)
     except (Neo4jError, Exception) as exc:  # pragma: no cover - defensive guard
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         status = "error"
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)

@@ -192,6 +192,8 @@ def main() -> None:
                     exported += len(batch)
 
     except (Neo4jError, Exception) as exc:  # pragma: no cover - defensive guard
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         status = "error"
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)
