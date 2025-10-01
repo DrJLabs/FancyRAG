@@ -46,13 +46,22 @@ jobs:
           env_path = Path('.env')
           lines = []
           with env_path.open() as fh:
-              for line in fh:
+              for raw_line in fh:
+                  line = raw_line.rstrip('\n')
                   if line.startswith('OPENAI_API_KEY='):
-                      lines.append(f"OPENAI_API_KEY=\"{os.environ['OPENAI_API_KEY']}\"\n")
+                      secret = os.environ.get('OPENAI_API_KEY', '')
+                      lines.append(f'OPENAI_API_KEY="{secret}"')
+                  elif line.startswith('OPENAI_MAX_ATTEMPTS='):
+                      lines.append('OPENAI_MAX_ATTEMPTS=3  # default 3 attempts total')
+                  elif line.startswith('OPENAI_BACKOFF_SECONDS='):
+                      lines.append('OPENAI_BACKOFF_SECONDS=0.5  # default 0.5s base delay')
+                  elif line.startswith('OPENAI_ENABLE_FALLBACK='):
+                      lines.append('OPENAI_ENABLE_FALLBACK=true  # set to true to enable fallback model selection')
                   else:
                       lines.append(line)
-          env_path.write_text(''.join(lines))
+          env_path.write_text('\n'.join(lines) + '\n')
           PY
+          cat .env >> "$GITHUB_ENV"
 
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config
