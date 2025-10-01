@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import hashlib
 import json
 import os
@@ -150,13 +151,38 @@ def _resolve_git_commit() -> str | None:
     return commit or None
 
 
-def _relative_to_repo(path: Path) -> str:
-    """Return a repo-relative path when possible."""
+@functools.lru_cache(maxsize=1)
+def _resolve_repo_root() -> Path | None:
+    """Return the repository root directory if git metadata is available."""
 
     try:
-        return str(path.resolve().relative_to(Path.cwd()))
-    except ValueError:
-        return path.name
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    root = result.stdout.strip()
+    return Path(root) if root else None
+
+
+def _relative_to_repo(path: Path, *, base: Path | None = None) -> str:
+    """Return a stable relative path for the provided file."""
+
+    resolved = path.resolve()
+    for candidate in (base.resolve() if base else None, _resolve_repo_root(), Path.cwd()):
+        if candidate is None:
+            continue
+        try:
+            return str(resolved.relative_to(candidate))
+        except ValueError:
+            continue
+    try:
+        return str(resolved.relative_to(resolved.anchor))
+    except ValueError:  # pragma: no cover - defensive fallback
+        return resolved.as_posix()
 
 
 def _discover_source_files(directory: Path, patterns: Iterable[str]) -> list[Path]:
@@ -873,11 +899,9 @@ def _ensure_document_relationships(
     """
     chunk_payload = [
         {
-            "sequence": meta.sequence,
-            "index": meta.index,
-            "checksum": meta.checksum,
             "relative_path": meta.relative_path,
             "git_commit": meta.git_commit,
+            "checksum": meta.checksum,
         }
         for meta in chunks_metadata
     ]
@@ -897,9 +921,12 @@ def _ensure_document_relationships(
         ORDER BY coalesce(chunk.index, chunk.chunk_id, 0) ASC, chunk.uid ASC
         WITH doc, collect(chunk) AS chunks
         UNWIND range(0, size(chunks) - 1) AS idx
-        WITH doc, chunks[idx] AS chunk, idx
+        WITH doc, chunks[idx] AS chunk, $chunk_payload[idx] AS meta
         SET chunk.source_path = $source_path,
-            chunk.chunk_id = idx + 1
+            chunk.chunk_id = idx + 1,
+            chunk.relative_path = meta.relative_path,
+            chunk.git_commit = coalesce(meta.git_commit, chunk.git_commit),
+            chunk.checksum = meta.checksum
         MERGE (doc)-[:HAS_CHUNK]->(chunk)
         """,
         {
@@ -908,28 +935,10 @@ def _ensure_document_relationships(
             "relative_path": relative_path,
             "git_commit": git_commit,
             "document_checksum": document_checksum,
+            "chunk_payload": chunk_payload,
         },
         database_=database,
     )
-
-    if chunk_payload:
-        driver.execute_query(
-            """
-            MATCH (doc:Document {source_path: $source_path})-[:HAS_CHUNK]->(chunk:Chunk)
-            WITH doc, chunk, $chunks AS metadata_list
-            UNWIND metadata_list AS metadata
-            WITH chunk, metadata
-            WHERE chunk.chunk_id = metadata.sequence
-            SET chunk.relative_path = metadata.relative_path,
-                chunk.git_commit = coalesce(metadata.git_commit, chunk.git_commit),
-                chunk.checksum = metadata.checksum
-            """,
-            {
-                "source_path": str(source_path),
-                "chunks": chunk_payload,
-            },
-            database_=database,
-        )
 
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
@@ -992,7 +1001,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             source_specs.append(
                 SourceSpec(
                     path=file_path,
-                    relative_path=_relative_to_repo(file_path),
+                    relative_path=_relative_to_repo(file_path, base=directory),
                     text=content,
                     checksum=_compute_checksum(content),
                 )
@@ -1026,59 +1035,35 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     run_ids: list[str | None] = []
     log_files: list[dict[str, Any]] = []
     log_chunks: list[dict[str, Any]] = []
-    processed_specs: list[tuple[SourceSpec, list[ChunkMetadata]]] = []
-
     reset_pending = bool(args.reset_database)
-
-    for spec in source_specs:
-        chunk_result = asyncio.run(splitter.run(spec.text))
-        chunk_metadata = _build_chunk_metadata(
-            chunk_result.chunks,
-            relative_path=spec.relative_path,
-            git_commit=git_commit,
-        )
-        processed_specs.append((spec, chunk_metadata))
-        try:
-            run_id = _execute_pipeline(
-                uri=uri,
-                auth=auth,
-                source_text=spec.text,
-                database=args.database,
-                embedder=embedder,
-                llm=llm,
-                splitter=splitter,
-                reset_database=reset_pending,
-            )
-        except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
-            raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-        except (Neo4jError, ClientError) as exc:
-            raise RuntimeError(f"Neo4j error: {exc}") from exc
-        run_ids.append(run_id)
-        reset_pending = False
-
-        log_files.append(
-            {
-                "source": str(spec.path),
-                "relative_path": spec.relative_path,
-                "checksum": spec.checksum,
-                "chunks": len(chunk_metadata),
-            }
-        )
-        for meta in chunk_metadata:
-            log_chunks.append(
-                {
-                    "source": str(spec.path),
-                    "relative_path": meta.relative_path,
-                    "chunk_index": meta.index,
-                    "chunk_id": meta.sequence,
-                    "checksum": meta.checksum,
-                    "git_commit": meta.git_commit,
-                }
-            )
 
     counts: Mapping[str, int] = {}
     with GraphDatabase.driver(uri, auth=auth) as driver:
-        for spec, chunk_metadata in processed_specs:
+        for spec in source_specs:
+            chunk_result = asyncio.run(splitter.run(spec.text))
+            chunk_metadata = _build_chunk_metadata(
+                chunk_result.chunks,
+                relative_path=spec.relative_path,
+                git_commit=git_commit,
+            )
+            try:
+                run_id = _execute_pipeline(
+                    uri=uri,
+                    auth=auth,
+                    source_text=spec.text,
+                    database=args.database,
+                    embedder=embedder,
+                    llm=llm,
+                    splitter=splitter,
+                    reset_database=reset_pending,
+                )
+            except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
+                raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+            except (Neo4jError, ClientError) as exc:
+                raise RuntimeError(f"Neo4j error: {exc}") from exc
+            run_ids.append(run_id)
+            reset_pending = False
+
             _ensure_document_relationships(
                 driver,
                 database=args.database,
@@ -1088,6 +1073,27 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                 document_checksum=spec.checksum,
                 chunks_metadata=chunk_metadata,
             )
+
+            log_files.append(
+                {
+                    "source": str(spec.path),
+                    "relative_path": spec.relative_path,
+                    "checksum": spec.checksum,
+                    "chunks": len(chunk_metadata),
+                }
+            )
+            for meta in chunk_metadata:
+                log_chunks.append(
+                    {
+                        "source": str(spec.path),
+                        "relative_path": meta.relative_path,
+                        "chunk_index": meta.index,
+                        "chunk_id": meta.sequence,
+                        "checksum": meta.checksum,
+                        "git_commit": meta.git_commit,
+                    }
+                )
+
         counts = _collect_counts(driver, database=args.database)
 
     duration_ms = int((time.perf_counter() - start) * 1000)

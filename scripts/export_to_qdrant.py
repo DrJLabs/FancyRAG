@@ -32,14 +32,15 @@ from fancyrag.utils import ensure_env
 
 def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
     """
-    Retrieve chunk records from Neo4j including chunk_id, chunk_index, text, embedding, and source_path.
-    
+    Retrieve chunk records from Neo4j including vector payload and metadata.
+
     Parameters:
         database (str | None): Optional Neo4j database name to execute the query against; if None the driver's default database is used.
-    
+
     Returns:
         list[dict[str, Any]]: A list of records where each dictionary contains the keys
-        'chunk_id', 'chunk_index', 'text', 'embedding', and 'source_path'.
+        'chunk_id', 'chunk_index', 'text', 'embedding', 'source_path', 'relative_path',
+        'git_commit', and 'checksum'.
     """
 
     records, _, _ = driver.execute_query(
