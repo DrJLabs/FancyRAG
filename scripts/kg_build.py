@@ -101,10 +101,32 @@ class SourceSpec:
     checksum: str
 
 
+class CachingFixedSizeSplitter(FixedSizeSplitter):
+    """Fixed-size splitter that caches results to avoid duplicate work."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._cache: dict[str, Any] = {}
+
+    async def run(self, text: str):  # type: ignore[override]
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
+        result = await super().run(text)
+        self._cache[text] = result
+        return result
+
+    def get_cached(self, text: str):
+        """Return the cached chunk result for ``text`` if available."""
+
+        return self._cache.get(text)
+
+
 @dataclass
 class ChunkMetadata:
     """Metadata captured for each chunk written to Neo4j/Qdrant."""
 
+    uid: str
     sequence: int
     index: int
     checksum: str
@@ -224,8 +246,12 @@ def _build_chunk_metadata(
     for sequence, chunk in enumerate(chunks, start=1):
         text = getattr(chunk, "text", "") or ""
         index = getattr(chunk, "index", sequence - 1)
+        uid = getattr(chunk, "uid", None)
+        if uid is None:
+            raise ValueError("chunk object missing uid; cannot attribute metadata")
         metadata.append(
             ChunkMetadata(
+                uid=uid,
                 sequence=sequence,
                 index=index,
                 checksum=_compute_checksum(text),
@@ -899,6 +925,9 @@ def _ensure_document_relationships(
     """
     chunk_payload = [
         {
+            "uid": meta.uid,
+            "sequence": meta.sequence,
+            "index": meta.index,
             "relative_path": meta.relative_path,
             "git_commit": meta.git_commit,
             "checksum": meta.checksum,
@@ -915,18 +944,20 @@ def _ensure_document_relationships(
             doc.git_commit = coalesce($git_commit, doc.git_commit),
             doc.checksum = $document_checksum
         WITH doc
-        MATCH (chunk:Chunk)
+        UNWIND $chunk_payload AS meta
+        MATCH (chunk:Chunk {uid: meta.uid})
         WHERE chunk.source_path IS NULL OR chunk.source_path = $source_path
-        WITH doc, chunk
-        ORDER BY coalesce(chunk.index, chunk.chunk_id, 0) ASC, chunk.uid ASC
-        WITH doc, collect(chunk) AS chunks
-        UNWIND range(0, size(chunks) - 1) AS idx
-        WITH doc, chunks[idx] AS chunk, $chunk_payload[idx] AS meta
+        WITH doc, chunk, meta
         SET chunk.source_path = $source_path,
-            chunk.chunk_id = idx + 1,
             chunk.relative_path = meta.relative_path,
             chunk.git_commit = coalesce(meta.git_commit, chunk.git_commit),
             chunk.checksum = meta.checksum
+        FOREACH (_ IN CASE WHEN chunk.chunk_id IS NULL THEN [1] ELSE [] END |
+            SET chunk.chunk_id = meta.sequence
+        )
+        FOREACH (_ IN CASE WHEN chunk.index IS NULL THEN [1] ELSE [] END |
+            SET chunk.index = meta.index
+        )
         MERGE (doc)-[:HAS_CHUNK]->(chunk)
         """,
         {
@@ -1026,7 +1057,9 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     shared_client = SharedOpenAIClient(settings)
     embedder = SharedOpenAIEmbedder(shared_client, settings)
     llm = SharedOpenAILLM(shared_client, settings)
-    splitter = FixedSizeSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    splitter = CachingFixedSizeSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
 
     uri = os.environ["NEO4J_URI"]
     auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
