@@ -15,7 +15,7 @@ from typing import Any, Iterable
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
 from qdrant_client import QdrantClient
-from qdrant_client import models as qmodels
+import qdrant_client.models as qmodels
 
 from cli.sanitizer import scrub_object
 from fancyrag.utils import ensure_env
@@ -83,6 +83,8 @@ def _coerce_point_id(value: Any, fallback: int) -> int | str:
 
     if value is None:
         return fallback
+    if isinstance(value, bool):
+        return str(value)
     if isinstance(value, int):
         return value
     if isinstance(value, str):

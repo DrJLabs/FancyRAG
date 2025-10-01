@@ -1,5 +1,3 @@
-# ruff: noqa
-
 from __future__ import annotations
 
 import json
@@ -192,8 +190,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_PASSWORD", "secret")
 
 
-def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
-    pytest.mark.usefixtures("env")
+def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
     source = tmp_path / "sample.txt"
     source.write_text("sample content", encoding="utf-8")
     log_path = tmp_path / "log.json"
@@ -213,7 +210,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda _: fake_client)
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
     monkeypatch.setattr(
         kg, "SimpleKGPipeline", lambda **kwargs: captured_pipeline.setdefault("pipeline", FakePipeline(**kwargs))
     )
@@ -223,8 +220,8 @@ def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
         created_drivers.append(driver)
         return driver
 
-    _patch_driver(monkeypatch, driver_factory)
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda _: settings))
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     log = kg.run(
         [
@@ -251,8 +248,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch) -> None:
     assert saved["status"] == "success"
 
 
-def test_run_handles_openai_failure(tmp_path, monkeypatch):
-    pytest.mark.usefixtures("env")
+def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001 - env fixture ensures auth vars
     source = tmp_path / "sample.txt"
     source.write_text("content", encoding="utf-8")
 
@@ -271,9 +267,9 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch):
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda _: FailingClient())
-    _patch_driver(monkeypatch, lambda *_: FakeDriver())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda _: settings))
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: FailingClient())
+    _patch_driver(monkeypatch, lambda *_, **__: FakeDriver())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
     monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -289,8 +285,7 @@ def test_missing_file_raises(env, monkeypatch):  # noqa: ARG001 - env fixture fo
 
 # --- Additional tests for scripts/kg_build.py (pytest) ---
 
-def test_parse_args_defaults() -> None:
-    monkeypatch = pytest.MonkeyPatch()
+def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEO4J_DATABASE", raising=False)
     args = kg._parse_args([])
     assert args.source == str(kg.DEFAULT_SOURCE)
@@ -298,7 +293,6 @@ def test_parse_args_defaults() -> None:
     assert args.chunk_overlap == kg.DEFAULT_CHUNK_OVERLAP
     assert args.database is None
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
-    monkeypatch.undo()
 
 def test_parse_args_overrides() -> None:
     args = kg._parse_args(
@@ -320,5 +314,49 @@ def test_parse_args_overrides() -> None:
     assert args.chunk_overlap == 7
     assert args.database == "neo4j"
     assert args.log_path == "/tmp/log.json"
+
+
+def test_sanitize_property_value_handles_only_none() -> None:
+    sanitized = kg._sanitize_property_value([None, None])
+    assert sanitized == []
+
+
+def test_sanitize_property_value_heterogeneous_list() -> None:
+    raw = [1, "a", 2]
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == raw
+
+
+def test_sanitize_property_value_subclass_primitives() -> None:
+    class FancyInt(int):
+        pass
+
+    raw = [FancyInt(1), FancyInt(0)]
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == [1, 0]
+
+
+def test_sanitize_property_value_mapping_sorted() -> None:
+    raw = {"b": 1, "a": 2}
+    sanitized = kg._sanitize_property_value(raw)
+    assert isinstance(sanitized, str)
+    assert json.loads(sanitized) == {"a": 2, "b": 1}
+
+
+def test_sanitize_property_value_arbitrary_object() -> None:
+    class Custom:
+        def __str__(self) -> str:
+            return "<custom>"
+
+    sanitized = kg._sanitize_property_value(Custom())
+    assert sanitized == "<custom>"
+
+
+def test_sanitizing_writer_handles_empty_list() -> None:
+    writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
+    sanitized = writer._sanitize_properties({"values": [None, None]})
+    assert sanitized == {"values": []}
 
 # ... rest of file unchanged ...

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 from neo4j.exceptions import Neo4jError
-from qdrant_client import models as qmodels
+import qdrant_client.models as qmodels
 
 # Import functions to test
 from scripts.export_to_qdrant import (
@@ -376,7 +376,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "skipped", "message": "No chunk nodes available to export"}
 
@@ -423,7 +423,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "error"}
 
@@ -473,7 +473,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -522,7 +522,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -572,7 +572,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -607,7 +607,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "error", "message": "Connection failed"}
 
@@ -659,7 +659,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -695,7 +695,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "skipped"}
 
@@ -731,7 +731,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         sanitized_log = {
             "timestamp": "2024-01-01T00:00:00Z",
@@ -788,7 +788,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -849,7 +849,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -903,7 +903,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 
@@ -956,7 +956,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         def scrub_passthrough(log):
             return log
@@ -1012,7 +1012,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "error"}
 
@@ -1060,7 +1060,7 @@ class TestMain:
         mock_artifacts_dir = Mock()
         mock_path.return_value = mock_artifacts_dir
         mock_file = Mock()
-        mock_artifacts_dir.__truediv__.return_value = mock_file
+        mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
         mock_scrub.return_value = {"status": "success"}
 

@@ -24,7 +24,8 @@ class _StubQdrantClient:  # pragma: no cover - import stub
 
 
 stub_qdrant.QdrantClient = _StubQdrantClient
-sys.modules.setdefault("qdrant_client", stub_qdrant)
+if util.find_spec("qdrant_client") is None:
+    sys.modules.setdefault("qdrant_client", stub_qdrant)
 
 stub_openai_client = ModuleType("cli.openai_client")
 
