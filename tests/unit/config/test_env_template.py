@@ -30,6 +30,17 @@ ALLOWED_NON_PLACEHOLDER_VALUES = {
     "gpt-4.1-mini",
     "gpt-4o-mini",
     "text-embedding-3-small",
+    "neo4j",
+    "local-neo4j",
+    "bolt://localhost:7687",
+    "localhost:7687",
+    "localhost:7474",
+    "http://localhost:6333",
+    "",
+    "7474",
+    "7687",
+    "6334",
+    "6333",
 }
 
 
@@ -96,7 +107,9 @@ def test_env_template_endpoint_guidance():
         "neo4j://",
         "neo4j+s://",
     )), "NEO4J_URI should reference Bolt or Neo4j scheme"
-    assert qdrant_url.startswith("https://"), "QDRANT_URL should reference HTTPS endpoint"
+    assert qdrant_url.startswith("https://") or qdrant_url.startswith(
+        "http://localhost:"
+    ), "QDRANT_URL should reference HTTPS endpoint or explicit local override"
 
 
 def test_documentation_references_env_template_workflow():

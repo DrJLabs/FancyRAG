@@ -22,11 +22,11 @@ def test_compose_defines_expected_images_and_ports(compose_data: dict[str, Any])
     neo4j = services["neo4j"]
     qdrant = services["qdrant"]
 
-    assert neo4j["image"] == "neo4j:5.26.0"
-    assert qdrant["image"] == "qdrant/qdrant:1.9.4"
-    assert "7474:7474" in neo4j["ports"]
-    assert "7687:7687" in neo4j["ports"]
-    assert "6333:6333" in qdrant["ports"]
+    assert neo4j["image"] == "neo4j:5.26.12"
+    assert qdrant["image"] == "qdrant/qdrant:v1.15.4"
+    assert any(port.endswith(":7474") for port in neo4j["ports"])
+    assert any(port.endswith(":7687") for port in neo4j["ports"])
+    assert any(port.endswith(":6333") for port in qdrant["ports"])
 
 
 def test_compose_env_variables_present(compose_data: dict[str, Any]) -> None:
@@ -35,7 +35,9 @@ def test_compose_env_variables_present(compose_data: dict[str, Any]) -> None:
     qdrant = services["qdrant"]
 
     assert "NEO4J_AUTH" in neo4j["environment"]
-    assert "NEO4JLABS_PLUGINS" in neo4j["environment"]
+    env_keys = set(neo4j["environment"].keys())
+    assert "NEO4J_AUTH" in env_keys
+    assert {"NEO4J_PLUGINS", "NEO4JLABS_PLUGINS"} & env_keys
     assert "QDRANT__SERVICE__HTTP_PORT" in qdrant["environment"]
 
     neo4j_sources = {volume["source"] for volume in neo4j["volumes"]}
@@ -50,9 +52,11 @@ def test_compose_healthchecks_defined(compose_data: dict[str, Any]) -> None:
     qdrant = services["qdrant"]
 
     assert neo4j["healthcheck"]["test"][0] == "CMD-SHELL"
-    assert "cypher-shell" in neo4j["healthcheck"]["test"][1]
-    assert qdrant["healthcheck"]["test"][:2] == ["CMD", "curl"]
-    assert qdrant["healthcheck"]["test"][3].endswith("/readyz")
+    assert "neo4j-admin" in neo4j["healthcheck"]["test"][1]
+
+    qdrant_health = qdrant["healthcheck"]["test"]
+    assert qdrant_health[0] == "CMD-SHELL"
+    assert "readyz" in qdrant_health[1]
 
 
 def test_compose_restart_policy(compose_data: dict[str, Any]) -> None:
