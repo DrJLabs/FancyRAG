@@ -70,7 +70,7 @@ jobs:
                 if any(value.startswith(prefix) for prefix in PLACEHOLDER_PREFIXES):
                     continue
                 print(f"{key}={value}")
-PY
+          PY
           grep NEO4J_PASSWORD .env
 
       - name: Validate compose configuration
