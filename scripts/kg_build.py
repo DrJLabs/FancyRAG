@@ -112,7 +112,19 @@ class ChunkMetadata:
 
 
 def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
-    """Load and validate the default GraphSchema definition from disk."""
+    """
+    Load and validate the default GraphSchema definition from disk.
+    
+    Parameters:
+        path (Path): Path to the JSON schema file to load.
+    
+    Returns:
+        graph_schema (GraphSchema): A validated GraphSchema instance constructed from the file contents.
+    
+    Raises:
+        RuntimeError: If the schema file is missing or contains invalid JSON.
+        pydantic.ValidationError: If the loaded JSON does not conform to the GraphSchema model.
+    """
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -135,7 +147,12 @@ PRIMITIVE_TYPES = (str, int, float, bool)
 
 
 def _resolve_git_commit() -> str | None:
-    """Resolve the current git commit SHA if available."""
+    """
+    Resolve the current Git commit SHA for the repository containing the working directory.
+    
+    Returns:
+        commit (str | None): The full commit SHA string if Git is available and a commit is found, `None` if Git is not installed, the command fails, or the output is empty.
+    """
 
     try:
         result = subprocess.run(
@@ -151,7 +168,15 @@ def _resolve_git_commit() -> str | None:
 
 
 def _relative_to_repo(path: Path) -> str:
-    """Return a repo-relative path when possible."""
+    """
+    Produce a repository-relative path string for the given Path when it is inside the current working directory.
+    
+    Parameters:
+        path (Path): Path to convert.
+    
+    Returns:
+        str: The path relative to the current working directory as a string, or the path's basename if it cannot be made relative.
+    """
 
     try:
         return str(path.resolve().relative_to(Path.cwd()))
@@ -160,7 +185,16 @@ def _relative_to_repo(path: Path) -> str:
 
 
 def _discover_source_files(directory: Path, patterns: Iterable[str]) -> list[Path]:
-    """Return deterministically ordered files matching the given glob patterns."""
+    """
+    Collect files under `directory` that match any of the provided glob `patterns`, and return them in a deterministic order.
+    
+    Parameters:
+        directory (Path): Base directory to search from; patterns are applied recursively relative to this directory.
+        patterns (Iterable[str]): Glob patterns (as accepted by Path.rglob) used to match files.
+    
+    Returns:
+        list[Path]: Matched file paths sorted by their path relative to `directory`.
+    """
 
     base = directory.resolve()
     candidates: set[Path] = set()
@@ -171,7 +205,13 @@ def _discover_source_files(directory: Path, patterns: Iterable[str]) -> list[Pat
 
 
 def _read_directory_source(path: Path) -> str | None:
-    """Read UTF-8 text from `path`, skipping binary or empty files."""
+    """
+    Read text from path as UTF-8 and skip files that are binary or empty.
+    
+    Returns:
+        str: File contents when readable and non-empty.
+        None: When the file cannot be decoded as UTF-8 or contains only whitespace.
+    """
 
     try:
         content = path.read_text(encoding="utf-8")
@@ -185,6 +225,15 @@ def _read_directory_source(path: Path) -> str | None:
 
 
 def _compute_checksum(value: str) -> str:
+    """
+    Compute the SHA-256 checksum of the given text.
+    
+    Parameters:
+        value (str): Input text to checksum.
+    
+    Returns:
+        str: Hexadecimal SHA-256 digest of the UTF-8 encoding of `value`.
+    """
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -194,6 +243,22 @@ def _build_chunk_metadata(
     relative_path: str,
     git_commit: str | None,
 ) -> list[ChunkMetadata]:
+    """
+    Builds metadata for each chunk in a sequence.
+    
+    Parameters:
+        chunks (Sequence[Any]): Iterable of chunk-like objects. Each object may provide a `text` attribute (string) used to compute the chunk checksum and an optional `index` attribute (int). If `index` is missing, the zero-based index is derived from the chunk's position in `chunks`.
+        relative_path (str): Repository-relative path to associate with every generated chunk metadata.
+        git_commit (str | None): Git commit SHA to associate with every generated chunk metadata, or `None` if unavailable.
+    
+    Returns:
+        list[ChunkMetadata]: A list of ChunkMetadata objects corresponding to `chunks`. Each entry contains:
+            - `sequence`: 1-based ordinal position of the chunk in `chunks`.
+            - `index`: the chunk's provided index or the derived zero-based index.
+            - `checksum`: SHA-256 checksum computed from the chunk's text (empty string if text is missing).
+            - `relative_path`: the provided `relative_path`.
+            - `git_commit`: the provided `git_commit` (or `None`).
+    """
     metadata: list[ChunkMetadata] = []
     for sequence, chunk in enumerate(chunks, start=1):
         text = getattr(chunk, "text", "") or ""
@@ -352,14 +417,13 @@ class SanitizingNeo4jWriter(Neo4jWriter):
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
-    Parse command-line arguments for the KG build script.
+    Parse CLI options for the KG build script.
     
-    Accepts an optional list of argument strings (typically None to use sys.argv) and returns a Namespace containing the parsed options:
-    - source: path to the sample content to ingest.
-    - chunk_size: character chunk size for the text splitter.
-    - chunk_overlap: character overlap between chunks.
-    - database: optional Neo4j database name (None uses server default).
-    - log_path: file path for the structured JSON run log.
+    Parameters:
+    	argv (Sequence[str] | None): List of argument strings to parse. If None, the process's command-line arguments are used.
+    
+    Returns:
+    	argparse.Namespace: Parsed options including `source`, `source_dir`, `include_patterns`, `profile`, `chunk_size`, `chunk_overlap`, `database`, `log_path`, and `reset_database`.
     """
     parser = argparse.ArgumentParser(
         description="Run the SimpleKGPipeline against local sample content, persisting results to Neo4j with structured logging and retries.",
@@ -863,13 +927,17 @@ def _ensure_document_relationships(
     chunks_metadata: Sequence[ChunkMetadata],
 ) -> None:
     """
-    Ensure a Document node exists for the given source file and link all Chunk nodes to it with HAS_CHUNK relationships.
+    Ensure a Document node exists for the given source_path and attach all matching Chunk nodes to it in a stable order.
     
-    Creates or merges a Document node with its name and title set to the source file name on creation, sets each Chunk.node's `source_path` property to the provided path, assigns a sequential `chunk_id` when one is not already present, and creates a HAS_CHUNK relationship from the Document to each Chunk.
+    Merges or creates a Document node keyed by source_path (using the file name as name/title on create), updates the document's relative_path, git_commit (if provided), and checksum. For matching Chunk nodes (where chunk.source_path is null or equals the provided source_path) sets chunk.source_path, assigns a sequential chunk_id based on a deterministic ordering, and creates HAS_CHUNK relationships from the Document to each Chunk. If per-chunk metadata is provided, apply each metadata entry (matched by sequence) to set the chunk's relative_path, git_commit (when present), and checksum.
     
     Parameters:
-        database (str | None): Optional Neo4j database name to execute the query against; pass None to use the default.
-        source_path (Path): Filesystem path of the source document; used as the Document.source_path value and to derive the Document.name/title.
+        database (str | None): Optional Neo4j database name to run the queries against; pass None to use the default.
+        source_path (Path): Filesystem path used as the Document.source_path key and to derive Document.name/title.
+        relative_path (str): Repository-relative path to store on the Document and to propagate to chunks when metadata is applied.
+        git_commit (str | None): Git commit hash to associate with the Document and chunks when available.
+        document_checksum (str): Checksum value to set on the Document.checksum property.
+        chunks_metadata (Sequence[ChunkMetadata]): Per-chunk metadata entries; each entry's sequence is matched to the chunk_id to set that chunk's relative_path, git_commit, and checksum.
     """
     chunk_payload = [
         {

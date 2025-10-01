@@ -213,6 +213,15 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
+        """
+        Create a FakePipeline instance from the given keyword arguments and register it in the module-level `pipelines` list.
+        
+        Parameters:
+            kwargs: Keyword arguments forwarded to the FakePipeline constructor.
+        
+        Returns:
+            The created FakePipeline instance.
+        """
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
@@ -220,6 +229,16 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
+        """
+        Create a new FakeDriver, record it in the module-level created_drivers list, and return it.
+        
+        Parameters:
+            *_args: Ignored positional arguments.
+            **_kwargs: Ignored keyword arguments.
+        
+        Returns:
+            driver (FakeDriver): The newly created FakeDriver instance that was appended to created_drivers.
+        """
         driver = FakeDriver()
         created_drivers.append(driver)
         return driver
@@ -258,6 +277,11 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
 
 
 def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    """
+    Verifies that running the ingestion pipeline without the reset flag does not perform a database reset.
+    
+    Sets up a temporary source file, a fake OpenAI client, a factory that records created pipelines and drivers, and loads test OpenAI settings. Runs kg.run without the reset-database option and asserts that at least one Neo4j driver was created and that no "DETACH DELETE" queries were executed against any created driver.
+    """
     source = tmp_path / "sample.txt"
     source.write_text("sample content", encoding="utf-8")
     log_path = tmp_path / "log.json"
@@ -280,6 +304,15 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
+        """
+        Create a FakePipeline instance from the given keyword arguments and register it in the module-level `pipelines` list.
+        
+        Parameters:
+            kwargs: Keyword arguments forwarded to the FakePipeline constructor.
+        
+        Returns:
+            The created FakePipeline instance.
+        """
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
@@ -287,6 +320,16 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
     monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
+        """
+        Create a new FakeDriver, record it in the module-level created_drivers list, and return it.
+        
+        Parameters:
+            *_args: Ignored positional arguments.
+            **_kwargs: Ignored keyword arguments.
+        
+        Returns:
+            driver (FakeDriver): The newly created FakeDriver instance that was appended to created_drivers.
+        """
         driver = FakeDriver()
         created_drivers.append(driver)
         return driver
@@ -420,6 +463,15 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
     monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
+        """
+        Create a FakePipeline instance from the given keyword arguments and register it in the module-level `pipelines` list.
+        
+        Parameters:
+            kwargs: Keyword arguments forwarded to the FakePipeline constructor.
+        
+        Returns:
+            The created FakePipeline instance.
+        """
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
@@ -427,6 +479,16 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
     monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
+        """
+        Create a new FakeDriver, record it in the module-level created_drivers list, and return it.
+        
+        Parameters:
+            *_args: Ignored positional arguments.
+            **_kwargs: Ignored keyword arguments.
+        
+        Returns:
+            driver (FakeDriver): The newly created FakeDriver instance that was appended to created_drivers.
+        """
         driver = FakeDriver()
         created_drivers.append(driver)
         return driver
