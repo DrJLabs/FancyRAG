@@ -54,22 +54,22 @@ jobs:
           env_path.write_text(''.join(lines))
           PY
           python - <<'PY' >> "$GITHUB_ENV"
-            import os
-            from pathlib import Path
+              import os
+              from pathlib import Path
 
-            PLACEHOLDER_PREFIXES = ("YOUR_",)
+              PLACEHOLDER_PREFIXES = ("YOUR_",)
 
-            for raw in Path('.env').read_text().splitlines():
-                line = raw.strip()
-                if not line or line.startswith('#'):
-                    continue
-                key, _, remainder = line.partition('=')
-                value = remainder.split('#', 1)[0].strip()
-                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                    value = value[1:-1]
-                if any(value.startswith(prefix) for prefix in PLACEHOLDER_PREFIXES):
-                    continue
-                print(f"{key}={value}")
+              for raw in Path('.env').read_text().splitlines():
+                  line = raw.strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  key, _, remainder = line.partition('=')
+                  value = remainder.split('#', 1)[0].strip()
+                  if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                      value = value[1:-1]
+                  if any(value.startswith(prefix) for prefix in PLACEHOLDER_PREFIXES):
+                      continue
+                  print(f"{key}={value}")
           PY
           grep NEO4J_PASSWORD .env
 
