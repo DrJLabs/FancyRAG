@@ -106,20 +106,27 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._cache: dict[str, Any] = {}
+        self._cache: dict[str | tuple[str, ...], Any] = {}
 
-    async def run(self, text: str):  # type: ignore[override]
-        cached = self._cache.get(text)
+    @staticmethod
+    def _cache_key(text: str | Sequence[str]) -> str | tuple[str, ...]:
+        if isinstance(text, str):
+            return text
+        return tuple(text)
+
+    async def run(self, text: str | Sequence[str]):  # type: ignore[override]
+        key = self._cache_key(text)
+        cached = self._cache.get(key)
         if cached is not None:
             return cached
         result = await super().run(text)
-        self._cache[text] = result
+        self._cache[key] = result
         return result
 
-    def get_cached(self, text: str):
+    def get_cached(self, text: str | Sequence[str]):
         """Return the cached chunk result for ``text`` if available."""
 
-        return self._cache.get(text)
+        return self._cache.get(self._cache_key(text))
 
 
 @dataclass
@@ -937,17 +944,21 @@ def _ensure_document_relationships(
 
     driver.execute_query(
         """
+        // Create or reuse the Document node representing this source file
         MERGE (doc:Document {source_path: $source_path})
           ON CREATE SET doc.name = $document_name,
                         doc.title = $document_name
+        // Refresh document-level provenance on every ingestion
         SET doc.relative_path = $relative_path,
             doc.git_commit = coalesce($git_commit, doc.git_commit),
             doc.checksum = $document_checksum
         WITH doc
+        // Process each chunk emitted by the current pipeline execution
         UNWIND $chunk_payload AS meta
+        // Chunk.uid values are globally unique per pipeline execution, so we can safely match on them
         MATCH (chunk:Chunk {uid: meta.uid})
-        WHERE chunk.source_path IS NULL OR chunk.source_path = $source_path
         WITH doc, chunk, meta
+        // Update per-chunk provenance while preserving existing identifiers when re-ingesting
         SET chunk.source_path = $source_path,
             chunk.relative_path = meta.relative_path,
             chunk.git_commit = coalesce(meta.git_commit, chunk.git_commit),
@@ -958,6 +969,7 @@ def _ensure_document_relationships(
         FOREACH (_ IN CASE WHEN chunk.index IS NULL THEN [1] ELSE [] END |
             SET chunk.index = meta.index
         )
+        // Ensure the Document ↔ Chunk relationship exists
         MERGE (doc)-[:HAS_CHUNK]->(chunk)
         """,
         {
