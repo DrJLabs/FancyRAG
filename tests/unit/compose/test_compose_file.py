@@ -36,7 +36,6 @@ def test_compose_env_variables_present(compose_data: dict[str, Any]) -> None:
 
     assert "NEO4J_AUTH" in neo4j["environment"]
     env_keys = set(neo4j["environment"].keys())
-    assert "NEO4J_AUTH" in env_keys
     assert {"NEO4J_PLUGINS", "NEO4JLABS_PLUGINS"} & env_keys
     assert "QDRANT__SERVICE__HTTP_PORT" in qdrant["environment"]
 
