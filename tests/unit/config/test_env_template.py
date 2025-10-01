@@ -98,6 +98,14 @@ def test_env_template_models_document_optional_upgrade():
 
 
 def test_env_template_endpoint_guidance():
+    """
+    Validate that the environment template specifies allowed endpoint schemes for Neo4j and Qdrant.
+    
+    Checks that the NEO4J_URI value uses a Bolt or Neo4j scheme (bolt://, bolt+s://, neo4j://, neo4j+s://) and that the QDRANT_URL value is either an HTTPS endpoint or an explicit localhost HTTP override (http://localhost:<port>).
+    
+    Raises:
+        AssertionError: If NEO4J_URI does not start with an accepted Bolt/Neo4j scheme, or if QDRANT_URL is neither an HTTPS URL nor an explicit http://localhost:<port> URL.
+    """
     keys = _load_template_dict()
     neo4j_uri = _sanitize_value(keys["NEO4J_URI"])
     qdrant_url = _sanitize_value(keys["QDRANT_URL"])
