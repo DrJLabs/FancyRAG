@@ -40,19 +40,19 @@ jobs:
         run: |
           cp .env.example .env
           python - <<'PY'
-import os
-from pathlib import Path
+          import os
+          from pathlib import Path
 
-env_path = Path('.env')
-lines = []
-with env_path.open() as fh:
-    for line in fh:
-        if line.startswith('OPENAI_API_KEY='):
-            lines.append(f"OPENAI_API_KEY=\"{os.environ['OPENAI_API_KEY']}\"\n")
-        else:
-            lines.append(line)
-env_path.write_text(''.join(lines))
-PY
+          env_path = Path('.env')
+          lines = []
+          with env_path.open() as fh:
+              for line in fh:
+                  if line.startswith('OPENAI_API_KEY='):
+                      lines.append(f"OPENAI_API_KEY=\"{os.environ['OPENAI_API_KEY']}\"\n")
+                  else:
+                      lines.append(line)
+          env_path.write_text(''.join(lines))
+          PY
 
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config

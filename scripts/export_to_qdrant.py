@@ -121,7 +121,7 @@ def main() -> None:
     ensure_env("NEO4J_USERNAME")
     ensure_env("NEO4J_PASSWORD")
 
-    qdrant_url = os.environ.get("QDRANT_URL")
+    qdrant_url = os.environ["QDRANT_URL"]
     qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
     neo4j_uri = os.environ["NEO4J_URI"]
     neo4j_auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
@@ -139,9 +139,14 @@ def main() -> None:
                 status = "skipped"
                 message = "No chunk nodes available to export"
             else:
-                dimensions = len(chunks[0]["embedding"] or [])
-                if dimensions == 0:
+                embedding = chunks[0].get("embedding")
+                if embedding is None:
                     raise RuntimeError("Chunk embeddings missing or empty")
+                if not isinstance(embedding, (list, tuple)):
+                    raise RuntimeError("Chunk embeddings must be provided as a sequence")
+                if not embedding:
+                    raise RuntimeError("Chunk embeddings missing or empty")
+                dimensions = len(embedding)
 
                 client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
                 if client.collection_exists(args.collection):
@@ -161,8 +166,17 @@ def main() -> None:
                     for idx, record in enumerate(batch):
                         fallback_id = exported + idx + 1
                         chunk_id = _coerce_point_id(record.get("chunk_id"), fallback=fallback_id)
+                        embedding = record.get("embedding")
+                        if embedding is None:
+                            raise RuntimeError(f"Chunk {chunk_id} is missing its embedding")
+                        if not isinstance(embedding, (list, tuple)):
+                            raise RuntimeError(f"Chunk {chunk_id} embedding must be a sequence")
+                        if len(embedding) != dimensions:
+                            raise RuntimeError(
+                                f"Chunk {chunk_id} embedding length {len(embedding)} does not match expected dimensions {dimensions}"
+                            )
                         ids.append(chunk_id)
-                        vectors.append(record["embedding"])
+                        vectors.append(list(embedding))
                         payloads.append(
                             {
                                 "chunk_id": chunk_id,
