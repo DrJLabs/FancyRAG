@@ -16,7 +16,7 @@ from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
 from qdrant_client import QdrantClient
 
-from cli.openai_client import SharedOpenAIClient
+from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from config.settings import OpenAISettings
 from fancyrag.utils import ensure_env
@@ -133,10 +133,10 @@ def main() -> None:
 
     settings = _load_settings()
     client = SharedOpenAIClient(settings)
-    embedding_result = client.embedding(input_text=args.question)
-    query_vector = embedding_result.vector
 
-    qdrant_client = QdrantClient(url=os.environ.get("QDRANT_URL"), api_key=os.environ.get("QDRANT_API_KEY") or None)
+    qdrant_url = os.environ["QDRANT_URL"]
+    qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
+    qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
 
     neo4j_uri = os.environ["NEO4J_URI"]
     neo4j_auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
@@ -148,6 +148,9 @@ def main() -> None:
     matches: list[dict[str, Any]] = []
 
     try:
+        embedding_result = client.embedding(input_text=args.question)
+        query_vector = embedding_result.vector
+
         points = _query_qdrant(
             qdrant_client,
             collection=args.collection,
@@ -170,6 +173,10 @@ def main() -> None:
                         }
                     )
                     matches.append(context)
+    except OpenAIClientError as exc:
+        status = "error"
+        message = getattr(exc, "remediation", None) or str(exc)
+        print(f"error: {exc}", file=sys.stderr)
     except (Neo4jError, Exception) as exc:  # pragma: no cover - defensive guard
         status = "error"
         message = str(exc)

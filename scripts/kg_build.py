@@ -200,7 +200,7 @@ class SanitizingNeo4jWriter(Neo4jWriter):
     async def run(  # type: ignore[override]
         self,
         graph,
-        lexical_graph_config: LexicalGraphConfig = LexicalGraphConfig(),
+        lexical_graph_config: LexicalGraphConfig | None = None,
     ) -> KGWriterModel:
         """
         Run the writer against the provided lexical graph using the given configuration.
@@ -211,6 +211,8 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         Returns:
         	KGWriterModel: Model summarizing the result of the write operation (nodes/relationships created or updated and related metadata).
         """
+        if lexical_graph_config is None:
+            lexical_graph_config = LexicalGraphConfig()
         return await super().run(graph, lexical_graph_config)
 
 

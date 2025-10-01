@@ -98,7 +98,7 @@ all_healthy() {
 # wait_for_health polls the compose services until every service is running and healthy, then prints the status table and exits successfully.
 # On timeout it prints an error, outputs the status table, and returns a non-zero status.
 wait_for_health() {
-  local max_attempts=50
+  local max_attempts=30
   local sleep_seconds=5
   local attempt=1
   while (( attempt <= max_attempts )); do

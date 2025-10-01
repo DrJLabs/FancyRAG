@@ -99,24 +99,7 @@ def test_minimal_path_smoke() -> None:
         if up_result.returncode != 0:
             pytest.skip(f"docker compose up failed: {up_result.stdout.strip()}")
         stack_started = True
-        status_result = run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env, check=False)
-        if status_result.returncode != 0:
-            logs = run_command(
-                "docker",
-                "compose",
-                "-f",
-                env["COMPOSE_FILE"],
-                "logs",
-                "neo4j",
-                env=env,
-                check=False,
-            )
-            pytest.fail(
-                "Stack status check failed:\n"
-                f"{status_result.stdout}\n"
-                "--- neo4j logs ---\n"
-                f"{logs.stdout}"
-            )
+        run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env)
 
         # Execute minimal path scripts sequentially.
         python = sys.executable

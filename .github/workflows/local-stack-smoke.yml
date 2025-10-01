@@ -38,25 +38,29 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          cat <<'EOF' > .env
-          OPENAI_API_KEY="${OPENAI_API_KEY}"
-          OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-          OPENAI_MODEL="gpt-4.1-mini"
-          OPENAI_MAX_ATTEMPTS=3
-          OPENAI_BACKOFF_SECONDS=0.5
-          OPENAI_ENABLE_FALLBACK=true
-          NEO4J_USERNAME="neo4j"
-          NEO4J_PASSWORD="local-neo4j"
-          NEO4J_URI="bolt://localhost:7687"
-          NEO4J_BOLT_ADVERTISED_ADDRESS="localhost:7687"
-          NEO4J_HTTP_ADVERTISED_ADDRESS="localhost:7474"
-          NEO4J_HTTP_PORT="7474"
-          NEO4J_BOLT_PORT="7687"
-          QDRANT_URL="http://localhost:6333"
-          QDRANT_API_KEY=""
-          QDRANT_HTTP_PORT="6333"
-          QDRANT_GRPC_PORT="6334"
-          EOF
+          cp .env.example .env
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          env_path = Path('.env')
+          lines = []
+          with env_path.open() as fh:
+              for raw_line in fh:
+                  line = raw_line.rstrip('\n')
+                  if line.startswith('OPENAI_API_KEY='):
+                      secret = os.environ.get('OPENAI_API_KEY', '')
+                      lines.append(f'OPENAI_API_KEY="{secret}"')
+                  elif line.startswith('OPENAI_MAX_ATTEMPTS='):
+                      lines.append('OPENAI_MAX_ATTEMPTS=3  # default 3 attempts total')
+                  elif line.startswith('OPENAI_BACKOFF_SECONDS='):
+                      lines.append('OPENAI_BACKOFF_SECONDS=0.5  # default 0.5s base delay')
+                  elif line.startswith('OPENAI_ENABLE_FALLBACK='):
+                      lines.append('OPENAI_ENABLE_FALLBACK=true  # set to true to enable fallback model selection')
+                  else:
+                      lines.append(line)
+          env_path.write_text('\n'.join(lines) + '\n')
+          PY
           cat .env >> "$GITHUB_ENV"
 
       - name: Validate compose configuration
