@@ -30,12 +30,25 @@ def test_compose_defines_expected_images_and_ports(compose_data: dict[str, Any])
 
 
 def test_compose_env_variables_present(compose_data: dict[str, Any]) -> None:
+    """
+    Validate that the docker-compose data declares required environment variables and volume sources for the neo4j and qdrant services.
+    
+    This test asserts that:
+    - The neo4j service environment contains `NEO4J_AUTH` and at least one of `NEO4J_PLUGINS` or `NEO4JLABS_PLUGINS`.
+    - The qdrant service environment contains `QDRANT__SERVICE__HTTP_PORT`.
+    - The neo4j volumes include the source "./.data/neo4j/data".
+    - The qdrant volumes include the source "./.data/qdrant/storage".
+    
+    Parameters:
+        compose_data (dict[str, Any]): Parsed docker-compose YAML as a mapping with a top-level "services" key.
+    """
     services = compose_data["services"]
     neo4j = services["neo4j"]
     qdrant = services["qdrant"]
 
     assert "NEO4J_AUTH" in neo4j["environment"]
     env_keys = set(neo4j["environment"].keys())
+    assert "NEO4J_AUTH" in env_keys
     assert {"NEO4J_PLUGINS", "NEO4JLABS_PLUGINS"} & env_keys
     assert "QDRANT__SERVICE__HTTP_PORT" in qdrant["environment"]
 
@@ -46,6 +59,16 @@ def test_compose_env_variables_present(compose_data: dict[str, Any]) -> None:
 
 
 def test_compose_healthchecks_defined(compose_data: dict[str, Any]) -> None:
+    """
+    Verify that Neo4j and Qdrant services define expected healthchecks in the compose data.
+    
+    Checks:
+    - Neo4j healthcheck `test` begins with `"CMD-SHELL"` and the command contains `"neo4j-admin"`.
+    - Qdrant healthcheck `test` begins with `"CMD-SHELL"` and the command contains `"readyz"`.
+    
+    Parameters:
+        compose_data (dict[str, Any]): Parsed docker-compose YAML as a mapping (the fixture-provided compose file data).
+    """
     services = compose_data["services"]
     neo4j = services["neo4j"]
     qdrant = services["qdrant"]
