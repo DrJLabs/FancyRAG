@@ -1,4 +1,4 @@
-# ruff: noqa
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -289,8 +289,7 @@ def test_missing_file_raises(env, monkeypatch):  # noqa: ARG001 - env fixture fo
 
 # --- Additional tests for scripts/kg_build.py (pytest) ---
 
-def test_parse_args_defaults() -> None:
-    monkeypatch = pytest.MonkeyPatch()
+def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEO4J_DATABASE", raising=False)
     args = kg._parse_args([])
     assert args.source == str(kg.DEFAULT_SOURCE)
@@ -298,7 +297,6 @@ def test_parse_args_defaults() -> None:
     assert args.chunk_overlap == kg.DEFAULT_CHUNK_OVERLAP
     assert args.database is None
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
-    monkeypatch.undo()
 
 def test_parse_args_overrides() -> None:
     args = kg._parse_args(

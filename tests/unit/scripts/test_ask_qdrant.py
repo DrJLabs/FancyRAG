@@ -66,8 +66,10 @@ def _setup_shared_client(monkeypatch, *, vector):
     class FakeClient:
         def __init__(self, settings):
             self.settings = settings
+            self.inputs: list[str] = []
 
-        def embedding(self, *, input_text: str):  # noqa: ARG002 - signature parity
+        def embedding(self, *, input_text: str):
+            self.inputs.append(input_text)
             return SimpleNamespace(vector=vector)
 
     monkeypatch.setattr(ask, "SharedOpenAIClient", lambda settings: FakeClient(settings))
@@ -75,14 +77,15 @@ def _setup_shared_client(monkeypatch, *, vector):
 
 def _setup_driver(monkeypatch, record):
     class FakeDriver:
-        def execute_query(self, query, params, database_=None):  # noqa: ARG002
+        def execute_query(self, query, params, database_=None):
+            _ = database_
             return ([{**record, "chunk_id": params["chunk_id"]}], None, None)
 
     class FakeDriverCtx:
         def __enter__(self):
             return FakeDriver()
 
-        def __exit__(self, exc_type, exc, tb):  # noqa: ARG002
+        def __exit__(self, _exc_type, _exc, _tb):
             return False
 
     monkeypatch.setattr(ask.GraphDatabase, "driver", lambda uri, auth: FakeDriverCtx())
@@ -145,10 +148,11 @@ def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(ask, "OpenAIClientError", FakeOpenAIError)
 
     class FailingClient:
-        def __init__(self, settings):  # noqa: ARG002
-            pass
+        def __init__(self, settings):
+            self.settings = settings
 
-        def embedding(self, *, input_text: str):  # noqa: ARG002
+        def embedding(self, *, input_text: str):
+            self.last_question = input_text
             raise FakeOpenAIError("boom", remediation="try again")
 
     monkeypatch.setattr(ask, "SharedOpenAIClient", lambda settings: FailingClient(settings))
