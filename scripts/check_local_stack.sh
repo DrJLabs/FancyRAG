@@ -77,6 +77,47 @@ qdrant_ready() {
   curl --fail --silent --show-error "$readyz" >/dev/null 2>&1
 }
 
+# neo4j_port_ready attempts to open a TCP connection to the Neo4j Bolt port
+# exposed by the compose stack. Returns success when the socket accepts
+# connections so clients can proceed safely.
+neo4j_port_ready() {
+  local python_cmd=${PYTHON_CMD:-python3}
+  if ! command -v "${python_cmd}" >/dev/null 2>&1; then
+    python_cmd=python
+  fi
+  if ! command -v "${python_cmd}" >/dev/null 2>&1; then
+    return 1
+  fi
+  "${python_cmd}" <<'PY'
+import os
+import socket
+import sys
+from urllib.parse import urlparse
+
+def parse_endpoint(raw):
+    if '://' in raw:
+        parsed = urlparse(raw)
+        host = parsed.hostname or 'localhost'
+        port = parsed.port or 7687
+        return host, port
+    if ':' in raw:
+        host, port = raw.split(':', 1)
+        host = host or 'localhost'
+        return host, int(port or '7687')
+    return raw or 'localhost', 7687
+
+uri = os.environ.get('NEO4J_URI') or 'bolt://localhost:7687'
+host, port = parse_endpoint(uri)
+
+try:
+    with socket.create_connection((host, int(port)), timeout=2):
+        pass
+except OSError:
+    sys.exit(1)
+sys.exit(0)
+PY
+}
+
 # all_healthy checks whether every service reported by status_table is in a running state and, when a health value is present, that it is `healthy`.
 # Exits with status 0 if all services are acceptable, 1 if there are no services or any service is not running/healthy.
 all_healthy() {
@@ -102,7 +143,7 @@ wait_for_health() {
   local sleep_seconds=5
   local attempt=1
   while (( attempt <= max_attempts )); do
-    if all_healthy && qdrant_ready; then
+    if all_healthy && qdrant_ready && neo4j_port_ready; then
       status_table
       return 0
     fi
@@ -111,6 +152,10 @@ wait_for_health() {
   done
   printf '\033[31merror:\033[0m services failed to reach healthy state\n' >&2
   status_table
+  if ! neo4j_port_ready; then
+    local uri=${NEO4J_URI:-bolt://localhost:7687}
+    printf '\033[31merror:\033[0m Neo4j Bolt endpoint %s unreachable\n' "${uri}" >&2
+  fi
   return 1
 }
 

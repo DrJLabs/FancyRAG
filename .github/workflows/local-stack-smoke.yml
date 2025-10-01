@@ -20,6 +20,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,11 +29,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
 
       - name: Prepare environment file
         env:
@@ -104,8 +100,21 @@ jobs:
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config
 
-      - name: Run minimal path smoke test
+      - name: Start local stack services
+        run: docker compose -f docker-compose.neo4j-qdrant.yml up -d --wait neo4j qdrant
+
+      - name: Run smoke tests inside compose
         env:
-          PYTHONPATH: stubs:src
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: pytest tests/integration/local_stack/test_minimal_path_smoke.py
+        run: |
+          docker compose -f docker-compose.neo4j-qdrant.yml run --rm \
+            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+            smoke-tests bash -lc "set -euo pipefail; pip install --upgrade pip >/dev/null; pip install --no-cache-dir -r requirements.lock; pytest tests/integration/local_stack/test_minimal_path_smoke.py"
+
+      - name: Collect service logs
+        if: failure()
+        run: docker compose -f docker-compose.neo4j-qdrant.yml logs neo4j qdrant
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker-compose.neo4j-qdrant.yml down --volumes

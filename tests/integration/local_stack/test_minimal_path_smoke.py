@@ -73,13 +73,36 @@ def test_minimal_path_smoke() -> None:
     env = os.environ.copy()
     env["COMPOSE_FILE"] = str(COMPOSE_FILE)
     env["PYTHONPATH"] = "stubs:src"
+
+    neo4j_host = os.environ.get("NEO4J_HOST", "localhost")
+    neo4j_http_host = os.environ.get("NEO4J_HTTP_HOST", neo4j_host)
+    neo4j_bolt_port = os.environ.get("NEO4J_BOLT_PORT", "7687")
+    neo4j_http_port = os.environ.get("NEO4J_HTTP_PORT", "7474")
+
+    env["NEO4J_HOST"] = neo4j_host
+    env["NEO4J_HTTP_HOST"] = neo4j_http_host
+    env["NEO4J_BOLT_PORT"] = neo4j_bolt_port
+    env["NEO4J_HTTP_PORT"] = neo4j_http_port
+
     env["NEO4J_USERNAME"] = os.environ.get("NEO4J_USERNAME", "neo4j")
     env["NEO4J_PASSWORD"] = os.environ.get("NEO4J_PASSWORD", "neo4j")
     env["NEO4J_AUTH"] = f"{env['NEO4J_USERNAME']}/{env['NEO4J_PASSWORD']}"
-    env["NEO4J_URI"] = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-    env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_BOLT_ADVERTISED_ADDRESS", "localhost:7687")
-    env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get("NEO4J_HTTP_ADVERTISED_ADDRESS", "localhost:7474")
-    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    env["NEO4J_URI"] = os.environ.get("NEO4J_URI", f"bolt://{neo4j_host}:{neo4j_bolt_port}")
+    env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = os.environ.get(
+        "NEO4J_BOLT_ADVERTISED_ADDRESS", f"{neo4j_host}:{neo4j_bolt_port}"
+    )
+    env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = os.environ.get(
+        "NEO4J_HTTP_ADVERTISED_ADDRESS", f"{neo4j_http_host}:{neo4j_http_port}"
+    )
+
+    qdrant_host = os.environ.get("QDRANT_HOST", "localhost")
+    qdrant_http_port = os.environ.get("QDRANT_HTTP_PORT", "6333")
+    qdrant_grpc_port = os.environ.get("QDRANT_GRPC_PORT", "6334")
+
+    env["QDRANT_HOST"] = qdrant_host
+    env["QDRANT_HTTP_PORT"] = qdrant_http_port
+    env["QDRANT_GRPC_PORT"] = qdrant_grpc_port
+    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", f"http://{qdrant_host}:{qdrant_http_port}")
     env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
 
     api_key = os.environ.get("OPENAI_API_KEY")
