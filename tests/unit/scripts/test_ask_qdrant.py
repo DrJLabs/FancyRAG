@@ -230,6 +230,7 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
         records=[
             {
                 "chunk_id": "1",
+                "chunk_uid": "chunk-1",
                 "text": "example chunk",
                 "source_path": "doc.txt",
                 "document_name": "Doc",
@@ -238,6 +239,7 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
             },
             {
                 "chunk_id": "2",
+                "chunk_uid": "chunk-2",
                 "text": "other chunk",
                 "source_path": "other.txt",
                 "document_name": None,
@@ -257,8 +259,10 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
     assert saved["matches"][0]["chunk_id"] == "1"
+    assert saved["matches"][0]["chunk_uid"] == "chunk-1"
     assert saved["matches"][0]["score"] == pytest.approx(0.99)
     assert saved["matches"][1]["chunk_id"] == "2"
+    assert saved["matches"][1]["chunk_uid"] == "chunk-2"
     assert capture["top_k"] == 2
     kwargs = capture["kwargs"]
     assert kwargs["id_property_external"] == "chunk_id"
@@ -289,6 +293,7 @@ def test_main_includes_semantic_context(monkeypatch, tmp_path, capsys):
         records=[
             {
                 "chunk_id": "1",
+                "chunk_uid": "chunk-1",
                 "text": "example chunk",
                 "source_path": "doc.txt",
                 "document_name": "Doc",
@@ -299,7 +304,7 @@ def test_main_includes_semantic_context(monkeypatch, tmp_path, capsys):
         capture=capture,
     )
     semantic_payload = {
-        "1": {
+        "chunk-1": {
             "nodes": [
                 {
                     "id": "1:Person",
@@ -323,10 +328,10 @@ def test_main_includes_semantic_context(monkeypatch, tmp_path, capsys):
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out.strip())
-    assert payload["matches"][0]["semantic"] == semantic_payload["1"]
+    assert payload["matches"][0]["semantic"] == semantic_payload["chunk-1"]
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
-    assert saved["matches"][0]["semantic"] == semantic_payload["1"]
+    assert saved["matches"][0]["semantic"] == semantic_payload["chunk-1"]
 
 
 def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):

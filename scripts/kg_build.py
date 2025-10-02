@@ -954,16 +954,23 @@ def _run_semantic_enrichment(
     chunk_meta_by_uid = {meta.uid: meta for meta in chunk_metadata}
 
     async def _extract() -> tuple[Neo4jGraph, int]:
-        chunk_graphs: list[Neo4jGraph] = []
-        failures = 0
-        for chunk in chunk_result.chunks:
-            try:
-                graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
-            except (LLMGenerationError, OpenAIClientError):
-                failures += 1
-                continue
-            await extractor.post_process_chunk(graph, chunk)
-            chunk_graphs.append(graph)
+        semaphore = asyncio.Semaphore(max(1, max_concurrency))
+
+        async def _extract_and_process(chunk: TextChunk) -> Neo4jGraph | None:
+            async with semaphore:
+                try:
+                    graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
+                except (LLMGenerationError, OpenAIClientError):
+                    return None
+                await extractor.post_process_chunk(graph, chunk)
+                return graph
+
+        tasks = [_extract_and_process(chunk) for chunk in chunk_result.chunks]
+        results = await asyncio.gather(*tasks)
+
+        chunk_graphs = [graph for graph in results if graph is not None]
+        failures = len(results) - len(chunk_graphs)
+
         combined = extractor.combine_chunk_graphs(None, chunk_graphs)
         return combined, failures
 

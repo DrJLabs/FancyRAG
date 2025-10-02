@@ -7,7 +7,9 @@ reviewer: "Quinn (Test Architect)"
 updated: "2025-10-02T10:55:00-07:00"
 waiver: { active: false }
 top_issues:
-  - "Monitor semantic extraction runtime/token usage when enabling flag at scale."
+  - id: PERF-301
+    severity: medium
+    summary: "Monitor semantic extraction runtime/token usage when enabling flag at scale."
 evidence:
   tests_reviewed:
     - "PYTHONPATH=src pytest tests/unit/scripts/test_kg_build.py"

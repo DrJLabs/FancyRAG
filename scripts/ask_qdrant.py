@@ -43,6 +43,7 @@ _RETRIEVAL_QUERY = (
     "WITH node, score "
     "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
     "RETURN node.chunk_id AS chunk_id, "
+    "node.chunk_uid AS chunk_uid, "
     "node.text AS text, "
     "node.source_path AS source_path, "
     "node.relative_path AS relative_path, "
@@ -91,6 +92,9 @@ def _record_to_match(record: Any) -> dict[str, Any]:
     if chunk_identifier is not None:
         payload["chunk_id"] = str(chunk_identifier)
 
+    if "chunk_uid" in payload and payload["chunk_uid"] is not None:
+        payload["chunk_uid"] = str(payload["chunk_uid"])
+
     return payload
 
 
@@ -138,7 +142,7 @@ def main() -> None:
     records: list[Any] = []
 
     semantic_context: dict[str, dict[str, Any]] = {}
-    chunk_ids: list[str] = []
+    semantic_chunk_uids: list[str] = []
 
     try:
         embedding_result = client.embedding(input_text=args.question)
@@ -172,20 +176,24 @@ def main() -> None:
                         match["score"] = float(match["score"])
                     except (TypeError, ValueError):  # pragma: no cover - defensive guard
                         pass
-                chunk_id = match.get("chunk_id")
-                if isinstance(chunk_id, str):
-                    chunk_ids.append(chunk_id)
+                chunk_uid = match.get("chunk_uid")
+                if isinstance(chunk_uid, str):
+                    semantic_chunk_uids.append(chunk_uid)
+                else:
+                    chunk_id = match.get("chunk_id")
+                    if isinstance(chunk_id, str):
+                        semantic_chunk_uids.append(chunk_id)
                 matches.append(match)
-            if args.include_semantic and chunk_ids:
+            if args.include_semantic and semantic_chunk_uids:
                 with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
                     semantic_context = _fetch_semantic_context(
                         driver,
                         database=neo4j_database,
-                        chunk_uids=chunk_ids,
+                        chunk_uids=semantic_chunk_uids,
                     )
                 for match in matches:
-                    chunk_id = match.get("chunk_id")
-                    context = semantic_context.get(chunk_id)
+                    chunk_uid = match.get("chunk_uid") or match.get("chunk_id")
+                    context = semantic_context.get(chunk_uid) if chunk_uid is not None else None
                     if context:
                         match["semantic"] = context
     except OpenAIClientError as exc:
@@ -246,20 +254,22 @@ def _fetch_semantic_context(
     query = """
     MATCH (entity)
     WHERE entity.semantic_source = $source AND entity.chunk_uid IN $chunk_uids
-    OPTIONAL MATCH (entity)-[rel]->(target)
-    WHERE rel.semantic_source = $source
+    OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]->(target)
     RETURN entity.chunk_uid AS chunk_uid,
            collect(DISTINCT {
                id: entity.id,
                labels: labels(entity),
                properties: entity
            }) AS nodes,
-           collect(DISTINCT {
-               type: type(rel),
-               start: startNode(rel).id,
-               end: endNode(rel).id,
-               properties: rel
-           }) AS relationships
+           collect(DISTINCT CASE
+               WHEN rel IS NULL THEN NULL
+               ELSE {
+                   type: type(rel),
+                   start: startNode(rel).id,
+                   end: endNode(rel).id,
+                   properties: rel
+               }
+           END) AS relationships
     """
 
     result = driver.execute_query(
@@ -275,7 +285,11 @@ def _fetch_semantic_context(
             continue
 
         node_entries = record.get("nodes", [])
-        relationship_entries = record.get("relationships", [])
+        relationship_entries = [
+            entry
+            for entry in record.get("relationships", [])
+            if entry
+        ]
 
         nodes_payload = []
         for node_entry in node_entries:
