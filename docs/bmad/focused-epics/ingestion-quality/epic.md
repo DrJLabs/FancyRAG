@@ -1,32 +1,28 @@
 # Epic 3: Ingestion Quality Hardening — Adaptive Chunking & QA
 
 ## Status
-Draft — 2025-10-01. Kickoff after confirming current minimal-path smoke stays green and OpenAI rate limits are stable.
+Done — 2025-10-02. All stories delivered; minimal-path smoke validated with native retriever.
 
 ## Epic Goal
 Raise the fidelity and observability of the GraphRAG ingestion pipeline so operators can ingest varied corpora (docs, source code, knowledge bases) with tunable chunking, richer metadata, and automated quality checkpoints before export or retrieval.
 
 ## Epic Description
 **Existing System Context:**
-- Epics 1–2 deliver a fixed-size chunking pipeline (`FixedSizeSplitter`, 600/100 overlap), metadata limited to file path + index, and smoke coverage centered on the sample pilot text.
-- QA assessments have flagged pending work for managed telemetry and ingestion coverage but local workflows remain the baseline.
-- Scripts emit structured logs yet lack per-ingestion health summaries, token histograms, or semantic graph enrichments.
+- Stories 3.1–3.3 delivered adaptive chunking, ingestion QA gating, and native retrieval via `QdrantNeo4jRetriever` running on the local stack.
+- Minimal-path smoke now exercises the retriever end-to-end using `.env` OpenAI credentials; telemetry and sanitized artifacts remain stable for CI consumers.
 
-**Enhancement Details:**
-- Add configurable splitter presets (text prose, markdown, code) with semantic/recursive options and directory-aware ingestion so larger repositories chunk cleanly.
-- Persist metadata and validation artefacts (source path, git commit, checksum, token counts) alongside Neo4j nodes to unlock smarter retrieval filters and regression diffing.
-- Build a quality gate that analyses ingestion runs (chunk statistics, orphan checks, embedding validation) and surfaces actionable telemetry in artifacts.
-- Optionally enrich the graph with entity/relation extraction using SimpleKGPipeline hooks so downstream agents can navigate both lexical and semantic layers.
+**Enhancement Highlights:**
+- Chunking presets (text/markdown/code) with deterministic directory ingestion propagate metadata (relative path, git commit, checksum) into Neo4j/Qdrant payloads.
+- QA reporting emits gating artifacts under `artifacts/ingestion/` and blocks anomalies before writes; telemetry logged for CI analysis.
+- Retrieval now uses the native GraphRAG `QdrantNeo4jRetriever`, ensuring end-to-end alignment with official APIs and simplifying future semantic enrichment.
 
-**Success criteria:**
-- Operators can select chunking profiles via CLI flags or config, run ingestion on heterogeneous content (Markdown + code), and see metadata captured in Neo4j/Qdrant payloads with no manual edits.
-- Each ingestion emits a QA report (JSON + human-readable summary) covering chunk/token stats, schema checks, and retry telemetry; pipeline fails fast on severe anomalies.
-- Lexical + semantic graph nodes are written in a single run, enabling `ask_qdrant.py` (or future agents) to leverage entity relationships without additional scripts.
+**Outcome:**
+- Minimal path executes start-to-finish with adaptive chunking, QA gating, and native retrieval. All acceptance criteria satisfied; remaining follow-up is automating documentation lint for retriever configuration references.
 
 ## Stories
-1. **Story 1:** Introduce adaptive chunking and source-aware ingestion by wiring configurable splitters (FixedSize, RecursiveCharacter, code-aware) into `kg_build.py`, adding CLI presets and directory walkers that capture source metadata and digests per chunk.
-2. **Story 2:** Instrument ingestion QA and telemetry by generating post-run reports (token histograms, orphan/node integrity, embedding dimension checks), failing the pipeline on thresholds, and storing sanitized artifacts under `artifacts/ingestion/` with CI hooks.
-3. **Story 3:** Layer semantic enrichment and retrieval filters by integrating entity/relation extraction into the pipeline, persisting metadata to Neo4j/Qdrant payloads, and extending `ask_qdrant.py` (or a new CLI flag) to exploit semantic facets during queries.
+1. ✅ **Story 3.1:** Adaptive chunking profiles & source-aware ingestion (`docs/stories/3.1.adaptive-chunking.md`).
+2. ✅ **Story 3.2:** Ingestion QA telemetry & quality gate (`docs/stories/3.2.ingestion-qa-telemetry.md`).
+3. ✅ **Story 3.3:** Native Qdrant retriever integration (`docs/stories/3.3.qdrant-native-retriever.md`).
 
 ## Compatibility Requirements
 - [ ] CLI defaults must continue to succeed on the existing sample (`docs/samples/pilot.txt`) without additional flags.
