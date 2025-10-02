@@ -47,7 +47,14 @@ def _load_settings() -> OpenAISettings:
 
 
 def _record_to_match(record: Any) -> dict[str, Any]:
-    """Normalize a retriever record into the match dictionary used by the CLI."""
+    """
+    Normalize a retriever record into the CLI match dictionary.
+    
+    Converts a retriever record (an object with a data() method, a dict, or another mapping) into a plain dict suitable for output. If the record contains a `chunk_id` or `id`, ensures the resulting payload has a `chunk_id` value coerced to a string.
+    
+    Returns:
+        dict[str, Any]: Normalized match payload with `chunk_id` as a string when present.
+    """
 
     data_getter = getattr(record, "data", None)
     if callable(data_getter):
@@ -66,9 +73,12 @@ def _record_to_match(record: Any) -> dict[str, Any]:
 
 def main() -> None:
     """
-    Run a CLI that queries Qdrant for top-k chunk matches and enriches each match with Neo4j document context.
+    Run the CLI to embed a question, retrieve top-k chunk matches from Qdrant, enrich each match with Neo4j document context, and produce a sanitized JSON artifact.
     
-    Accepts command-line flags (--question, --top-k, --collection), reads required environment variables for OpenAI, Qdrant, and Neo4j, obtains an embedding for the provided question, queries Qdrant for nearest chunks, fetches associated chunk/document context from Neo4j, and produces a sanitized JSON result. The function writes the result to artifacts/local_stack/ask_qdrant.json, prints the sanitized JSON to stdout, and raises SystemExit(1) if an error occurs.
+    Reads CLI flags (--question, --top-k, --collection) and requires the environment variables OPENAI_API_KEY, QDRANT_URL, NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD (optionally NEO4J_DATABASE). Generates an embedding for the provided question, uses a Neo4j-backed retriever to obtain nearest chunks and associated document fields, normalizes match scores when possible, writes the sanitized result to artifacts/local_stack/ask_qdrant.json, and prints the sanitized JSON to stdout.
+    
+    Raises:
+        SystemExit: Exits with status code 1 when an error occurs during embedding, retrieval, or enrichment.
     """
     parser = argparse.ArgumentParser(description="Query Qdrant for chunk matches")
     parser.add_argument("--question", required=True)
