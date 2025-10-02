@@ -995,7 +995,7 @@ def _ensure_document_relationships(
         WITH doc
         // Process each chunk emitted by the current pipeline execution
         UNWIND $chunk_payload AS meta
-        // Chunk.uid values are globally unique per pipeline execution, so we can safely match on them
+        // Locate the unique chunk that matches the current payload entry
         MATCH (chunk:Chunk {uid: meta.uid})
         WITH doc, chunk, meta
         // Update per-chunk provenance while preserving existing identifiers when re-ingesting
@@ -1005,7 +1005,7 @@ def _ensure_document_relationships(
             chunk.checksum = meta.checksum,
             chunk.chunk_id = coalesce(chunk.chunk_id, meta.sequence),
             chunk.index = coalesce(chunk.index, meta.index)
-        // Ensure the Document ↔ Chunk relationship exists
+        // Ensure the Document ↔ Chunk relationship exists for this payload entry
         MERGE (doc)-[:HAS_CHUNK]->(chunk)
         """,
         {

@@ -360,17 +360,22 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.log_path == str(kg.DEFAULT_LOG_PATH)
     assert args.reset_database is False
 
-def test_parse_args_database_from_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
-) -> None:
+def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_DATABASE", "test_db")
     args = kg._parse_args([])
     # The actual behavior depends on implementation, but we test the parsing
     assert args.database is None or args.database == "test_db"
+    monkeypatch.delenv("NEO4J_DATABASE", raising=False)
+
+
+def test_parse_args_source_dir_option(tmp_path: pathlib.Path) -> None:
     source_dir = tmp_path / "input"
     args = kg._parse_args(["--source-dir", str(source_dir)])
     assert args.source_dir == str(source_dir)
     assert args.source is None or args.source == str(kg.DEFAULT_SOURCE)
+
+
+def test_parse_args_include_patterns() -> None:
     args = kg._parse_args(
         [
             "--include-pattern",
@@ -382,7 +387,9 @@ def test_parse_args_database_from_env(
         ]
     )
     assert args.include_patterns == ["*.py", "*.md", "*.txt"]
-    assert len(args.include_patterns) == 3
+
+
+def test_parse_args_overrides(tmp_path: pathlib.Path) -> None:
     src_file = tmp_path / "foo.txt"
     log_file = tmp_path / "log.json"
     args = kg._parse_args(
@@ -573,4 +580,3 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
     writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
     sanitized = writer._sanitize_properties({"values": [None, None]})
     assert sanitized == {"values": []}
-

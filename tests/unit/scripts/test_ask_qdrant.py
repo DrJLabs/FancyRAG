@@ -4,18 +4,26 @@ from __future__ import annotations
 import json
 import sys
 from importlib import util
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
-stub_neo4j = ModuleType("neo4j")
-stub_neo4j.GraphDatabase = SimpleNamespace(driver=lambda *_, **__: None)
-if util.find_spec("neo4j") is None:
+existing_neo4j = sys.modules.get("neo4j")
+if existing_neo4j is None:
+    stub_neo4j = ModuleType("neo4j")
+    stub_neo4j.GraphDatabase = SimpleNamespace(driver=lambda *_, **__: None)
+    stub_neo4j.__spec__ = ModuleSpec("neo4j", loader=None)
     sys.modules.setdefault("neo4j", stub_neo4j)
+else:
+    if getattr(existing_neo4j, "__spec__", None) is None:
+        existing_neo4j.__spec__ = ModuleSpec("neo4j", loader=None)
+    stub_neo4j = existing_neo4j
 stub_neo4j_exceptions = ModuleType("neo4j.exceptions")
 stub_neo4j_exceptions.Neo4jError = Exception
-if util.find_spec("neo4j.exceptions") is None:
+stub_neo4j_exceptions.__spec__ = ModuleSpec("neo4j.exceptions", loader=None)
+if "neo4j.exceptions" not in sys.modules:
     sys.modules.setdefault("neo4j.exceptions", stub_neo4j_exceptions)
 
 stub_qdrant = ModuleType("qdrant_client")
@@ -96,7 +104,7 @@ def _setup_driver(monkeypatch, record):
         def __enter__(self):
             return FakeDriver()
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(self, _exc_type, _exc, _tb):
             return False
 
     monkeypatch.setattr(ask.GraphDatabase, "driver", lambda *_, **__: FakeDriverCtx())

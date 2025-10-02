@@ -133,6 +133,9 @@ def main() -> int:
     except json.JSONDecodeError as exc:
         print(f"Malformed JSON from OpenAI API: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        print(f"Unexpected error contacting OpenAI API: {exc}", file=sys.stderr)
+        return 2
 
     missing = sorted(model for model in ALLOWED_CHAT_MODELS if model not in available_models)
     families = {_family_of(model) for model in ALLOWED_CHAT_MODELS}
