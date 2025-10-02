@@ -125,15 +125,21 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
     ) -> TextChunks:  # type: ignore[override]
         if config is not None:
             # Defer to the base implementation when custom configuration is
-            # supplied; caching only targets the default execution path.
-            return await super().run(text, config=config)
+            # supplied; caching only targets the default execution path.  The
+            # upstream splitter signature differs slightly across releases, so
+            # fall back to the simplest invocation if a positional/keyword
+            # mismatch occurs.
+            try:
+                return await super().run(text, config)
+            except (TypeError, ValidationError):  # pragma: no cover - safety net
+                return await super().run(text)
 
         key = self._cache_key(text)
         cached = self._cache.get(key)
         if cached is not None:
             return copy.deepcopy(cached)
 
-        result = await super().run(text, config=config)
+        result = await super().run(text)
         self._cache[key] = copy.deepcopy(result)
         return result
 
