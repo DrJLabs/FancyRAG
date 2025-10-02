@@ -56,7 +56,7 @@ def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
                chunk.relative_path AS relative_path,
                chunk.git_commit AS git_commit,
                chunk.checksum AS checksum
-        ORDER BY chunk.index ASC
+        ORDER BY chunk_index ASC
         """,
         database_=database,
     )
@@ -170,13 +170,30 @@ def main() -> None:
     status = "success"
     message = ""
     exported = 0
+    skipped_without_embeddings = 0
 
     try:
         with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
-            chunks = _fetch_chunks(driver, database=neo4j_database)
+            raw_chunks = _fetch_chunks(driver, database=neo4j_database)
+            chunks: list[dict[str, Any]] = []
+            for record in raw_chunks:
+                embedding = record.get("embedding")
+                if embedding is None:
+                    skipped_without_embeddings += 1
+                    continue
+                if isinstance(embedding, (list, tuple)) and not embedding:
+                    skipped_without_embeddings += 1
+                    continue
+                chunks.append(record)
+
             if not chunks:
                 status = "skipped"
-                message = "No chunk nodes available to export"
+                if skipped_without_embeddings:
+                    message = (
+                        f"Skipped {skipped_without_embeddings} chunk(s) with missing embeddings"
+                    )
+                else:
+                    message = "No chunk nodes available to export"
             else:
                 embedding = chunks[0].get("embedding")
                 if embedding is None:
@@ -268,6 +285,8 @@ def main() -> None:
     else:
         if not message:
             message = f"Exported {exported} chunks"
+            if skipped_without_embeddings:
+                message += f" (skipped {skipped_without_embeddings} without embeddings)"
 
     duration_ms = int((time.perf_counter() - start) * 1000)
     log = {
@@ -277,6 +296,7 @@ def main() -> None:
         "status": status,
         "message": message,
         "count": exported,
+        "skipped_chunks": skipped_without_embeddings,
         "duration_ms": duration_ms,
     }
 
