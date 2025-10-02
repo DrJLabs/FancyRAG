@@ -248,6 +248,12 @@ class QaResult:
 
     @property
     def passed(self) -> bool:
+        """
+        Indicates whether the QA evaluation passed.
+        
+        @returns:
+            `true` if `status` equals "pass", `false` otherwise.
+        """
         return self.status == "pass"
 
 
@@ -266,6 +272,17 @@ class IngestionQaEvaluator:
         report_root: Path,
         report_version: str,
     ) -> None:
+        """
+        Initialize the evaluator with the Neo4j driver, QA sources, thresholds, and report output settings.
+        
+        Parameters:
+            database (str | None): Optional Neo4j database name to query for QA metrics; use the default database when None.
+            sources (Sequence[QaSourceRecord]): Sequence of QA source records describing ingested documents and their chunks to evaluate.
+            thresholds (QaThresholds): QA gating thresholds to apply when evaluating anomalies.
+            report_root (Path): Filesystem directory where JSON and Markdown QA reports will be written.
+            report_version (str): Version string to embed in generated QA reports.
+        
+        """
         self._driver = driver
         self._database = database
         self._sources = list(sources)
@@ -274,6 +291,14 @@ class IngestionQaEvaluator:
         self._report_version = report_version
 
     def evaluate(self) -> QaResult:
+        """
+        Perform the ingestion QA evaluation across the provided sources and produce a QA result and report files.
+        
+        Queries the graph for chunk/document counts and specific anomaly counts (missing embeddings, orphan chunks, checksum mismatches), computes aggregate metrics per-source and totals, compares results against the configured thresholds, writes a sanitized JSON and Markdown QA report to the configured report directory, and records evaluation duration.
+        
+        Returns:
+            QaResult: Aggregated QA evaluation result containing status ("pass" or "fail"), human-readable summary, metrics dictionary, list of detected anomalies, used thresholds, paths to the generated JSON and Markdown reports (relative to the repository when possible), timestamp, report version, and evaluation duration in milliseconds.
+        """
         eval_start = time.perf_counter()
         timestamp = datetime.now(timezone.utc)
         metrics: dict[str, Any] = {}
@@ -395,6 +420,23 @@ class IngestionQaEvaluator:
         )
 
     def _compute_totals(self) -> dict[str, Any]:
+        """
+        Compute aggregate counts and summary statistics for all provided QA sources.
+        
+        Returns:
+            totals (dict[str, Any]): Aggregate metrics including:
+                - files_processed (int): number of source records processed.
+                - chunks_processed (int): total number of chunks across all sources.
+                - token_estimate (dict): token-based statistics with keys:
+                    - total (int): sum of estimated tokens for all chunks.
+                    - max (int): largest token estimate for a single chunk.
+                    - mean (float): mean token estimate across chunks.
+                    - histogram (list[tuple[int, int]]): token histogram buckets as produced by `_token_histogram`.
+                - char_lengths (dict): character-length statistics with keys:
+                    - total (int): sum of character lengths for all chunks.
+                    - max (int): largest character length for a single chunk.
+                    - mean (float): mean character length across chunks.
+        """
         chunk_texts = [chunk.text for record in self._sources for chunk in record.chunks]
         chunk_lengths = [len(text) for text in chunk_texts]
         token_estimates = [self._estimate_tokens(text) for text in chunk_texts]
@@ -418,6 +460,17 @@ class IngestionQaEvaluator:
         }
 
     def _token_histogram(self, token_counts: Sequence[int]) -> dict[str, int]:
+        """
+        Create a histogram of token counts grouped into the evaluator's predefined bins.
+        
+        Parameters:
+            token_counts (Sequence[int]): Sequence of token counts to bin.
+        
+        Returns:
+            dict[str, int]: Mapping from bucket label to the number of counts in that bucket.
+                Bucket labels represent inclusive upper-bound ranges for each configured bin
+                and a final open-ended bucket for counts greater than the highest bin.
+        """
         buckets = {self._bucket_label(None, upper): 0 for upper in self.TOKEN_BINS}
         buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] = 0
         for count in token_counts:
@@ -433,6 +486,20 @@ class IngestionQaEvaluator:
 
     @staticmethod
     def _bucket_label(lower: int | None, upper: int | None) -> str:
+        """
+        Format a human-readable label for an integer bucket defined by optional lower and upper bounds.
+        
+        Parameters:
+            lower (int | None): Lower bound of the bucket (None means unbounded below).
+            upper (int | None): Upper bound of the bucket (None means unbounded above).
+        
+        Returns:
+            str: A label describing the bucket:
+                - "`<= {upper}`" if only `upper` is provided,
+                - "`> {lower}`" if only `lower` is provided,
+                - `"unknown"` if both bounds are `None`,
+                - "`{lower+1}-{upper}`" when both bounds are provided.
+        """
         if lower is None and upper is not None:
             return f"<= {upper}"
         if lower is not None and upper is None:
@@ -443,12 +510,30 @@ class IngestionQaEvaluator:
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
+        """
+        Estimate token count for a text using a simple character-to-token heuristic.
+        
+        Uses an approximate ratio of 4 characters per token and ensures non-empty text maps to at least 1 token.
+        
+        Returns:
+            Estimated number of tokens as an integer; `0` for empty input.
+        """
         if not text:
             return 0
         # Rough heuristic assuming ~4 characters per token for mixed-language corpora.
         return max(1, math.ceil(len(text) / 4))
 
     def _query_value(self, query: str, parameters: Mapping[str, Any]) -> int:
+        """
+        Execute the given query against the evaluator's driver and return the first numeric result as an integer.
+        
+        Parameters:
+            query (str): Query string to execute.
+            parameters (Mapping[str, Any]): Parameters to pass to the query.
+        
+        Returns:
+            int: The integer value of the first result row's `"value"` field, or the first column if unnamed; returns 0 when there are no configured sources, no rows, or when the retrieved value is missing or not coercible to an integer.
+        """
         if not self._sources:
             return 0
         result = self._driver.execute_query(query, parameters, database_=self._database)
@@ -468,6 +553,22 @@ class IngestionQaEvaluator:
         return int(value or 0)
 
     def _render_markdown(self, payload: Mapping[str, Any]) -> str:
+        """
+        Render an ingestion QA payload as a Markdown-formatted report.
+        
+        Parameters:
+            payload (Mapping[str, Any]): QA report payload containing keys such as
+                `version`, `generated_at`, `status`, `summary`, `metrics`, `anomalies`,
+                and `thresholds`. `metrics` may include `token_estimate`, `files_processed`,
+                `chunks_processed`, `missing_embeddings`, `orphan_chunks`, `checksum_mismatches`,
+                and a `files` sequence with per-file entries (`relative_path`, `chunks`,
+                `document_checksum`, `git_commit`).
+        
+        Returns:
+            str: A Markdown string summarizing the QA report, including top-line status,
+            metrics, an optional token histogram, findings (anomalies), thresholds, and a
+            per-file table when available.
+        """
         lines: list[str] = []
         lines.append(f"# Ingestion QA Report ({payload['version']})")
         lines.append("")
@@ -542,7 +643,18 @@ class IngestionQaEvaluator:
             lines.append("")
         return "\n".join(lines)
 def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
-    """Load and validate the default GraphSchema definition from disk."""
+    """
+    Load and return the validated default GraphSchema from disk.
+    
+    Parameters:
+        path (Path): Path to a JSON file containing the GraphSchema definition (defaults to DEFAULT_SCHEMA_PATH).
+    
+    Returns:
+        GraphSchema: A validated GraphSchema instance constructed from the file contents.
+    
+    Raises:
+        RuntimeError: If the schema file is missing or contains invalid JSON.
+    """
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -817,14 +929,13 @@ class SanitizingNeo4jWriter(Neo4jWriter):
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
-    Parse command-line arguments for the KG build script.
+    Parse command-line arguments for the KG build CLI.
     
-    Accepts an optional list of argument strings (typically None to use sys.argv) and returns a Namespace containing the parsed options:
-    - source: path to the sample content to ingest.
-    - chunk_size: character chunk size for the text splitter.
-    - chunk_overlap: character overlap between chunks.
-    - database: optional Neo4j database name (None uses server default).
-    - log_path: file path for the structured JSON run log.
+    Parameters:
+        argv (Sequence[str] | None): Optional list of argument strings to parse; when None the process's command-line (sys.argv) is used.
+    
+    Returns:
+        argparse.Namespace: Parsed options including source selection (--source, --source-dir, --include-pattern), chunking/profile settings (--profile, --chunk-size, --chunk-overlap), Neo4j target (--database), logging path (--log-path), QA configuration (--qa-report-dir, --qa-max-missing-embeddings, --qa-max-orphan-chunks, --qa-max-checksum-mismatches), and control flags such as --reset-database.
     """
     parser = argparse.ArgumentParser(
         description="Run the SimpleKGPipeline against local sample content, persisting results to Neo4j with structured logging and retries.",
@@ -1351,13 +1462,18 @@ def _ensure_document_relationships(
     chunks_metadata: Sequence[ChunkMetadata],
 ) -> None:
     """
-    Ensure a Document node exists for the given source file and link all Chunk nodes to it with HAS_CHUNK relationships.
+    Ensure a Document node exists for the given source file and attach the provided Chunk nodes to it with up-to-date provenance.
     
-    Creates or merges a Document node with its name and title set to the source file name on creation, sets each Chunk.node's `source_path` property to the provided path, assigns a sequential `chunk_id` when one is not already present, and creates a HAS_CHUNK relationship from the Document to each Chunk.
+    Creates or reuses a Document node identified by the file path, updates document-level provenance (relative path, git commit, checksum), sets per-chunk provenance (source path, relative path, git commit, checksum) for each chunk, preserves existing chunk identifiers when present, and ensures a HAS_CHUNK relationship from the Document to each Chunk.
     
     Parameters:
-        database (str | None): Optional Neo4j database name to execute the query against; pass None to use the default.
-        source_path (Path): Filesystem path of the source document; used as the Document.source_path value and to derive the Document.name/title.
+        driver: Neo4j driver or wrapper used to execute the Cypher query.
+        database (str | None): Optional Neo4j database name to run the query against; pass None to use the default.
+        source_path (Path): Filesystem path of the source document used as the Document.source_path and to derive the document name/title.
+        relative_path (str): Stable repository-relative path to store on the Document and chunks.
+        git_commit (str | None): Git commit SHA to store as provenance on the Document and chunks, or None if unavailable.
+        document_checksum (str): SHA-256 checksum representing the current document content/version.
+        chunks_metadata (Sequence[ChunkMetadata]): Sequence of per-chunk provenance records (uid, sequence, index, relative_path, git_commit, checksum) to associate with the Document.
     """
     chunk_payload = [
         {
@@ -1415,7 +1531,15 @@ def _rollback_ingest(
     database: str | None,
     sources: Sequence[QaSourceRecord],
 ) -> None:
-    """Remove chunks and documents created during a failed ingestion run."""
+    """
+    Delete Chunk nodes referenced by the provided QA sources and remove Document nodes that become orphaned.
+    
+    Deletes Chunk nodes whose `uid` values appear in `sources`' chunk records. After removing chunks, deletes Document nodes with `relative_path` values from `sources` only if the Document has no remaining `HAS_CHUNK` relationships. The deletions are performed in the specified Neo4j `database` (or the driver's default if `None`).
+    
+    Parameters:
+        database (str | None): Target Neo4j database name, or `None` to use the driver's default.
+        sources (Sequence[QaSourceRecord]): Sequence of QA source records whose chunks' `uid` values identify Chunk nodes to remove and whose `relative_path` values identify Documents to consider for deletion.
+    """
 
     chunk_uids = [chunk.uid for record in sources for chunk in record.chunks]
     if chunk_uids:
@@ -1445,30 +1569,34 @@ def _rollback_ingest(
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     """
-    Builds a knowledge graph from a source file and writes a structured JSON run log.
+    Builds a knowledge graph from the provided source file(s) and produces a structured run log.
     
-    Parses CLI arguments (or uses provided argv), validates environment and chunking parameters, ingests the source text into Neo4j using configured OpenAI clients and the pipeline, optionally resets the database when requested, ensures document-chunk relationships, collects database counts, writes a sanitized JSON log to disk, prints the log, and returns the log dictionary.
+    Reads CLI arguments (or uses the supplied argv), validates environment and chunking settings, ingests source text into Neo4j using configured OpenAI clients and the pipeline, runs ingestion QA, writes a sanitized JSON run log to disk, and returns the assembled log dictionary.
     
     Parameters:
-        argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv; when None the process uses default argument parsing.
+        argv (Sequence[str] | None): Optional list of CLI arguments to override sys.argv. When None the process parses arguments from the environment/command line.
     
     Returns:
-        dict[str, Any]: A structured run log containing keys including:
+        dict[str, Any]: A structured run log containing metadata about the run, including:
             - timestamp: ISO 8601 UTC timestamp of completion
             - operation: the operation name ("kg_build")
             - status: operation status ("success" on normal completion)
             - duration_ms: elapsed time in milliseconds
-            - source: path to the input source file
-            - input_bytes: size of the input in bytes
-            - chunking: mapping with "size" and "overlap" used for splitting
+            - source: path to the input source or directory
+            - source_mode: "file" or "directory"
+            - input_bytes: total size of input in bytes
+            - chunking: chunking parameters used (size, overlap, profile, include_patterns)
             - database: Neo4j database name (or None)
             - reset_database: boolean indicating whether the destructive reset flag was provided
-            - openai: OpenAI settings used (chat_model, embedding_model, embedding_dimensions, max_attempts)
-            - counts: mapping with counts of ingested entities (documents, chunks, relationships)
-            - run_id: pipeline run identifier (if available)
+            - openai: OpenAI configuration used (chat_model, embedding_model, embedding_dimensions, max_attempts)
+            - counts: mapping of graph entity counts (documents, chunks, relationships)
+            - run_id / run_ids: pipeline run identifier(s)
+            - files: per-file metadata (path, checksum, chunks)
+            - chunks: per-chunk metadata (source, index, id, checksum, git_commit)
+            - qa: QA evaluation summary and report locations (when present)
     
     Raises:
-        RuntimeError: if OpenAI requests or Neo4j operations fail.
+        RuntimeError: If OpenAI requests, Neo4j operations, or ingestion QA gating fail.
     """
     args = _parse_args(argv)
 
