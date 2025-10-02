@@ -7,6 +7,11 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def reset_module_cache():
+    """
+    Autouse pytest fixture that reloads the fancyrag.utils.env module after each test to reset its state.
+    
+    This fixture imports the module before the test runs and reloads it after the test completes so that changes to module-level state do not leak between tests.
+    """
     import fancyrag.utils.env as env_module
 
     yield

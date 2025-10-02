@@ -55,6 +55,11 @@ def test_main_passes_when_all_tokens_present(temporary_docs: Path, tmp_path: Pat
 
 
 def test_main_fails_when_retriever_reference_missing(temporary_docs: Path, tmp_path: Path) -> None:
+    """
+    Ensure the docs checker fails when the architecture overview is missing the retriever reference.
+    
+    Rewrites the temporary overview.md to omit the expected retriever token, invokes check_docs.main against the temporary docs tree, and asserts the process exits with status 1.
+    """
     overview = temporary_docs / "docs" / "architecture" / "overview.md"
     overview.write_text(
         "\n".join(
