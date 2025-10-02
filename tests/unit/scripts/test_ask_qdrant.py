@@ -146,10 +146,13 @@ def _setup_driver(monkeypatch):
     """
     class FakeDriverCtx:
         def __enter__(self):
-            return object()
+            return self
 
         def __exit__(self, _exc_type, _exc, _tb):
             return False
+
+        def execute_query(self, *_args, **_kwargs):
+            return []
 
     monkeypatch.setattr(ask.GraphDatabase, "driver", lambda *_, **__: FakeDriverCtx())
 
@@ -260,6 +263,70 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
     kwargs = capture["kwargs"]
     assert kwargs["id_property_external"] == "chunk_id"
     assert "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node)" in kwargs["retrieval_query"]
+
+
+def test_main_includes_semantic_context(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ask_qdrant.py",
+            "--question",
+            "How?",
+            "--top-k",
+            "1",
+            "--include-semantic",
+        ],
+    )
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1, 0.2, 0.3])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[
+            {
+                "chunk_id": "1",
+                "text": "example chunk",
+                "source_path": "doc.txt",
+                "document_name": "Doc",
+                "document_source_path": "doc.txt",
+                "score": 0.99,
+            }
+        ],
+        capture=capture,
+    )
+    semantic_payload = {
+        "1": {
+            "nodes": [
+                {
+                    "id": "1:Person",
+                    "labels": ["Person", "__Entity__"],
+                    "properties": {"name": "Alice"},
+                }
+            ],
+            "relationships": [
+                {
+                    "type": "RELATED_TO",
+                    "start": "1:Person",
+                    "end": "1:Company",
+                    "properties": {"weight": 0.8},
+                }
+            ],
+        }
+    }
+    monkeypatch.setattr(ask, "_fetch_semantic_context", lambda *_, **__: semantic_payload)
+
+    ask.main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+    assert payload["matches"][0]["semantic"] == semantic_payload["1"]
+    artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
+    saved = json.loads(artifact_path.read_text())
+    assert saved["matches"][0]["semantic"] == semantic_payload["1"]
 
 
 def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):

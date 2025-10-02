@@ -35,13 +35,21 @@ from config.settings import OpenAISettings
 from fancyrag.utils import ensure_env
 from neo4j_graphrag.embeddings.base import Embedder
 from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
+from neo4j_graphrag.experimental.components.entity_relation_extractor import (
+    LLMEntityRelationExtractor,
+    OnError,
+)
 from neo4j_graphrag.experimental.components.kg_writer import KGWriterModel, Neo4jWriter
 from neo4j_graphrag.experimental.components.lexical_graph import LexicalGraphConfig
 from neo4j_graphrag.experimental.components.schema import GraphSchema
 from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
     FixedSizeSplitter,
 )
-from neo4j_graphrag.experimental.components.types import TextChunk, TextChunks
+from neo4j_graphrag.experimental.components.types import (
+    TextChunk,
+    TextChunks,
+    Neo4jGraph,
+)
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.llm.base import LLMInterface
 from neo4j_graphrag.llm.types import LLMResponse
@@ -66,6 +74,7 @@ DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent / "config" / "kg_schema.js
 DEFAULT_PROFILE = "text"
 QA_REPORT_VERSION = "ingestion-qa-report/v1"
 DEFAULT_QA_DIR = Path("artifacts/ingestion")
+SEMANTIC_SOURCE = "kg_build.semantic_enrichment.v1"
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "text": {
         "chunk_size": 600,
@@ -213,6 +222,28 @@ class QaChunkRecord:
 
 
 @dataclass
+class SemanticEnrichmentStats:
+    """Aggregated metrics describing semantic enrichment output."""
+
+    chunks_processed: int = 0
+    chunk_failures: int = 0
+    nodes_written: int = 0
+    relationships_written: int = 0
+
+
+@dataclass
+class SemanticQaSummary:
+    """Summary passed into QA evaluation for semantic enrichment metrics."""
+
+    enabled: bool = False
+    chunks_processed: int = 0
+    chunk_failures: int = 0
+    nodes_written: int = 0
+    relationships_written: int = 0
+    source_tag: str = SEMANTIC_SOURCE
+
+
+@dataclass
 class QaSourceRecord:
     """Aggregated ingestion artifact metadata for a single source."""
 
@@ -230,6 +261,8 @@ class QaThresholds:
     max_missing_embeddings: int = 0
     max_orphan_chunks: int = 0
     max_checksum_mismatches: int = 0
+    max_semantic_failures: int = 0
+    max_semantic_orphans: int = 0
 
 
 @dataclass
@@ -272,17 +305,19 @@ class IngestionQaEvaluator:
         thresholds: QaThresholds,
         report_root: Path,
         report_version: str,
+        semantic_summary: SemanticQaSummary | None = None,
     ) -> None:
         """
         Initialize the evaluator with the Neo4j driver, QA sources, thresholds, and report output settings.
-        
+
         Parameters:
             database (str | None): Optional Neo4j database name to query for QA metrics; use the default database when None.
             sources (Sequence[QaSourceRecord]): Sequence of QA source records describing ingested documents and their chunks to evaluate.
             thresholds (QaThresholds): QA gating thresholds to apply when evaluating anomalies.
             report_root (Path): Filesystem directory where JSON and Markdown QA reports will be written.
             report_version (str): Version string to embed in generated QA reports.
-        
+            semantic_summary (SemanticQaSummary | None): Optional semantic enrichment metrics collected during ingestion.
+
         """
         self._driver = driver
         self._database = database
@@ -290,6 +325,7 @@ class IngestionQaEvaluator:
         self._thresholds = thresholds
         self._report_root = report_root
         self._report_version = report_version
+        self._semantic_summary = semantic_summary
 
     def evaluate(self) -> QaResult:
         """
@@ -358,6 +394,34 @@ class IngestionQaEvaluator:
         totals = self._compute_totals()
         metrics.update(totals)
 
+        if self._semantic_summary and self._semantic_summary.enabled:
+            semantic_metrics: dict[str, Any] = {
+                "chunks_processed": self._semantic_summary.chunks_processed,
+                "chunk_failures": self._semantic_summary.chunk_failures,
+                "nodes_written": self._semantic_summary.nodes_written,
+                "relationships_written": self._semantic_summary.relationships_written,
+            }
+            semantic_metrics.update(self._collect_semantic_counts())
+            metrics["semantic"] = semantic_metrics
+            if (
+                semantic_metrics.get("chunk_failures", 0)
+                > self._thresholds.max_semantic_failures
+            ):
+                anomalies.append(
+                    "semantic_chunk_failures="
+                    f"{semantic_metrics.get('chunk_failures', 0)} exceeds max"
+                    f" {self._thresholds.max_semantic_failures}"
+                )
+            if (
+                semantic_metrics.get("orphan_entities", 0)
+                > self._thresholds.max_semantic_orphans
+            ):
+                anomalies.append(
+                    "semantic_orphan_entities="
+                    f"{semantic_metrics.get('orphan_entities', 0)} exceeds max"
+                    f" {self._thresholds.max_semantic_orphans}"
+                )
+
         per_file = [
             {
                 "relative_path": record.relative_path,
@@ -424,6 +488,36 @@ class IngestionQaEvaluator:
             version=self._report_version,
             duration_ms=eval_duration_ms,
         )
+
+    def _collect_semantic_counts(self) -> dict[str, int]:
+        """Collect semantic enrichment counts from Neo4j when enrichment is enabled."""
+
+        if not self._semantic_summary or not self._semantic_summary.enabled:
+            return {}
+        tag = self._semantic_summary.source_tag
+        node_count = self._query_value(
+            "MATCH (n) WHERE n.semantic_source = $source RETURN count(*) AS value",
+            {"source": tag},
+        )
+        relationship_count = self._query_value(
+            (
+                "MATCH ()-[r]->() WHERE r.semantic_source = $source "
+                "RETURN count(*) AS value"
+            ),
+            {"source": tag},
+        )
+        orphan_count = self._query_value(
+            (
+                "MATCH (n) WHERE n.semantic_source = $source AND NOT (n)--() "
+                "RETURN count(*) AS value"
+            ),
+            {"source": tag},
+        )
+        return {
+            "nodes_in_db": node_count,
+            "relationships_in_db": relationship_count,
+            "orphan_entities": orphan_count,
+        }
 
     def _compute_totals(self) -> dict[str, Any]:
         """
@@ -793,6 +887,109 @@ def _build_chunk_metadata(
     return metadata
 
 
+def _annotate_semantic_graph(
+    graph: Neo4jGraph,
+    *,
+    chunk_metadata: Mapping[str, ChunkMetadata],
+    relative_path: str,
+    git_commit: str | None,
+    document_checksum: str,
+) -> None:
+    """Attach provenance metadata to semantic nodes and relationships."""
+
+    for node in graph.nodes:
+        props = dict(node.properties or {})
+        prefix, _, _ = node.id.partition(":")
+        meta = chunk_metadata.get(prefix)
+        props.setdefault("relative_path", relative_path)
+        if git_commit is not None:
+            props.setdefault("git_commit", git_commit)
+        props.setdefault("document_checksum", document_checksum)
+        if meta is not None:
+            props.setdefault("chunk_uid", meta.uid)
+            props.setdefault("chunk_checksum", meta.checksum)
+        props.setdefault("semantic_source", SEMANTIC_SOURCE)
+        node.properties = props
+
+    for relationship in graph.relationships:
+        props = dict(relationship.properties or {})
+        start_prefix, _, _ = relationship.start_node_id.partition(":")
+        end_prefix, _, _ = relationship.end_node_id.partition(":")
+        chunk_ids = {prefix for prefix in (start_prefix, end_prefix) if prefix}
+        props.setdefault("relative_path", relative_path)
+        if git_commit is not None:
+            props.setdefault("git_commit", git_commit)
+        props.setdefault("document_checksum", document_checksum)
+        if chunk_ids:
+            props.setdefault("chunk_uids", sorted(chunk_ids))
+        props.setdefault("semantic_source", SEMANTIC_SOURCE)
+        relationship.properties = props
+
+
+def _run_semantic_enrichment(
+    *,
+    driver,
+    database: str | None,
+    llm: SharedOpenAILLM,
+    chunk_result: TextChunks,
+    chunk_metadata: Sequence[ChunkMetadata],
+    relative_path: str,
+    git_commit: str | None,
+    document_checksum: str,
+    ingest_run_key: str | None,
+    max_concurrency: int,
+) -> SemanticEnrichmentStats:
+    """Execute semantic entity extraction for the provided chunks and persist results."""
+
+    stats = SemanticEnrichmentStats(chunks_processed=len(chunk_result.chunks))
+    if not chunk_result.chunks:
+        return stats
+
+    extractor = LLMEntityRelationExtractor(
+        llm=llm,
+        create_lexical_graph=False,
+        on_error=OnError.RAISE,
+        max_concurrency=max_concurrency,
+    )
+    chunk_meta_by_uid = {meta.uid: meta for meta in chunk_metadata}
+
+    async def _extract() -> tuple[Neo4jGraph, int]:
+        chunk_graphs: list[Neo4jGraph] = []
+        failures = 0
+        for chunk in chunk_result.chunks:
+            try:
+                graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
+            except (LLMGenerationError, OpenAIClientError):
+                failures += 1
+                continue
+            await extractor.post_process_chunk(graph, chunk)
+            chunk_graphs.append(graph)
+        combined = extractor.combine_chunk_graphs(None, chunk_graphs)
+        return combined, failures
+
+    combined_graph, failures = asyncio.run(_extract())
+    stats.chunk_failures = failures
+
+    if not combined_graph.nodes and not combined_graph.relationships:
+        return stats
+
+    _annotate_semantic_graph(
+        combined_graph,
+        chunk_metadata=chunk_meta_by_uid,
+        relative_path=relative_path,
+        git_commit=git_commit,
+        document_checksum=document_checksum,
+    )
+
+    writer = SanitizingNeo4jWriter(driver=driver, neo4j_database=database)
+    writer.set_ingest_run_key(ingest_run_key)
+    asyncio.run(writer.run(combined_graph))
+
+    stats.nodes_written = len(combined_graph.nodes)
+    stats.relationships_written = len(combined_graph.relationships)
+    return stats
+
+
 def _ensure_jsonable(value: Any) -> Any:
     """
     Coerce an arbitrary Python value into a JSON-serializable structure.
@@ -1032,6 +1229,30 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="Maximum allowed checksum mismatches (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-semantic-failures",
+        type=int,
+        default=0,
+        help="Maximum allowed semantic extraction failures (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-semantic-orphans",
+        type=int,
+        default=0,
+        help="Maximum allowed semantic orphan entities (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--enable-semantic",
+        dest="semantic_enabled",
+        action="store_true",
+        help="Enable semantic enrichment using the GraphRAG entity-relation extractor.",
+    )
+    parser.add_argument(
+        "--semantic-max-concurrency",
+        type=int,
+        default=5,
+        help="Maximum concurrent semantic extraction requests (default: %(default)s)",
     )
     parser.add_argument(
         "--reset-database",
@@ -1666,6 +1887,11 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
 
     chunk_size = _ensure_positive(chunk_size, name="chunk_size")
     chunk_overlap = _ensure_non_negative(chunk_overlap, name="chunk_overlap")
+    semantic_max_concurrency = args.semantic_max_concurrency
+    if args.semantic_enabled:
+        semantic_max_concurrency = _ensure_positive(
+            semantic_max_concurrency, name="semantic_max_concurrency"
+        )
 
     ensure_env("OPENAI_API_KEY")
     ensure_env("NEO4J_URI")
@@ -1726,6 +1952,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     log_files: list[dict[str, Any]] = []
     log_chunks: list[dict[str, Any]] = []
     qa_sources: list[QaSourceRecord] = []
+    semantic_totals = SemanticEnrichmentStats()
     reset_pending = bool(args.reset_database)
 
     qa_section: dict[str, Any] | None = None
@@ -1810,10 +2037,41 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                     )
                 )
 
+                if args.semantic_enabled:
+                    semantic_stats = _run_semantic_enrichment(
+                        driver=driver,
+                        database=args.database,
+                        llm=llm,
+                        chunk_result=chunk_result,
+                        chunk_metadata=chunk_metadata,
+                        relative_path=spec.relative_path,
+                        git_commit=git_commit,
+                        document_checksum=spec.checksum,
+                        ingest_run_key=ingest_run_key,
+                        max_concurrency=semantic_max_concurrency,
+                    )
+                    semantic_totals.chunks_processed += (
+                        semantic_stats.chunks_processed
+                    )
+                    semantic_totals.chunk_failures += semantic_stats.chunk_failures
+                    semantic_totals.nodes_written += semantic_stats.nodes_written
+                    semantic_totals.relationships_written += (
+                        semantic_stats.relationships_written
+                    )
+
         thresholds = QaThresholds(
             max_missing_embeddings=args.qa_max_missing_embeddings,
             max_orphan_chunks=args.qa_max_orphan_chunks,
             max_checksum_mismatches=args.qa_max_checksum_mismatches,
+            max_semantic_failures=args.qa_max_semantic_failures,
+            max_semantic_orphans=args.qa_max_semantic_orphans,
+        )
+        semantic_summary = SemanticQaSummary(
+            enabled=bool(args.semantic_enabled),
+            chunks_processed=semantic_totals.chunks_processed,
+            chunk_failures=semantic_totals.chunk_failures,
+            nodes_written=semantic_totals.nodes_written,
+            relationships_written=semantic_totals.relationships_written,
         )
         evaluator = IngestionQaEvaluator(
             driver=driver,
@@ -1822,6 +2080,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             thresholds=thresholds,
             report_root=Path(args.qa_report_dir),
             report_version=QA_REPORT_VERSION,
+            semantic_summary=semantic_summary,
         )
 
         qa_result = evaluator.evaluate()
@@ -1878,6 +2137,13 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "files": log_files,
         "chunks": log_chunks,
     }
+    if semantic_summary.enabled:
+        log["semantic"] = {
+            "chunks_processed": semantic_summary.chunks_processed,
+            "chunk_failures": semantic_summary.chunk_failures,
+            "nodes_written": semantic_summary.nodes_written,
+            "relationships_written": semantic_summary.relationships_written,
+        }
     if qa_section is not None:
         log["qa"] = qa_section
 

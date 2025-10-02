@@ -36,6 +36,9 @@ from neo4j_graphrag.exceptions import (
 from neo4j_graphrag.retrievers import QdrantNeo4jRetriever
 
 
+SEMANTIC_SOURCE = "kg_build.semantic_enrichment.v1"
+
+
 _RETRIEVAL_QUERY = (
     "WITH node, score "
     "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
@@ -104,6 +107,11 @@ def main() -> None:
     parser.add_argument("--question", required=True)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--collection", default="chunks_main")
+    parser.add_argument(
+        "--include-semantic",
+        action="store_true",
+        help="Include semantic enrichment nodes and relationships in the output.",
+    )
     args = parser.parse_args()
 
     ensure_env("OPENAI_API_KEY")
@@ -128,6 +136,9 @@ def main() -> None:
     message = ""
     matches: list[dict[str, Any]] = []
     records: list[Any] = []
+
+    semantic_context: dict[str, dict[str, Any]] = {}
+    chunk_ids: list[str] = []
 
     try:
         embedding_result = client.embedding(input_text=args.question)
@@ -161,7 +172,22 @@ def main() -> None:
                         match["score"] = float(match["score"])
                     except (TypeError, ValueError):  # pragma: no cover - defensive guard
                         pass
+                chunk_id = match.get("chunk_id")
+                if isinstance(chunk_id, str):
+                    chunk_ids.append(chunk_id)
                 matches.append(match)
+            if args.include_semantic and chunk_ids:
+                with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
+                    semantic_context = _fetch_semantic_context(
+                        driver,
+                        database=neo4j_database,
+                        chunk_uids=chunk_ids,
+                    )
+                for match in matches:
+                    chunk_id = match.get("chunk_id")
+                    context = semantic_context.get(chunk_id)
+                    if context:
+                        match["semantic"] = context
     except OpenAIClientError as exc:
         status = "error"
         message = getattr(exc, "remediation", None) or str(exc)
@@ -204,6 +230,85 @@ def main() -> None:
 
     if status == "error":
         raise SystemExit(1)
+
+
+def _fetch_semantic_context(
+    driver,
+    *,
+    database: str | None,
+    chunk_uids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Fetch semantic enrichment nodes and relationships for the specified chunk IDs."""
+
+    if not chunk_uids:
+        return {}
+
+    query = """
+    MATCH (entity)
+    WHERE entity.semantic_source = $source AND entity.chunk_uid IN $chunk_uids
+    OPTIONAL MATCH (entity)-[rel]->(target)
+    WHERE rel.semantic_source = $source
+    RETURN entity.chunk_uid AS chunk_uid,
+           collect(DISTINCT {
+               id: entity.id,
+               labels: labels(entity),
+               properties: entity
+           }) AS nodes,
+           collect(DISTINCT {
+               type: type(rel),
+               start: startNode(rel).id,
+               end: endNode(rel).id,
+               properties: rel
+           }) AS relationships
+    """
+
+    result = driver.execute_query(
+        query,
+        {"chunk_uids": chunk_uids, "source": SEMANTIC_SOURCE},
+        database_=database,
+    )
+    records = result[0] if isinstance(result, tuple) else result
+    context: dict[str, dict[str, Any]] = {}
+    for record in records or []:
+        chunk_uid = record.get("chunk_uid")
+        if not chunk_uid:
+            continue
+
+        node_entries = record.get("nodes", [])
+        relationship_entries = record.get("relationships", [])
+
+        nodes_payload = []
+        for node_entry in node_entries:
+            node_dict = dict(node_entry)
+            properties = scrub_object(node_dict.get("properties", {}))
+            nodes_payload.append(
+                {
+                    "id": node_dict.get("id"),
+                    "labels": list(node_dict.get("labels", [])),
+                    "properties": properties,
+                }
+            )
+
+        relationships_payload = []
+        for rel_entry in relationship_entries:
+            rel_dict = dict(rel_entry)
+            rel_properties = scrub_object(rel_dict.get("properties", {}))
+            relationships_payload.append(
+                {
+                    "type": rel_dict.get("type"),
+                    "start": rel_dict.get("start"),
+                    "end": rel_dict.get("end"),
+                    "properties": rel_properties,
+                }
+            )
+
+        if nodes_payload or relationships_payload:
+            context[str(chunk_uid)] = {
+                "nodes": nodes_payload,
+                "relationships": relationships_payload,
+            }
+
+    return context
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

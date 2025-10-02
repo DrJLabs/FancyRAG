@@ -1,0 +1,74 @@
+schema: 1
+story: "3.5"
+story_title: "Semantic Enrichment Pipeline & Retrieval Surfacing"
+gate: "PASS"
+status_reason: "Semantic enrichment flag, QA thresholds, retrieval surfacing, and documentation updates verified via automated tests; residual risk limited to monitoring extraction runtime when semantic mode enabled."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-02T10:55:00-07:00"
+waiver: { active: false }
+top_issues:
+  - "Monitor semantic extraction runtime/token usage when enabling flag at scale."
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src pytest tests/unit/scripts/test_kg_build.py"
+    - "PYTHONPATH=src pytest tests/unit/scripts/test_ask_qdrant.py"
+    - "PYTHONPATH=src python3 -m scripts.check_docs --strict"
+  risks_identified:
+    - "TECH-201"
+    - "OPS-203"
+  trace:
+    totals:
+      requirements: 4
+      full: 4
+      partial: 0
+      none: 0
+    planning_ref: docs/qa/assessments/3.5-test-design-20251002.md
+    uncovered: []
+    notes: docs/qa/assessments/3.5-trace-20251002.md
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 3
+    low: 1
+  highest: TECH-201
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Track semantic chunk failure counts and runtime in QA metrics; adjust concurrency if needed."
+      - "Observe semantic orphan thresholds during first production runs to validate defaults."
+test_design:
+  scenarios_total: 9
+  by_level:
+    unit: 4
+    integration: 4
+    e2e: 1
+  by_priority:
+    p0: 6
+    p1: 3
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability, observability]
+  security:
+    status: PASS
+    notes: "Semantic payloads sanitized; provenance limited to non-sensitive metadata."
+  performance:
+    status: PASS_MONITOR
+    notes: "Default flow unchanged; monitor extraction runtime when semantic mode enabled."
+  reliability:
+    status: PASS
+    notes: "Rollback on failure and QA thresholds prevent partial semantic writes."
+  maintainability:
+    status: PASS
+    notes: "Provenance tagging centralized; docs updated with flags and thresholds."
+  observability:
+    status: PASS
+    notes: "Run logs and QA metrics capture semantic counts/failures; retrieval CLI exposes data on demand."
+references:
+  risk_profile: docs/qa/assessments/3.5-risk-20251002.md
+  test_design: docs/qa/assessments/3.5-test-design-20251002.md
+  trace: docs/qa/assessments/3.5-trace-20251002.md
+  nfr_assessment: docs/qa/assessments/3.5-nfr-20251002.md
+  review: docs/qa/assessments/3.5-review-20251002.md

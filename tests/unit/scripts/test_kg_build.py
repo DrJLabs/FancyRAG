@@ -7,6 +7,7 @@ import pathlib
 import sys
 import types
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -159,6 +160,9 @@ class FakeDriver:
             "chunks": 4,
             "relationships": 4,
         }
+        self.semantic_nodes = 0
+        self.semantic_relationships = 0
+        self.semantic_orphans = 0
 
     def __enter__(self) -> "FakeDriver":
         """
@@ -213,6 +217,12 @@ class FakeDriver:
             return ([{"value": self.qa_orphan_chunks}], None, None)
         if "coalesce(c.checksum" in query_text:
             return ([{"value": self.qa_checksum_mismatches}], None, None)
+        if "n.semantic_source" in query_text and "AND NOT" in query_text:
+            return ([{"value": self.semantic_orphans}], None, None)
+        if "n.semantic_source" in query_text:
+            return ([{"value": self.semantic_nodes}], None, None)
+        if "r.semantic_source" in query_text:
+            return ([{"value": self.semantic_relationships}], None, None)
         if "MATCH (:Document) RETURN count" in query_text:
             return ([{"value": self.graph_counts.get("documents", 0)}], None, None)
         if "MATCH (:Chunk) RETURN count" in query_text and "HAS_CHUNK" not in query_text:
@@ -404,6 +414,93 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
         ]
     )
 
+
+def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    source = tmp_path / "sample.txt"
+    source.write_text("sample content", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+    qa_dir = tmp_path / "qa"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        driver.semantic_nodes = 12
+        driver.semantic_relationships = 7
+        driver.semantic_orphans = 0
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    semantic_calls: list[dict[str, Any]] = []
+
+    def fake_semantic(**kwargs) -> kg.SemanticEnrichmentStats:
+        semantic_calls.append(kwargs)
+        return kg.SemanticEnrichmentStats(
+            chunks_processed=2,
+            chunk_failures=0,
+            nodes_written=4,
+            relationships_written=3,
+        )
+
+    monkeypatch.setattr(kg, "_run_semantic_enrichment", fake_semantic)
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--qa-report-dir",
+            str(qa_dir),
+            "--enable-semantic",
+            "--semantic-max-concurrency",
+            "3",
+        ]
+    )
+
+    assert semantic_calls, "semantic enrichment helper was not invoked"
+    assert semantic_calls[0]["max_concurrency"] == 3
+    assert log["semantic"] == {
+        "chunks_processed": 2,
+        "chunk_failures": 0,
+        "nodes_written": 4,
+        "relationships_written": 3,
+    }
+    qa_metrics = log["qa"]["metrics"].get("semantic")
+    assert qa_metrics is not None
+    assert qa_metrics["chunks_processed"] == 2
+    assert qa_metrics["chunk_failures"] == 0
+    assert qa_metrics["nodes_written"] == 4
+    assert qa_metrics["relationships_written"] == 3
+    # database counters sourced from the fake driver
+    assert qa_metrics["nodes_in_db"] == 12
+    assert qa_metrics["relationships_in_db"] == 7
+    assert qa_metrics["orphan_entities"] == 0
     assert created_drivers, "Expected GraphDatabase.driver to be invoked"
     assert not any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
 
