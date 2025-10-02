@@ -43,7 +43,7 @@ _RETRIEVAL_QUERY = (
     "WITH node, score "
     "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
     "RETURN node.chunk_id AS chunk_id, "
-    "node.chunk_uid AS chunk_uid, "
+    "coalesce(node.chunk_uid, node.uid) AS chunk_uid, "
     "node.text AS text, "
     "node.source_path AS source_path, "
     "node.relative_path AS relative_path, "
@@ -142,7 +142,7 @@ def main() -> None:
     records: list[Any] = []
 
     semantic_context: dict[str, dict[str, Any]] = {}
-    semantic_chunk_uids: list[str] = []
+    semantic_chunk_uids: dict[str, None] = {}
 
     try:
         embedding_result = client.embedding(input_text=args.question)
@@ -176,20 +176,16 @@ def main() -> None:
                         match["score"] = float(match["score"])
                     except (TypeError, ValueError):  # pragma: no cover - defensive guard
                         pass
-                chunk_uid = match.get("chunk_uid")
-                if isinstance(chunk_uid, str):
-                    semantic_chunk_uids.append(chunk_uid)
-                else:
-                    chunk_id = match.get("chunk_id")
-                    if isinstance(chunk_id, str):
-                        semantic_chunk_uids.append(chunk_id)
+                chunk_identifier = match.get("chunk_uid") or match.get("chunk_id")
+                if isinstance(chunk_identifier, str):
+                    semantic_chunk_uids.setdefault(chunk_identifier, None)
                 matches.append(match)
             if args.include_semantic and semantic_chunk_uids:
                 with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
                     semantic_context = _fetch_semantic_context(
                         driver,
                         database=neo4j_database,
-                        chunk_uids=semantic_chunk_uids,
+                        chunk_uids=list(semantic_chunk_uids.keys()),
                     )
                 for match in matches:
                     chunk_uid = match.get("chunk_uid") or match.get("chunk_id")
@@ -254,7 +250,7 @@ def _fetch_semantic_context(
     query = """
     MATCH (entity)
     WHERE entity.semantic_source = $source AND entity.chunk_uid IN $chunk_uids
-    OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]->(target)
+    OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]-(target)
     RETURN entity.chunk_uid AS chunk_uid,
            collect(DISTINCT {
                id: entity.id,

@@ -1085,7 +1085,9 @@ def _annotate_semantic_graph(
     for node in graph.nodes:
         props = dict(node.properties or {})
         prefix, _, _ = node.id.partition(":")
-        meta = chunk_metadata.get(prefix)
+        meta = chunk_metadata.get(node.id)
+        if meta is None and prefix:
+            meta = chunk_metadata.get(prefix)
         props.setdefault("relative_path", relative_path)
         if git_commit is not None:
             props.setdefault("git_commit", git_commit)
@@ -1100,13 +1102,18 @@ def _annotate_semantic_graph(
         props = dict(relationship.properties or {})
         start_prefix, _, _ = relationship.start_node_id.partition(":")
         end_prefix, _, _ = relationship.end_node_id.partition(":")
-        chunk_ids = {prefix for prefix in (start_prefix, end_prefix) if prefix}
+        related_metas = [
+            chunk_metadata[prefix]
+            for prefix in (relationship.start_node_id, relationship.end_node_id, start_prefix, end_prefix)
+            if prefix and prefix in chunk_metadata
+        ]
         props.setdefault("relative_path", relative_path)
         if git_commit is not None:
             props.setdefault("git_commit", git_commit)
         props.setdefault("document_checksum", document_checksum)
-        if chunk_ids:
-            props.setdefault("chunk_uids", sorted(chunk_ids))
+        resolved_uids = sorted({meta.uid for meta in related_metas})
+        if resolved_uids:
+            props.setdefault("chunk_uids", resolved_uids)
         props.setdefault("semantic_source", SEMANTIC_SOURCE)
         relationship.properties = props
 
@@ -1136,7 +1143,15 @@ def _run_semantic_enrichment(
         on_error=OnError.RAISE,
         max_concurrency=max_concurrency,
     )
-    chunk_meta_by_uid = {meta.uid: meta for meta in chunk_metadata}
+    chunk_meta_lookup: dict[str, ChunkMetadata] = {}
+    for meta in chunk_metadata:
+        chunk_meta_lookup[meta.uid] = meta
+        chunk_meta_lookup[str(meta.sequence)] = meta
+        if meta.index is not None:
+            chunk_meta_lookup[str(meta.index)] = meta
+        prefix_uid, _, _ = str(meta.uid).partition(":")
+        if prefix_uid:
+            chunk_meta_lookup[prefix_uid] = meta
 
     async def _extract() -> tuple[Neo4jGraph, int]:
         semaphore = asyncio.Semaphore(max(1, max_concurrency))
@@ -1167,7 +1182,7 @@ def _run_semantic_enrichment(
 
     _annotate_semantic_graph(
         combined_graph,
-        chunk_metadata=chunk_meta_by_uid,
+        chunk_metadata=chunk_meta_lookup,
         relative_path=relative_path,
         git_commit=git_commit,
         document_checksum=document_checksum,

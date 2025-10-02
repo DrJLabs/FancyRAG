@@ -267,6 +267,7 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
     kwargs = capture["kwargs"]
     assert kwargs["id_property_external"] == "chunk_id"
     assert "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node)" in kwargs["retrieval_query"]
+    assert "coalesce(node.chunk_uid, node.uid) AS chunk_uid" in kwargs["retrieval_query"]
 
 
 def test_main_includes_semantic_context(monkeypatch, tmp_path, capsys):
