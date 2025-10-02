@@ -188,6 +188,15 @@ def test_minimal_path_smoke() -> None:
             env=env,
         )
 
+        run_command(
+            python,
+            "-m",
+            "scripts.check_docs",
+            "--json-output",
+            str(PROJECT_ROOT / "artifacts" / "docs" / "check_docs_smoke.json"),
+            env=env,
+        )
+
     finally:
         if stack_started and not skip_docker_ops:
             run_command(
