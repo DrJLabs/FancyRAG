@@ -8,6 +8,7 @@ import asyncio
 import copy
 import functools
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -18,8 +19,9 @@ import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -33,19 +35,210 @@ from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
 from fancyrag.utils import ensure_env
-from neo4j_graphrag.embeddings.base import Embedder
-from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
-from neo4j_graphrag.experimental.components.kg_writer import KGWriterModel, Neo4jWriter
-from neo4j_graphrag.experimental.components.lexical_graph import LexicalGraphConfig
-from neo4j_graphrag.experimental.components.schema import GraphSchema
-from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
-    FixedSizeSplitter,
-)
-from neo4j_graphrag.experimental.components.types import TextChunk, TextChunks
-from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
-from neo4j_graphrag.llm.base import LLMInterface
-from neo4j_graphrag.llm.types import LLMResponse
-from pydantic import ValidationError, validate_call
+
+_PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
+
+if _PYDANTIC_AVAILABLE:  # pragma: no branch - import-time dependency check
+    from pydantic import ValidationError, validate_call
+else:  # pragma: no cover - exercised only in minimal CI environments
+    class ValidationError(ValueError):  # type: ignore[no-redef]
+        """Fallback validation error when pydantic is unavailable."""
+
+
+    def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
+        """Simplified validate_call decorator that returns the function unchanged."""
+
+        if func is None:
+            return lambda wrapped: wrapped
+        return func
+
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:  # pragma: no cover - importlib quirk when parent is module
+        return False
+
+
+_GRAPHRAG_MODULES = [
+    "neo4j_graphrag.embeddings.base",
+    "neo4j_graphrag.exceptions",
+    "neo4j_graphrag.experimental.components.entity_relation_extractor",
+    "neo4j_graphrag.experimental.components.kg_writer",
+    "neo4j_graphrag.experimental.components.lexical_graph",
+    "neo4j_graphrag.experimental.components.schema",
+    "neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter",
+    "neo4j_graphrag.experimental.components.types",
+    "neo4j_graphrag.experimental.pipeline.kg_builder",
+    "neo4j_graphrag.llm.base",
+    "neo4j_graphrag.llm.types",
+]
+
+_GRAPHRAG_AVAILABLE = all(_module_available(module_name) for module_name in _GRAPHRAG_MODULES)
+
+if _GRAPHRAG_AVAILABLE:  # pragma: no branch - import-time dependency check
+    from neo4j_graphrag.embeddings.base import Embedder
+    from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
+    from neo4j_graphrag.experimental.components.entity_relation_extractor import (
+        LLMEntityRelationExtractor,
+        OnError,
+    )
+    from neo4j_graphrag.experimental.components.kg_writer import (
+        KGWriterModel,
+        Neo4jWriter,
+    )
+    from neo4j_graphrag.experimental.components.lexical_graph import LexicalGraphConfig
+    from neo4j_graphrag.experimental.components.schema import GraphSchema
+    from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
+        FixedSizeSplitter,
+    )
+    from neo4j_graphrag.experimental.components.types import (
+        TextChunk,
+        TextChunks,
+        Neo4jGraph,
+    )
+    from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
+    from neo4j_graphrag.llm.base import LLMInterface
+    from neo4j_graphrag.llm.types import LLMResponse
+else:  # pragma: no cover - exercised only in minimal CI environments
+    class _GraphRagMissingDependency(ModuleNotFoundError):
+        """Raised when neo4j_graphrag functionality is required but unavailable."""
+
+
+    class Embedder:  # type: ignore[no-redef]
+        """Placeholder Embedder base when neo4j_graphrag is absent."""
+
+
+    class EmbeddingsGenerationError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback embeddings error used when neo4j_graphrag is unavailable."""
+
+
+    class LLMGenerationError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback LLM error used when neo4j_graphrag is unavailable."""
+
+
+    class LLMInterface:  # type: ignore[no-redef]
+        """Minimal LLM interface placeholder for SharedOpenAILLM."""
+
+        def __init__(
+            self,
+            *_args,
+            model_name: str | None = None,
+            model_params: Mapping[str, Any] | None = None,
+            **_kwargs,
+        ) -> None:
+            self.model_name = model_name
+            self.model_params = dict(model_params or {})
+
+
+    @dataclass
+    class LLMResponse:  # type: ignore[no-redef]
+        """Lightweight response container mirroring neo4j_graphrag.llm.types.LLMResponse."""
+
+        content: str | None = None
+
+
+    class OnError(Enum):  # type: ignore[no-redef]
+        """Subset of the neo4j_graphrag OnError enumeration."""
+
+        RAISE = "raise"
+
+
+    class LLMEntityRelationExtractor:  # type: ignore[no-redef]
+        """Placeholder extractor that raises when semantic enrichment is requested without dependencies."""
+
+        def __init__(self, *_, **__) -> None:
+            raise _GraphRagMissingDependency(
+                "neo4j_graphrag is required for semantic enrichment support"
+            )
+
+
+    @dataclass
+    class KGWriterModel:  # type: ignore[no-redef]
+        """Minimal writer model capturing node/relationship counts."""
+
+        nodes_created: int = 0
+        relationships_created: int = 0
+
+
+    class Neo4jWriter:  # type: ignore[no-redef]
+        """Fallback writer with inert behavior when neo4j_graphrag is unavailable."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def run(self, *_args, **_kwargs) -> KGWriterModel:
+            raise _GraphRagMissingDependency(
+                "neo4j_graphrag is required for Neo4j writer execution"
+            )
+
+        def _nodes_to_rows(self, *_args, **_kwargs) -> list[dict[str, Any]]:
+            return []
+
+        def _relationships_to_rows(self, *_args, **_kwargs) -> list[dict[str, Any]]:
+            return []
+
+
+    class LexicalGraphConfig:  # type: ignore[no-redef]
+        """Placeholder lexical graph configuration object."""
+
+
+    class GraphSchema:  # type: ignore[no-redef]
+        """Placeholder schema returned when neo4j_graphrag is unavailable."""
+
+        @classmethod
+        def model_validate(cls, *_args, **_kwargs) -> "GraphSchema":
+            return cls()
+
+
+    @dataclass
+    class TextChunk:  # type: ignore[no-redef]
+        """Simple text chunk representation used for caching in tests."""
+
+        text: str
+        index: int
+        metadata: Any | None = None
+        uid: str = field(default_factory=lambda: str(uuid4()))
+
+
+    @dataclass
+    class TextChunks:  # type: ignore[no-redef]
+        """Container matching the interface expected from neo4j_graphrag splitters."""
+
+        chunks: list[TextChunk]
+
+
+    @dataclass
+    class Neo4jGraph:  # type: ignore[no-redef]
+        """Lightweight graph container for semantic enrichment statistics."""
+
+        nodes: list[Any] = field(default_factory=list)
+        relationships: list[Any] = field(default_factory=list)
+
+
+    class FixedSizeSplitter:  # type: ignore[no-redef]
+        """Simple splitter that yields one chunk per input string when dependencies are absent."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def run(self, text: str | Sequence[str], *_args, **_kwargs) -> TextChunks:
+            if isinstance(text, str):
+                items = [text]
+            else:
+                items = list(text)
+            chunks = [
+                TextChunk(text=item, index=index, metadata=None) for index, item in enumerate(items)
+            ]
+            return TextChunks(chunks=chunks)
+
+
+    class SimpleKGPipeline:  # type: ignore[no-redef]
+        """Pipeline stub that raises when executed without neo4j_graphrag installed."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise _GraphRagMissingDependency(
+                "neo4j_graphrag is required for the KG builder pipeline"
+            )
 
 # Maintain compatibility with earlier async driver import paths used in tests.
 AsyncGraphDatabase = GraphDatabase
@@ -66,6 +259,7 @@ DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent / "config" / "kg_schema.js
 DEFAULT_PROFILE = "text"
 QA_REPORT_VERSION = "ingestion-qa-report/v1"
 DEFAULT_QA_DIR = Path("artifacts/ingestion")
+SEMANTIC_SOURCE = "kg_build.semantic_enrichment.v1"
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "text": {
         "chunk_size": 600,
@@ -213,6 +407,28 @@ class QaChunkRecord:
 
 
 @dataclass
+class SemanticEnrichmentStats:
+    """Aggregated metrics describing semantic enrichment output."""
+
+    chunks_processed: int = 0
+    chunk_failures: int = 0
+    nodes_written: int = 0
+    relationships_written: int = 0
+
+
+@dataclass
+class SemanticQaSummary:
+    """Summary passed into QA evaluation for semantic enrichment metrics."""
+
+    enabled: bool = False
+    chunks_processed: int = 0
+    chunk_failures: int = 0
+    nodes_written: int = 0
+    relationships_written: int = 0
+    source_tag: str = SEMANTIC_SOURCE
+
+
+@dataclass
 class QaSourceRecord:
     """Aggregated ingestion artifact metadata for a single source."""
 
@@ -230,6 +446,8 @@ class QaThresholds:
     max_missing_embeddings: int = 0
     max_orphan_chunks: int = 0
     max_checksum_mismatches: int = 0
+    max_semantic_failures: int = 0
+    max_semantic_orphans: int = 0
 
 
 @dataclass
@@ -272,17 +490,19 @@ class IngestionQaEvaluator:
         thresholds: QaThresholds,
         report_root: Path,
         report_version: str,
+        semantic_summary: SemanticQaSummary | None = None,
     ) -> None:
         """
         Initialize the evaluator with the Neo4j driver, QA sources, thresholds, and report output settings.
-        
+
         Parameters:
             database (str | None): Optional Neo4j database name to query for QA metrics; use the default database when None.
             sources (Sequence[QaSourceRecord]): Sequence of QA source records describing ingested documents and their chunks to evaluate.
             thresholds (QaThresholds): QA gating thresholds to apply when evaluating anomalies.
             report_root (Path): Filesystem directory where JSON and Markdown QA reports will be written.
             report_version (str): Version string to embed in generated QA reports.
-        
+            semantic_summary (SemanticQaSummary | None): Optional semantic enrichment metrics collected during ingestion.
+
         """
         self._driver = driver
         self._database = database
@@ -290,6 +510,7 @@ class IngestionQaEvaluator:
         self._thresholds = thresholds
         self._report_root = report_root
         self._report_version = report_version
+        self._semantic_summary = semantic_summary
 
     def evaluate(self) -> QaResult:
         """
@@ -358,6 +579,34 @@ class IngestionQaEvaluator:
         totals = self._compute_totals()
         metrics.update(totals)
 
+        if self._semantic_summary and self._semantic_summary.enabled:
+            semantic_metrics: dict[str, Any] = {
+                "chunks_processed": self._semantic_summary.chunks_processed,
+                "chunk_failures": self._semantic_summary.chunk_failures,
+                "nodes_written": self._semantic_summary.nodes_written,
+                "relationships_written": self._semantic_summary.relationships_written,
+            }
+            semantic_metrics.update(self._collect_semantic_counts())
+            metrics["semantic"] = semantic_metrics
+            if (
+                semantic_metrics.get("chunk_failures", 0)
+                > self._thresholds.max_semantic_failures
+            ):
+                anomalies.append(
+                    "semantic_chunk_failures="
+                    f"{semantic_metrics.get('chunk_failures', 0)} exceeds max"
+                    f" {self._thresholds.max_semantic_failures}"
+                )
+            if (
+                semantic_metrics.get("orphan_entities", 0)
+                > self._thresholds.max_semantic_orphans
+            ):
+                anomalies.append(
+                    "semantic_orphan_entities="
+                    f"{semantic_metrics.get('orphan_entities', 0)} exceeds max"
+                    f" {self._thresholds.max_semantic_orphans}"
+                )
+
         per_file = [
             {
                 "relative_path": record.relative_path,
@@ -424,6 +673,36 @@ class IngestionQaEvaluator:
             version=self._report_version,
             duration_ms=eval_duration_ms,
         )
+
+    def _collect_semantic_counts(self) -> dict[str, int]:
+        """Collect semantic enrichment counts from Neo4j when enrichment is enabled."""
+
+        if not self._semantic_summary or not self._semantic_summary.enabled:
+            return {}
+        tag = self._semantic_summary.source_tag
+        node_count = self._query_value(
+            "MATCH (n) WHERE n.semantic_source = $source RETURN count(*) AS value",
+            {"source": tag},
+        )
+        relationship_count = self._query_value(
+            (
+                "MATCH ()-[r]->() WHERE r.semantic_source = $source "
+                "RETURN count(*) AS value"
+            ),
+            {"source": tag},
+        )
+        orphan_count = self._query_value(
+            (
+                "MATCH (n) WHERE n.semantic_source = $source AND NOT (n)--() "
+                "RETURN count(*) AS value"
+            ),
+            {"source": tag},
+        )
+        return {
+            "nodes_in_db": node_count,
+            "relationships_in_db": relationship_count,
+            "orphan_entities": orphan_count,
+        }
 
     def _compute_totals(self) -> dict[str, Any]:
         """
@@ -793,6 +1072,131 @@ def _build_chunk_metadata(
     return metadata
 
 
+def _annotate_semantic_graph(
+    graph: Neo4jGraph,
+    *,
+    chunk_metadata: Mapping[str, ChunkMetadata],
+    relative_path: str,
+    git_commit: str | None,
+    document_checksum: str,
+) -> None:
+    """Attach provenance metadata to semantic nodes and relationships."""
+
+    for node in graph.nodes:
+        props = dict(node.properties or {})
+        prefix, _, _ = node.id.partition(":")
+        meta = chunk_metadata.get(node.id)
+        if meta is None and prefix:
+            meta = chunk_metadata.get(prefix)
+        props.setdefault("relative_path", relative_path)
+        if git_commit is not None:
+            props.setdefault("git_commit", git_commit)
+        props.setdefault("document_checksum", document_checksum)
+        if meta is not None:
+            props.setdefault("chunk_uid", meta.uid)
+            props.setdefault("chunk_checksum", meta.checksum)
+        props.setdefault("semantic_source", SEMANTIC_SOURCE)
+        node.properties = props
+
+    for relationship in graph.relationships:
+        props = dict(relationship.properties or {})
+        start_prefix, _, _ = relationship.start_node_id.partition(":")
+        end_prefix, _, _ = relationship.end_node_id.partition(":")
+        related_metas = [
+            chunk_metadata[prefix]
+            for prefix in (relationship.start_node_id, relationship.end_node_id, start_prefix, end_prefix)
+            if prefix and prefix in chunk_metadata
+        ]
+        props.setdefault("relative_path", relative_path)
+        if git_commit is not None:
+            props.setdefault("git_commit", git_commit)
+        props.setdefault("document_checksum", document_checksum)
+        resolved_uids = sorted({meta.uid for meta in related_metas})
+        if resolved_uids:
+            props.setdefault("chunk_uids", resolved_uids)
+        props.setdefault("semantic_source", SEMANTIC_SOURCE)
+        relationship.properties = props
+
+
+def _run_semantic_enrichment(
+    *,
+    driver,
+    database: str | None,
+    llm: SharedOpenAILLM,
+    chunk_result: TextChunks,
+    chunk_metadata: Sequence[ChunkMetadata],
+    relative_path: str,
+    git_commit: str | None,
+    document_checksum: str,
+    ingest_run_key: str | None,
+    max_concurrency: int,
+) -> SemanticEnrichmentStats:
+    """Execute semantic entity extraction for the provided chunks and persist results."""
+
+    stats = SemanticEnrichmentStats(chunks_processed=len(chunk_result.chunks))
+    if not chunk_result.chunks:
+        return stats
+
+    extractor = LLMEntityRelationExtractor(
+        llm=llm,
+        create_lexical_graph=False,
+        on_error=OnError.RAISE,
+        max_concurrency=max_concurrency,
+    )
+    chunk_meta_lookup: dict[str, ChunkMetadata] = {}
+    for meta in chunk_metadata:
+        chunk_meta_lookup[meta.uid] = meta
+        chunk_meta_lookup[str(meta.sequence)] = meta
+        if meta.index is not None:
+            chunk_meta_lookup[str(meta.index)] = meta
+        prefix_uid, _, _ = str(meta.uid).partition(":")
+        if prefix_uid:
+            chunk_meta_lookup[prefix_uid] = meta
+
+    async def _extract() -> tuple[Neo4jGraph, int]:
+        semaphore = asyncio.Semaphore(max(1, max_concurrency))
+
+        async def _extract_and_process(chunk: TextChunk) -> Neo4jGraph | None:
+            async with semaphore:
+                try:
+                    graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
+                except (LLMGenerationError, OpenAIClientError):
+                    return None
+                await extractor.post_process_chunk(graph, chunk)
+                return graph
+
+        tasks = [_extract_and_process(chunk) for chunk in chunk_result.chunks]
+        results = await asyncio.gather(*tasks)
+
+        chunk_graphs = [graph for graph in results if graph is not None]
+        failures = len(results) - len(chunk_graphs)
+
+        combined = extractor.combine_chunk_graphs(None, chunk_graphs)
+        return combined, failures
+
+    combined_graph, failures = asyncio.run(_extract())
+    stats.chunk_failures = failures
+
+    if not combined_graph.nodes and not combined_graph.relationships:
+        return stats
+
+    _annotate_semantic_graph(
+        combined_graph,
+        chunk_metadata=chunk_meta_lookup,
+        relative_path=relative_path,
+        git_commit=git_commit,
+        document_checksum=document_checksum,
+    )
+
+    writer = SanitizingNeo4jWriter(driver=driver, neo4j_database=database)
+    writer.set_ingest_run_key(ingest_run_key)
+    asyncio.run(writer.run(combined_graph))
+
+    stats.nodes_written = len(combined_graph.nodes)
+    stats.relationships_written = len(combined_graph.relationships)
+    return stats
+
+
 def _ensure_jsonable(value: Any) -> Any:
     """
     Coerce an arbitrary Python value into a JSON-serializable structure.
@@ -1032,6 +1436,30 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="Maximum allowed checksum mismatches (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-semantic-failures",
+        type=int,
+        default=0,
+        help="Maximum allowed semantic extraction failures (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-semantic-orphans",
+        type=int,
+        default=0,
+        help="Maximum allowed semantic orphan entities (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--enable-semantic",
+        dest="semantic_enabled",
+        action="store_true",
+        help="Enable semantic enrichment using the GraphRAG entity-relation extractor.",
+    )
+    parser.add_argument(
+        "--semantic-max-concurrency",
+        type=int,
+        default=5,
+        help="Maximum concurrent semantic extraction requests (default: %(default)s)",
     )
     parser.add_argument(
         "--reset-database",
@@ -1666,6 +2094,11 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
 
     chunk_size = _ensure_positive(chunk_size, name="chunk_size")
     chunk_overlap = _ensure_non_negative(chunk_overlap, name="chunk_overlap")
+    semantic_max_concurrency = args.semantic_max_concurrency
+    if args.semantic_enabled:
+        semantic_max_concurrency = _ensure_positive(
+            semantic_max_concurrency, name="semantic_max_concurrency"
+        )
 
     ensure_env("OPENAI_API_KEY")
     ensure_env("NEO4J_URI")
@@ -1726,6 +2159,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     log_files: list[dict[str, Any]] = []
     log_chunks: list[dict[str, Any]] = []
     qa_sources: list[QaSourceRecord] = []
+    semantic_totals = SemanticEnrichmentStats()
     reset_pending = bool(args.reset_database)
 
     qa_section: dict[str, Any] | None = None
@@ -1810,10 +2244,41 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                     )
                 )
 
+                if args.semantic_enabled:
+                    semantic_stats = _run_semantic_enrichment(
+                        driver=driver,
+                        database=args.database,
+                        llm=llm,
+                        chunk_result=chunk_result,
+                        chunk_metadata=chunk_metadata,
+                        relative_path=spec.relative_path,
+                        git_commit=git_commit,
+                        document_checksum=spec.checksum,
+                        ingest_run_key=ingest_run_key,
+                        max_concurrency=semantic_max_concurrency,
+                    )
+                    semantic_totals.chunks_processed += (
+                        semantic_stats.chunks_processed
+                    )
+                    semantic_totals.chunk_failures += semantic_stats.chunk_failures
+                    semantic_totals.nodes_written += semantic_stats.nodes_written
+                    semantic_totals.relationships_written += (
+                        semantic_stats.relationships_written
+                    )
+
         thresholds = QaThresholds(
             max_missing_embeddings=args.qa_max_missing_embeddings,
             max_orphan_chunks=args.qa_max_orphan_chunks,
             max_checksum_mismatches=args.qa_max_checksum_mismatches,
+            max_semantic_failures=args.qa_max_semantic_failures,
+            max_semantic_orphans=args.qa_max_semantic_orphans,
+        )
+        semantic_summary = SemanticQaSummary(
+            enabled=bool(args.semantic_enabled),
+            chunks_processed=semantic_totals.chunks_processed,
+            chunk_failures=semantic_totals.chunk_failures,
+            nodes_written=semantic_totals.nodes_written,
+            relationships_written=semantic_totals.relationships_written,
         )
         evaluator = IngestionQaEvaluator(
             driver=driver,
@@ -1822,6 +2287,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             thresholds=thresholds,
             report_root=Path(args.qa_report_dir),
             report_version=QA_REPORT_VERSION,
+            semantic_summary=semantic_summary,
         )
 
         qa_result = evaluator.evaluate()
@@ -1878,6 +2344,13 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "files": log_files,
         "chunks": log_chunks,
     }
+    if semantic_summary.enabled:
+        log["semantic"] = {
+            "chunks_processed": semantic_summary.chunks_processed,
+            "chunk_failures": semantic_summary.chunk_failures,
+            "nodes_written": semantic_summary.nodes_written,
+            "relationships_written": semantic_summary.relationships_written,
+        }
     if qa_section is not None:
         log["qa"] = qa_section
 

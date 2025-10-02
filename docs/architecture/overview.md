@@ -17,7 +17,8 @@ Always consult the canonical documentation set below before running any GraphRAG
 - `docs/architecture/overview.md` (this file) — top-level workflows, environment sequencing, and operational guardrails.
 - `docs/architecture/source-tree.md` — current locations for CLI entrypoints, pipelines, and support modules.
 - `docs/architecture/coding-standards.md` — logging, retry, and testing expectations that every command must uphold.
-- `PYTHONPATH=src python -m scripts.check_docs` — documentation lint guard that enforces minimal-path instructions and native retriever references remain accurate before shipping ingestion or retrieval updates. Results are written to `artifacts/docs/check_docs.json` and failures surface actionable remediation hints.
+- `PYTHONPATH=src python3 -m scripts.check_docs --strict` — documentation lint guard that enforces minimal-path instructions and native retriever references remain accurate before shipping ingestion or retrieval updates. Results are written to `artifacts/docs/check_docs.json` and failures surface actionable remediation hints.
+- `PYTHONPATH=src python3 scripts/kg_build.py --enable-semantic` — optional semantic enrichment pass that invokes the GraphRAG `LLMEntityRelationExtractor`, writes entity/relationship nodes tagged with `semantic_source=kg_build.semantic_enrichment.v1`, and records additional QA metrics governed by `--qa-max-semantic-failures` and `--qa-max-semantic-orphans` thresholds. When either threshold is exceeded the run rolls back semantic nodes/relationships and exits with a non-zero status so base chunk ingestion remains intact.
 
 Re-read the sections relevant to the command you intend to run and confirm the workflow still matches the latest documented steps. If a command deviates from the documented behaviour, halt and update the documentation before proceeding.
 
@@ -50,6 +51,7 @@ graph TD
 | 2025-09-25 | 0.3     | Added workspace diagnostics guidance                | James     |
 | 2025-09-25 | 0.4     | Documented OpenAI readiness probe workflow          | James     |
 | 2025-09-28 | 0.5     | Added Docker Compose stack and minimal path scripts | Codex CLI |
+| 2025-10-02 | 0.6     | Documented semantic enrichment flag and QA thresholds | James     |
 
 ## Environment Configuration
 - Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4.1-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), and local stack defaults (`NEO4J_URI=bolt://localhost:7687`, `NEO4J_USERNAME=neo4j`, `NEO4J_PASSWORD=neo4j`, `QDRANT_URL=http://localhost:6333`). `QDRANT_API_KEY` may remain blank for local usage.
@@ -62,14 +64,14 @@ graph TD
 - To target managed services, override the same variables without modifying script code.
 
 ## Workspace Verification
-- After bootstrapping and populating `.env`, validate the environment with `PYTHONPATH=src python -m cli.diagnostics workspace --write-report` (or add `--verify` when running `scripts/bootstrap.sh`).
+- After bootstrapping and populating `.env`, validate the environment with `PYTHONPATH=src python3 -m cli.diagnostics workspace --write-report` (or add `--verify` when running `scripts/bootstrap.sh`).
 - The diagnostics command imports `neo4j_graphrag`, `neo4j`, `qdrant_client`, `openai`, `structlog`, and `pytest`, failing fast when dependencies are missing or misconfigured.
 - A structured report is written to `artifacts/environment/versions.json` capturing Python runtime, package versions (via `importlib.metadata`), the SHA-256 of `requirements.lock`, and the current git commit for audit trails.
 - Output is redacted automatically—no environment variables or secrets are persisted—allowing the report to be shared with operators and CI systems.
 - Rerun diagnostics whenever dependencies change (`pip install`/`pip-compile` updates), before pushing Compose updates, or prior to releasing automation changes so drift is detected early.
 
 ## OpenAI Readiness Probe
-- Run `PYTHONPATH=src python -m cli.diagnostics openai-probe` after the workspace diagnostics pass to validate OpenAI chat and embedding integrations end-to-end. The probe now routes through `cli.openai_client.SharedOpenAIClient`, ensuring every script shares the same guardrails, retries, and telemetry primitives.
+- Run `PYTHONPATH=src python3 -m cli.diagnostics openai-probe` after the workspace diagnostics pass to validate OpenAI chat and embedding integrations end-to-end. The probe now routes through `cli.openai_client.SharedOpenAIClient`, ensuring every script shares the same guardrails, retries, and telemetry primitives.
 - The probe issues a lightweight chat completion and embedding request using the configured defaults from `OpenAISettings`, writes a sanitized report to `artifacts/openai/probe.json`, and exports Prometheus metrics to `artifacts/openai/metrics.prom` with latency buckets spanning 100 ms–5 s.
 - Guardrails include exponential backoff for 429/`RateLimitError` responses with token-budget remediation messaging, reusable sanitization helpers shared with other diagnostics, and structured telemetry that records fallback usage (`gpt-4o-mini`) without leaking prompts or API keys. Golden fixtures protect report/metrics schemas when updating the shared client.
 
@@ -78,16 +80,17 @@ graph TD
 2. Validate compose configuration: `scripts/check_local_stack.sh --config` (wraps `docker compose config`).
 3. Start containers: `scripts/check_local_stack.sh --up` (or run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` directly).
 4. Wait for health checks to pass (`scripts/check_local_stack.sh --status` polls container health).
-5. Create the vector index (idempotent): `PYTHONPATH=src python scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine`.
-6. Build the minimal knowledge graph: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
-   - For larger corpora, choose a chunking profile (e.g., `--profile markdown` or `--profile code`) and optionally point at a directory: `PYTHONPATH=src python scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"`. Profiles auto-tune chunk size/overlap and ensure deterministic ordering.
+5. Create the vector index (idempotent): `PYTHONPATH=src python3 scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine`.
+6. Build the minimal knowledge graph: `PYTHONPATH=src python3 scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
+   - For larger corpora, choose a chunking profile (e.g., `--profile markdown` or `--profile code`) and optionally point at a directory: `PYTHONPATH=src python3 scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"`. Profiles auto-tune chunk size/overlap and ensure deterministic ordering.
+   - Turn on semantic enrichment when you need entity and relationship extraction: append `--enable-semantic` (tune concurrency with `--semantic-max-concurrency`). Semantic runs tag new nodes and relationships with `semantic_source=kg_build.semantic_enrichment.v1` and add QA coverage controlled by `--qa-max-semantic-failures` and `--qa-max-semantic-orphans`. If the QA thresholds trip, the workflow removes only the semantic entities/relationships for that run and exits non-zero; the base Document/Chunk graph remains untouched.
    - Directory ingestion skips non-text/binary files, logs warnings, and records per-chunk metadata (relative path, git commit, SHA-256 checksum, chunk indices) so downstream retrieval can filter by provenance.
    - Every ingestion run executes a QA gate before finalizing Neo4j writes and emits a versioned report (`ingestion-qa-report/v1`) under `artifacts/ingestion/<timestamp>/` (`quality_report.json` + `quality_report.md`). The report captures chunk/token histograms, orphan integrity, and checksum validation results. Override thresholds with `--qa-max-missing-embeddings`, `--qa-max-orphan-chunks`, and `--qa-max-checksum-mismatches`; failing gates roll back newly created chunks/documents and return a non-zero exit code.
    - Run logs capture both ingestion duration and `qa.qa_evaluation_ms`, and reports are scrubbed via the shared sanitizer to avoid leaking secrets or absolute filesystem paths.
-7. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
-8. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
+7. Export embeddings: `PYTHONPATH=src python3 scripts/export_to_qdrant.py --collection chunks_main`.
+8. Smoke retrieval: `PYTHONPATH=src python3 scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
    - The CLI now delegates vector search + context joins to `neo4j_graphrag.retrievers.QdrantNeo4jRetriever`, wiring the Qdrant payload `chunk_id` to Neo4j `Chunk` nodes and returning the same sanitized log payload used by QA telemetry. Override the collection name or join properties via existing CLI/env settings if your deployment stores alternative identifiers.
-9. Documentation lint guard: `PYTHONPATH=src python -m scripts.check_docs` verifies `docs/architecture/overview.md` and `docs/architecture/source-tree.md` still reflect the minimal-path workflow and native retriever usage.
+9. Documentation lint guard: `PYTHONPATH=src python3 -m scripts.check_docs` verifies `docs/architecture/overview.md` and `docs/architecture/source-tree.md` still reflect the minimal-path workflow and native retriever usage.
 10. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).
 
 Both scripts load credentials from `.env`, reuse `SharedOpenAIClient` for retries/telemetry, and emit sanitized JSON logs under `artifacts/local_stack/` for smoke assertions. Adjust options as needed for managed deployments (e.g., `--database`, alternative chunk sizes).
@@ -96,7 +99,7 @@ All scripts honour `.env` overrides for connection details and exit non-zero on 
 
 ## Local Stack Automation
 - `scripts/check_local_stack.sh` wraps common compose lifecycle commands (`--config`, `--up`, `--status`, `--down`). It emits structured logs and ensures health checks pass before succeeding.
-- `scripts/check_docs.py` runs as part of release automation to guard against documentation drift; execute with `PYTHONPATH=src python -m scripts.check_docs`. The command exits non-zero on missing minimal-path instructions or retriever references and produces a sanitized report at `artifacts/docs/check_docs.json` for QA evidence.
+- `scripts/check_docs.py` runs as part of release automation to guard against documentation drift; execute with `PYTHONPATH=src python3 -m scripts.check_docs`. The command exits non-zero on missing minimal-path instructions or retriever references and produces a sanitized report at `artifacts/docs/check_docs.json` for QA evidence.
 - `tests/integration/local_stack/test_minimal_path_smoke.py` orchestrates the full minimal path once Docker and required API keys are available. Directory fixtures sample both documentation and code profiles for regression coverage.
 - GitHub Actions workflow `local-stack-smoke.yml` enforces `docker compose config` linting and executes the smoke suite on pushes/PRs (requires Docker on runners).
-- QA artifacts produced by `scripts/kg_build.py` are stored under `artifacts/ingestion/<timestamp>/`. CI jobs collect these reports (JSON + Markdown) to surface gating failures and provide operators with sanitized summaries alongside runtime metrics.
+- QA artifacts produced by `scripts/kg_build.py` are stored under `artifacts/ingestion/<timestamp>/`. CI jobs collect these reports (JSON + Markdown) to surface gating failures, semantic enrichment anomalies, and provide operators with sanitized summaries alongside runtime metrics.

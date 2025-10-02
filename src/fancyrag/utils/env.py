@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import os
+import importlib.util
 from itertools import chain
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+_DOTENV_AVAILABLE = importlib.util.find_spec("dotenv") is not None
+
+if _DOTENV_AVAILABLE:
+    from dotenv import load_dotenv
+else:
+    def load_dotenv(*_args: object, **_kwargs: object) -> bool:  # type: ignore[no-redef]
+        """Fallback that indicates no `.env` file was loaded when python-dotenv is absent."""
+
+        return False
 
 
 _ENV_LOADED = False

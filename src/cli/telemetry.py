@@ -5,12 +5,57 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
+import importlib.util
+
 from _compat.structlog import get_logger
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+
+_PROMETHEUS_AVAILABLE = importlib.util.find_spec("prometheus_client") is not None
+
+if _PROMETHEUS_AVAILABLE:  # pragma: no branch - import-time check
+    from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+else:
+    class CollectorRegistry:  # type: ignore[no-redef]
+        """No-op CollectorRegistry replacement when prometheus_client is unavailable."""
+
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            """Initialize a collector registry that silently drops metrics."""
+
+
+    class _NoOpMetric:  # pragma: no cover - trivial forwarding methods
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def labels(self, *_args: Any, **_kwargs: Any) -> "_NoOpMetric":
+            return self
+
+        def observe(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        def inc(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+
+    class Histogram(_NoOpMetric):  # type: ignore[no-redef]
+        """Histogram shim that discards observations."""
+
+
+    class Counter(_NoOpMetric):  # type: ignore[no-redef]
+        """Counter shim that discards increments."""
+
+
+    def generate_latest(_registry: CollectorRegistry) -> bytes:  # type: ignore[no-redef]
+        """Return empty Prometheus payload when client library is missing."""
+
+        return b""
 
 from cli.sanitizer import scrub_object
 
 logger = get_logger(__name__)
+
+if not _PROMETHEUS_AVAILABLE:  # pragma: no cover - log only when dependency absent
+    logger.warning(
+        "prometheus_client missing; OpenAI telemetry metrics will be no-ops."
+    )
 
 
 _LATENCY_BUCKETS_MS = (100, 250, 500, 1000, 2000, 5000)

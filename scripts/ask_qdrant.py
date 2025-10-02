@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,10 +37,14 @@ from neo4j_graphrag.exceptions import (
 from neo4j_graphrag.retrievers import QdrantNeo4jRetriever
 
 
+SEMANTIC_SOURCE = "kg_build.semantic_enrichment.v1"
+
+
 _RETRIEVAL_QUERY = (
     "WITH node, score "
     "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
     "RETURN node.chunk_id AS chunk_id, "
+    "coalesce(node.chunk_uid, node.uid) AS chunk_uid, "
     "node.text AS text, "
     "node.source_path AS source_path, "
     "node.relative_path AS relative_path, "
@@ -88,6 +93,9 @@ def _record_to_match(record: Any) -> dict[str, Any]:
     if chunk_identifier is not None:
         payload["chunk_id"] = str(chunk_identifier)
 
+    if "chunk_uid" in payload and payload["chunk_uid"] is not None:
+        payload["chunk_uid"] = str(payload["chunk_uid"])
+
     return payload
 
 
@@ -104,6 +112,11 @@ def main() -> None:
     parser.add_argument("--question", required=True)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--collection", default="chunks_main")
+    parser.add_argument(
+        "--include-semantic",
+        action="store_true",
+        help="Include semantic enrichment nodes and relationships in the output.",
+    )
     args = parser.parse_args()
 
     ensure_env("OPENAI_API_KEY")
@@ -128,6 +141,9 @@ def main() -> None:
     message = ""
     matches: list[dict[str, Any]] = []
     records: list[Any] = []
+
+    semantic_context: dict[str, dict[str, Any]] = {}
+    semantic_chunk_uids: dict[str, None] = {}
 
     try:
         embedding_result = client.embedding(input_text=args.question)
@@ -161,7 +177,22 @@ def main() -> None:
                         match["score"] = float(match["score"])
                     except (TypeError, ValueError):  # pragma: no cover - defensive guard
                         pass
+                chunk_uid = match.get("chunk_uid")
+                if isinstance(chunk_uid, str) and chunk_uid:
+                    semantic_chunk_uids.setdefault(chunk_uid, None)
                 matches.append(match)
+            if args.include_semantic and semantic_chunk_uids:
+                with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
+                    semantic_context = _fetch_semantic_context(
+                        driver,
+                        database=neo4j_database,
+                        chunk_uids=list(semantic_chunk_uids.keys()),
+                    )
+                for match in matches:
+                    chunk_uid = match.get("chunk_uid")
+                    context = semantic_context.get(chunk_uid) if isinstance(chunk_uid, str) else None
+                    if context:
+                        match["semantic"] = context
     except OpenAIClientError as exc:
         status = "error"
         message = getattr(exc, "remediation", None) or str(exc)
@@ -182,6 +213,14 @@ def main() -> None:
         status = "error"
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover - final safety net for unexpected errors
+        status = "error"
+        message = str(exc)
+        print(
+            f"error: unexpected {exc.__class__.__name__}: {exc}",
+            file=sys.stderr,
+        )
+        print(traceback.format_exc(), file=sys.stderr)
 
     duration_ms = int((time.perf_counter() - start) * 1000)
     log = {
@@ -204,6 +243,128 @@ def main() -> None:
 
     if status == "error":
         raise SystemExit(1)
+
+
+def _fetch_semantic_context(
+    driver,
+    *,
+    database: str | None,
+    chunk_uids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Fetch semantic enrichment nodes and relationships for the specified chunk IDs."""
+
+    if not chunk_uids:
+        return {}
+
+    query = """
+    MATCH (entity:__Entity__)
+    WHERE entity.semantic_source = $source AND entity.chunk_uid IN $chunk_uids
+    OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]-(target:__Entity__)
+    WITH entity.chunk_uid AS chunk_uid,
+         collect(DISTINCT {
+             id: coalesce(entity.id, elementId(entity)),
+             element_id: elementId(entity),
+             labels: labels(entity),
+             properties: properties(entity)
+         }) AS entity_nodes,
+         collect(DISTINCT CASE
+             WHEN target IS NULL THEN NULL
+             ELSE {
+                 id: coalesce(target.id, elementId(target)),
+                 element_id: elementId(target),
+                 labels: labels(target),
+                 properties: properties(target)
+             }
+         END) AS related_nodes,
+         collect(DISTINCT CASE
+             WHEN rel IS NULL THEN NULL
+             ELSE {
+                 type: type(rel),
+                 start: elementId(startNode(rel)),
+                 end: elementId(endNode(rel)),
+                 properties: properties(rel)
+             }
+         END) AS relationship_entries
+    RETURN chunk_uid,
+           entity_nodes,
+           [node IN related_nodes WHERE node IS NOT NULL] AS related_nodes,
+           [rel IN relationship_entries WHERE rel IS NOT NULL] AS relationships
+    """
+
+    result = driver.execute_query(
+        query,
+        {"chunk_uids": chunk_uids, "source": SEMANTIC_SOURCE},
+        database_=database,
+    )
+    records = result[0] if isinstance(result, tuple) else result
+    context: dict[str, dict[str, Any]] = {}
+    for record in records or []:
+        chunk_uid = record.get("chunk_uid")
+        if not chunk_uid:
+            continue
+
+        entity_nodes = record.get("entity_nodes", [])
+        related_nodes = record.get("related_nodes", [])
+        node_entries = [*entity_nodes, *related_nodes]
+        relationship_entries = [
+            entry
+            for entry in record.get("relationships", [])
+            if entry
+        ]
+
+        nodes_payload = []
+        seen_node_ids: set[str] = set()
+        for node_entry in node_entries:
+            if not node_entry:
+                continue
+            node_dict = dict(node_entry)
+            node_id = node_dict.get("id")
+            if node_id is not None:
+                node_id = str(node_id)
+            element_id = node_dict.get("element_id")
+            if element_id is not None:
+                element_id = str(element_id)
+            dedupe_key = element_id or node_id
+            if dedupe_key in seen_node_ids:
+                continue
+            raw_properties = node_dict.get("properties", {}) or {}
+            if not isinstance(raw_properties, dict):
+                raw_properties = dict(raw_properties)
+            properties = scrub_object(raw_properties)
+            nodes_payload.append(
+                {
+                    "id": node_id,
+                    "element_id": element_id,
+                    "labels": list(node_dict.get("labels", [])),
+                    "properties": properties,
+                }
+            )
+            if dedupe_key is not None:
+                seen_node_ids.add(dedupe_key)
+
+        relationships_payload = []
+        for rel_entry in relationship_entries:
+            rel_dict = dict(rel_entry)
+            raw_rel_properties = rel_dict.get("properties", {}) or {}
+            if not isinstance(raw_rel_properties, dict):
+                raw_rel_properties = dict(raw_rel_properties)
+            rel_properties = scrub_object(raw_rel_properties)
+            relationships_payload.append(
+                {
+                    "type": rel_dict.get("type"),
+                    "start": (str(rel_dict.get("start")) if rel_dict.get("start") is not None else None),
+                    "end": (str(rel_dict.get("end")) if rel_dict.get("end") is not None else None),
+                    "properties": rel_properties,
+                }
+            )
+
+        if nodes_payload or relationships_payload:
+            context[str(chunk_uid)] = {
+                "nodes": nodes_payload,
+                "relationships": relationships_payload,
+            }
+
+    return context
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

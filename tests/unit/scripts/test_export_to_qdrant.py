@@ -401,6 +401,7 @@ class TestMain:
         scrub_arg = mock_scrub.call_args[0][0]
         assert scrub_arg["status"] == "skipped"
         assert "No chunk nodes available" in scrub_arg["message"]
+        assert scrub_arg["skipped_chunks"] == 0
 
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")
@@ -416,10 +417,10 @@ class TestMain:
             "NEO4J_PASSWORD": "password",
         },
     )
-    def test_main_error_empty_embeddings(
+    def test_main_skips_empty_embeddings(
         self, _mock_ensure_env, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
     ):
-        """Test main function when embeddings are empty."""
+        """Test main function skips chunks that have empty embeddings."""
         mock_driver = Mock()
         mock_graph_db.driver.return_value.__enter__.return_value = mock_driver
 
@@ -439,12 +440,15 @@ class TestMain:
         mock_file = Mock()
         mock_artifacts_dir.__truediv__ = Mock(return_value=mock_file)
 
-        mock_scrub.return_value = {"status": "error"}
+        mock_scrub.return_value = {"status": "skipped"}
 
         with patch("sys.argv", ["export_to_qdrant.py"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
+            main()
+
+        scrub_arg = mock_scrub.call_args[0][0]
+        assert scrub_arg["status"] == "skipped"
+        assert "Skipped 1 chunk" in scrub_arg["message"]
+        assert scrub_arg["skipped_chunks"] == 1
 
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")
@@ -1101,6 +1105,7 @@ class TestMain:
         assert scrub_arg["status"] in ["success", "error", "skipped"]
         assert "message" in scrub_arg
         assert "count" in scrub_arg
+        assert "skipped_chunks" in scrub_arg
         assert "duration_ms" in scrub_arg
         assert isinstance(scrub_arg["duration_ms"], int)
 

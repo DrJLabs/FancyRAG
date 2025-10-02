@@ -7,6 +7,7 @@ import pathlib
 import sys
 import types
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -159,6 +160,9 @@ class FakeDriver:
             "chunks": 4,
             "relationships": 4,
         }
+        self.semantic_nodes = 0
+        self.semantic_relationships = 0
+        self.semantic_orphans = 0
 
     def __enter__(self) -> "FakeDriver":
         """
@@ -213,6 +217,12 @@ class FakeDriver:
             return ([{"value": self.qa_orphan_chunks}], None, None)
         if "coalesce(c.checksum" in query_text:
             return ([{"value": self.qa_checksum_mismatches}], None, None)
+        if "n.semantic_source" in query_text and "AND NOT" in query_text:
+            return ([{"value": self.semantic_orphans}], None, None)
+        if "n.semantic_source" in query_text:
+            return ([{"value": self.semantic_nodes}], None, None)
+        if "r.semantic_source" in query_text:
+            return ([{"value": self.semantic_relationships}], None, None)
         if "MATCH (:Document) RETURN count" in query_text:
             return ([{"value": self.graph_counts.get("documents", 0)}], None, None)
         if "MATCH (:Chunk) RETURN count" in query_text and "HAS_CHUNK" not in query_text:
@@ -404,6 +414,93 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
         ]
     )
 
+
+def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    source = tmp_path / "sample.txt"
+    source.write_text("sample content", encoding="utf-8")
+    log_path = tmp_path / "log.json"
+    qa_dir = tmp_path / "qa"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        driver.semantic_nodes = 12
+        driver.semantic_relationships = 7
+        driver.semantic_orphans = 0
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    semantic_calls: list[dict[str, Any]] = []
+
+    def fake_semantic(**kwargs) -> kg.SemanticEnrichmentStats:
+        semantic_calls.append(kwargs)
+        return kg.SemanticEnrichmentStats(
+            chunks_processed=2,
+            chunk_failures=0,
+            nodes_written=4,
+            relationships_written=3,
+        )
+
+    monkeypatch.setattr(kg, "_run_semantic_enrichment", fake_semantic)
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--log-path",
+            str(log_path),
+            "--qa-report-dir",
+            str(qa_dir),
+            "--enable-semantic",
+            "--semantic-max-concurrency",
+            "3",
+        ]
+    )
+
+    assert semantic_calls, "semantic enrichment helper was not invoked"
+    assert semantic_calls[0]["max_concurrency"] == 3
+    assert log["semantic"] == {
+        "chunks_processed": 2,
+        "chunk_failures": 0,
+        "nodes_written": 4,
+        "relationships_written": 3,
+    }
+    qa_metrics = log["qa"]["metrics"].get("semantic")
+    assert qa_metrics is not None
+    assert qa_metrics["chunks_processed"] == 2
+    assert qa_metrics["chunk_failures"] == 0
+    assert qa_metrics["nodes_written"] == 4
+    assert qa_metrics["relationships_written"] == 3
+    # database counters sourced from the fake driver
+    assert qa_metrics["nodes_in_db"] == 12
+    assert qa_metrics["relationships_in_db"] == 7
+    assert qa_metrics["orphan_entities"] == 0
     assert created_drivers, "Expected GraphDatabase.driver to be invoked"
     assert not any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
 
@@ -789,3 +886,686 @@ def test_sanitizing_writer_drops_none_values() -> None:
     writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
     sanitized = writer._sanitize_properties({"values": [None, None]})
     assert sanitized == {"values": []}
+# Testing library/framework: pytest (project-wide standard). These tests follow existing conventions.
+
+class TestFakeDriver:
+    """Comprehensive tests for the FakeDriver test double."""
+
+    def test_initialization_sets_default_state(self):
+        driver = FakeDriver()
+        assert driver.queries == []
+        assert driver._pool.pool_config.user_agent is None
+        assert driver.qa_missing_embeddings == 0
+        assert driver.qa_orphan_chunks == 0
+        assert driver.qa_checksum_mismatches == 0
+        assert driver.graph_counts == {"documents": 2, "chunks": 4, "relationships": 4}
+        assert driver.semantic_nodes == 0
+        assert driver.semantic_relationships == 0
+        assert driver.semantic_orphans == 0
+
+    def test_context_manager_sync(self):
+        driver = FakeDriver()
+        with driver as d:
+            assert d is driver
+            d.queries.append("test")
+        assert driver.queries == ["test"]
+
+    def test_context_manager_async(self):
+        driver = FakeDriver()
+        async def _run():
+            async with driver as d:
+                assert d is driver
+                d.queries.append("async_test")
+        asyncio.run(_run())
+        assert driver.queries == ["async_test"]
+
+    def test_context_manager_handles_exceptions(self):
+        driver = FakeDriver()
+        try:
+            with driver as d:
+                d.queries.append("before_error")
+                raise ValueError("test error")
+        except ValueError:
+            pass
+        assert driver.queries == ["before_error"]
+
+    def test_async_context_manager_handles_exceptions(self):
+        driver = FakeDriver()
+        async def _run():
+            try:
+                async with driver as d:
+                    d.queries.append("async_before_error")
+                    raise ValueError("async test error")
+            except ValueError:
+                pass
+        asyncio.run(_run())
+        assert driver.queries == ["async_before_error"]
+
+    def test_execute_query_detach_delete(self):
+        driver = FakeDriver()
+        result = driver.execute_query("DETACH DELETE n")
+        assert driver.queries == ["DETACH DELETE n"]
+        assert result == ([], None, None)
+
+    def test_execute_query_ingest_run_key(self):
+        driver = FakeDriver()
+        result = driver.execute_query("MATCH (n) WHERE n.ingest_run_key = $key")
+        assert "ingest_run_key" in driver.queries[0]
+        assert result == ([], None, None)
+
+    def test_execute_query_merge_document(self):
+        driver = FakeDriver()
+        result = driver.execute_query("MERGE (doc:Document {id: $id})")
+        assert "MERGE (doc:Document" in driver.queries[0]
+        assert result == ([], None, None)
+
+    def test_execute_query_dbms_components(self):
+        driver = FakeDriver()
+        result = driver.execute_query("CALL dbms.components() YIELD versions, edition")
+        assert result == ([{"versions": ["5.26.0"], "edition": "enterprise"}], None, None)
+
+    def test_execute_query_missing_embeddings(self):
+        driver = FakeDriver()
+        driver.qa_missing_embeddings = 5
+        result = driver.execute_query("MATCH (c:Chunk) WHERE c.embedding IS NULL RETURN count(c)")
+        assert result == ([{"value": 5}], None, None)
+
+    def test_execute_query_orphan_chunks(self):
+        driver = FakeDriver()
+        driver.qa_orphan_chunks = 3
+        result = driver.execute_query(
+            "MATCH (c:Chunk) WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) ) RETURN count(c)"
+        )
+        assert result == ([{"value": 3}], None, None)
+
+    def test_execute_query_checksum_mismatches(self):
+        driver = FakeDriver()
+        driver.qa_checksum_mismatches = 2
+        result = driver.execute_query(
+            "MATCH (c:Chunk) WHERE coalesce(c.checksum, '') <> expected RETURN count(c)"
+        )
+        assert result == ([{"value": 2}], None, None)
+
+    def test_execute_query_semantic_nodes(self):
+        driver = FakeDriver()
+        driver.semantic_nodes = 10
+        result = driver.execute_query(
+            "MATCH (n) WHERE n.semantic_source IS NOT NULL RETURN count(n)"
+        )
+        assert result == ([{"value": 10}], None, None)
+
+    def test_execute_query_semantic_relationships(self):
+        driver = FakeDriver()
+        driver.semantic_relationships = 7
+        result = driver.execute_query(
+            "MATCH ()-[r]->() WHERE r.semantic_source IS NOT NULL RETURN count(r)"
+        )
+        assert result == ([{"value": 7}], None, None)
+
+    def test_execute_query_semantic_orphans(self):
+        driver = FakeDriver()
+        driver.semantic_orphans = 4
+        result = driver.execute_query(
+            "MATCH (n) WHERE n.semantic_source IS NOT NULL AND NOT (n)-[:HAS_CHUNK]->() RETURN count(n)"
+        )
+        assert result == ([{"value": 4}], None, None)
+
+    def test_execute_query_document_count(self):
+        driver = FakeDriver()
+        driver.graph_counts["documents"] = 15
+        result = driver.execute_query("MATCH (:Document) RETURN count(*)")
+        assert result == ([{"value": 15}], None, None)
+
+    def test_execute_query_chunk_count(self):
+        driver = FakeDriver()
+        driver.graph_counts["chunks"] = 20
+        result = driver.execute_query("MATCH (:Chunk) RETURN count(*)")
+        assert result == ([{"value": 20}], None, None)
+
+    def test_execute_query_has_chunk_relationships(self):
+        driver = FakeDriver()
+        driver.graph_counts["relationships"] = 18
+        result = driver.execute_query(
+            "MATCH (:Document)-[:HAS_CHUNK]->(:Chunk) RETURN count(*)"
+        )
+        assert result == ([{"value": 18}], None, None)
+
+    def test_execute_query_unknown_pattern(self):
+        driver = FakeDriver()
+        result = driver.execute_query("MATCH (n:Unknown) RETURN n")
+        assert result == ([{"value": 0}], None, None)
+
+    def test_execute_query_with_parameters(self):
+        driver = FakeDriver()
+        result = driver.execute_query(
+            "MATCH (n) WHERE n.id = $id",
+            parameters={"id": "test-123"}
+        )
+        assert result == ([{"value": 0}], None, None)
+        assert driver.queries == ["MATCH (n) WHERE n.id = $id"]
+
+    def test_execute_query_with_kwargs(self):
+        driver = FakeDriver()
+        result = driver.execute_query("DETACH DELETE n", database_="test_db", routing_=None)
+        assert result == ([], None, None)
+
+    def test_execute_query_tracks_all_queries(self):
+        driver = FakeDriver()
+        driver.execute_query("MATCH (n) RETURN n")
+        driver.execute_query("DETACH DELETE n")
+        driver.execute_query("MERGE (doc:Document {id: 'x'})")
+        assert len(driver.queries) == 3
+        assert driver.queries[0] == "MATCH (n) RETURN n"
+        assert driver.queries[1] == "DETACH DELETE n"
+        assert driver.queries[2] == "MERGE (doc:Document {id: 'x'})"
+
+    def test_execute_query_strips_whitespace(self):
+        driver = FakeDriver()
+        result = driver.execute_query("  \n  DETACH DELETE n  \n  ")
+        assert driver.queries[0] == "DETACH DELETE n"
+        assert result == ([], None, None)
+
+    def test_graph_counts_can_be_modified(self):
+        driver = FakeDriver()
+        driver.graph_counts["documents"] = 100
+        driver.graph_counts["chunks"] = 500
+        driver.graph_counts["relationships"] = 400
+        doc_result = driver.execute_query("MATCH (:Document) RETURN count(*)")
+        chunk_result = driver.execute_query("MATCH (:Chunk) RETURN count(*)")
+        rel_result = driver.execute_query("MATCH (:Document)-[:HAS_CHUNK]->(:Chunk) RETURN count(*)")
+        assert doc_result == ([{"value": 100}], None, None)
+        assert chunk_result == ([{"value": 500}], None, None)
+        assert rel_result == ([{"value": 400}], None, None)
+
+    def test_qa_counters_can_be_set_independently(self):
+        driver = FakeDriver()
+        driver.qa_missing_embeddings = 12
+        driver.qa_orphan_chunks = 8
+        driver.qa_checksum_mismatches = 3
+        assert driver.qa_missing_embeddings == 12
+        assert driver.qa_orphan_chunks == 8
+        assert driver.qa_checksum_mismatches == 3
+
+    def test_semantic_counters_can_be_set_independently(self):
+        driver = FakeDriver()
+        driver.semantic_nodes = 25
+        driver.semantic_relationships = 40
+        driver.semantic_orphans = 5
+        assert driver.semantic_nodes == 25
+        assert driver.semantic_relationships == 40
+        assert driver.semantic_orphans == 5
+
+
+class TestFakeSharedClient:
+    """Comprehensive tests for the FakeSharedClient test double."""
+
+    def test_initialization(self):
+        client = FakeSharedClient()
+        assert client.embedding_calls == []
+        assert client.chat_calls == []
+
+    def test_embedding_tracks_input_text(self):
+        client = FakeSharedClient()
+        result = client.embedding(input_text="test embedding text")
+        assert client.embedding_calls == ["test embedding text"]
+        assert result.vector == [0.0] * 5
+        assert result.tokens_consumed == 10
+
+    def test_embedding_multiple_calls(self):
+        client = FakeSharedClient()
+        client.embedding(input_text="first")
+        client.embedding(input_text="second")
+        client.embedding(input_text="third")
+        assert client.embedding_calls == ["first", "second", "third"]
+
+    def test_embedding_returns_consistent_vector(self):
+        client = FakeSharedClient()
+        result1 = client.embedding(input_text="test1")
+        result2 = client.embedding(input_text="test2")
+        assert result1.vector == [0.0, 0.0, 0.0, 0.0, 0.0]
+        assert result2.vector == [0.0, 0.0, 0.0, 0.0, 0.0]
+        assert len(result1.vector) == 5
+        assert len(result2.vector) == 5
+
+    def test_embedding_returns_token_count(self):
+        client = FakeSharedClient()
+        result = client.embedding(input_text="some text")
+        assert result.tokens_consumed == 10
+        assert hasattr(result, "tokens_consumed")
+
+    def test_chat_completion_tracks_messages(self):
+        client = FakeSharedClient()
+        messages = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "user", "content": "Hello"},
+        ]
+        result = client.chat_completion(messages=messages, temperature=0.7)
+        assert client.chat_calls == [messages]
+        assert result.raw_response["choices"][0]["message"]["content"] == "Acknowledged"
+
+    def test_chat_completion_multiple_calls(self):
+        client = FakeSharedClient()
+        msg1 = [{"role": "user", "content": "First"}]
+        msg2 = [{"role": "user", "content": "Second"}]
+        msg3 = [{"role": "user", "content": "Third"}]
+        client.chat_completion(messages=msg1, temperature=0.5)
+        client.chat_completion(messages=msg2, temperature=0.7)
+        client.chat_completion(messages=msg3, temperature=0.9)
+        assert len(client.chat_calls) == 3
+        assert client.chat_calls[0] == msg1
+        assert client.chat_calls[1] == msg2
+        assert client.chat_calls[2] == msg3
+
+    def test_chat_completion_accepts_temperature(self):
+        client = FakeSharedClient()
+        client.chat_completion(messages=[], temperature=0.0)
+        client.chat_completion(messages=[], temperature=0.5)
+        client.chat_completion(messages=[], temperature=1.0)
+        client.chat_completion(messages=[], temperature=2.0)
+        assert len(client.chat_calls) == 4
+
+    def test_chat_completion_response_structure(self):
+        client = FakeSharedClient()
+        result = client.chat_completion(messages=[], temperature=0.7)
+        assert hasattr(result, "raw_response")
+        assert "choices" in result.raw_response
+        assert len(result.raw_response["choices"]) == 1
+        assert "message" in result.raw_response["choices"][0]
+        assert "content" in result.raw_response["choices"][0]["message"]
+
+    def test_chat_completion_empty_messages(self):
+        client = FakeSharedClient()
+        result = client.chat_completion(messages=[], temperature=0.5)
+        assert client.chat_calls == [[]]
+        assert result.raw_response["choices"][0]["message"]["content"] == "Acknowledged"
+
+    def test_embedding_with_empty_string(self):
+        client = FakeSharedClient()
+        result = client.embedding(input_text="")
+        assert client.embedding_calls == [""]
+        assert result.vector == [0.0] * 5
+        assert result.tokens_consumed == 10
+
+    def test_chat_completion_with_complex_messages(self):
+        client = FakeSharedClient()
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is Python?"},
+            {"role": "assistant", "content": "Python is a programming language."},
+            {"role": "user", "content": "Tell me more."},
+        ]
+        _ = client.chat_completion(messages=messages, temperature=0.8)
+        assert client.chat_calls[0] == messages
+        assert len(client.chat_calls[0]) == 4
+
+
+class TestFakePipeline:
+    """Comprehensive tests for the FakePipeline test double."""
+
+    def test_initialization_stores_all_parameters(self):
+        llm = object()
+        driver = FakeDriver()
+        embedder = object()
+        schema = {"test": "schema"}
+        from_pdf = True
+        text_splitter = object()
+        neo4j_database = "test_db"
+        kg_writer = object()
+        pipeline = FakePipeline(
+            llm=llm,
+            driver=driver,
+            embedder=embedder,
+            schema=schema,
+            from_pdf=from_pdf,
+            text_splitter=text_splitter,
+            neo4j_database=neo4j_database,
+            kg_writer=kg_writer,
+        )
+        assert pipeline.llm is llm
+        assert pipeline.driver is driver
+        assert pipeline.embedder is embedder
+        assert pipeline.schema == schema
+        assert pipeline.from_pdf is from_pdf
+        assert pipeline.text_splitter is text_splitter
+        assert pipeline.database == neo4j_database
+        assert pipeline.kg_writer is kg_writer
+        assert pipeline.run_args == {}
+
+    def test_run_async_with_text(self):
+        client = FakeSharedClient()
+        class FakeEmbedder:
+            def embed_query(self, text):
+                client.embedding(input_text=text)
+        class FakeLLM:
+            def invoke(self, text):
+                client.chat_completion(messages=[{"role": "user", "content": text}], temperature=0.7)
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=FakeDriver(),
+            embedder=FakeEmbedder(),
+            from_pdf=False,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        result = asyncio.run(pipeline.run_async(text="test input text"))
+        assert pipeline.run_args == {"text": "test input text", "file_path": None}
+        assert result.run_id == "test-run"
+        assert client.embedding_calls == ["test input text"]
+        assert len(client.chat_calls) == 1
+
+    def test_run_async_with_file_path(self):
+        client = FakeSharedClient()
+        class FakeEmbedder:
+            def embed_query(self, text):
+                client.embedding(input_text=text)
+        class FakeLLM:
+            def invoke(self, text):
+                client.chat_completion(messages=[{"role": "user", "content": text}], temperature=0.7)
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=FakeDriver(),
+            embedder=FakeEmbedder(),
+            from_pdf=True,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        result = asyncio.run(pipeline.run_async(text="", file_path="/path/to/file.pdf"))
+        assert pipeline.run_args == {"text": "", "file_path": "/path/to/file.pdf"}
+        assert result.run_id == "test-run"
+
+    def test_run_async_exercises_embedder(self):
+        embed_called = []
+        class FakeEmbedder:
+            def embed_query(self, text):
+                embed_called.append(text)
+        class FakeLLM:
+            def invoke(self, text):
+                pass
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=FakeDriver(),
+            embedder=FakeEmbedder(),
+            from_pdf=False,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        asyncio.run(pipeline.run_async(text="embed this"))
+        assert embed_called == ["embed this"]
+
+    def test_run_async_exercises_llm(self):
+        llm_called = []
+        class FakeEmbedder:
+            def embed_query(self, text):
+                pass
+        class FakeLLM:
+            def invoke(self, text):
+                llm_called.append(text)
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=FakeDriver(),
+            embedder=FakeEmbedder(),
+            from_pdf=False,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        asyncio.run(pipeline.run_async(text="process this"))
+        assert llm_called == ["process this"]
+
+    def test_run_async_returns_run_id(self):
+        class FakeEmbedder:
+            def embed_query(self, text):
+                pass
+        class FakeLLM:
+            def invoke(self, text):
+                pass
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=FakeDriver(),
+            embedder=FakeEmbedder(),
+            from_pdf=False,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        result = asyncio.run(pipeline.run_async(text="test"))
+        assert hasattr(result, "run_id")
+        assert result.run_id == "test-run"
+
+    def test_run_async_with_both_text_and_file_path(self):
+        class FakeEmbedder:
+            def embed_query(self, text):
+                pass
+        class FakeLLM:
+            def invoke(self, text):
+                pass
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=FakeDriver(),
+            embedder=FakeEmbedder(),
+            from_pdf=True,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        _ = asyncio.run(pipeline.run_async(text="some text", file_path="/path/file.pdf"))
+        assert pipeline.run_args["text"] == "some text"
+        assert pipeline.run_args["file_path"] == "/path/file.pdf"
+
+
+class TestPatchDriver:
+    """Tests for the _patch_driver utility function."""
+
+    def test_patch_driver_patches_sync_driver(self, monkeypatch):
+        import types
+        import tests.unit.scripts.test_kg_build as test_module
+        kg_module = types.ModuleType("kg")
+        kg_module.GraphDatabase = types.SimpleNamespace(driver=None)
+        test_module.kg = kg_module
+        factory = lambda *args, **kwargs: "test_driver"
+        test_module._patch_driver(monkeypatch, factory)
+        assert kg_module.GraphDatabase.driver == factory
+
+    def test_patch_driver_patches_async_driver_if_exists(self, monkeypatch):
+        import types
+        import tests.unit.scripts.test_kg_build as test_module
+        kg_module = types.ModuleType("kg")
+        kg_module.GraphDatabase = types.SimpleNamespace(driver=None)
+        kg_module.AsyncGraphDatabase = types.SimpleNamespace(driver=None)
+        test_module.kg = kg_module
+        factory = lambda *args, **kwargs: "async_test_driver"
+        test_module._patch_driver(monkeypatch, factory)
+        assert kg_module.GraphDatabase.driver == factory
+        assert kg_module.AsyncGraphDatabase.driver == factory
+
+    def test_patch_driver_handles_missing_async_driver(self, monkeypatch):
+        import types
+        import tests.unit.scripts.test_kg_build as test_module
+        kg_module = types.ModuleType("kg")
+        kg_module.GraphDatabase = types.SimpleNamespace(driver=None)
+        test_module.kg = kg_module
+        factory = lambda *args, **kwargs: "test_driver"
+        test_module._patch_driver(monkeypatch, factory)
+        assert kg_module.GraphDatabase.driver == factory
+
+
+class TestPandasStub:
+    """Tests for pandas stub initialization."""
+
+    def test_pandas_stub_exists_in_sys_modules(self):
+        import sys
+        assert "pandas" in sys.modules
+
+    def test_pandas_stub_has_na(self):
+        import sys
+        stub = sys.modules["pandas"]
+        assert hasattr(stub, "NA")
+
+    def test_pandas_stub_has_series(self):
+        import sys
+        stub = sys.modules["pandas"]
+        assert hasattr(stub, "Series")
+        assert isinstance(stub.Series, type)
+
+    def test_pandas_stub_has_dataframe(self):
+        import sys
+        stub = sys.modules["pandas"]
+        assert hasattr(stub, "DataFrame")
+        assert isinstance(stub.DataFrame, type)
+
+    def test_pandas_stub_has_categorical(self):
+        import sys
+        stub = sys.modules["pandas"]
+        assert hasattr(stub, "Categorical")
+        assert isinstance(stub.Categorical, type)
+
+    def test_pandas_stub_has_extension_array(self):
+        import sys
+        stub = sys.modules["pandas"]
+        assert hasattr(stub, "core")
+        assert hasattr(stub.core, "arrays")
+        assert hasattr(stub.core.arrays, "ExtensionArray")
+        assert isinstance(stub.core.arrays.ExtensionArray, type)
+
+
+class TestNeo4jStub:
+    """Tests for neo4j stub initialization."""
+
+    def test_neo4j_stub_exists_in_sys_modules(self):
+        import sys
+        assert "neo4j" in sys.modules
+
+    def test_neo4j_stub_has_graph_database(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        assert hasattr(stub, "GraphDatabase")
+
+    def test_neo4j_graph_database_driver_raises(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        with pytest.raises(ImportError, match="neo4j driver not available"):
+            stub.GraphDatabase.driver("bolt://localhost", auth=("user", "pass"))
+
+    def test_neo4j_stub_has_record(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        assert hasattr(stub, "Record")
+        assert isinstance(stub.Record, type)
+
+    def test_neo4j_stub_has_driver(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        assert hasattr(stub, "Driver")
+        assert isinstance(stub.Driver, type)
+
+    def test_neo4j_stub_has_query(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        assert hasattr(stub, "Query")
+        assert isinstance(stub.Query, type)
+
+    def test_neo4j_stub_has_routing_control(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        assert hasattr(stub, "RoutingControl")
+        assert hasattr(stub.RoutingControl, "READ")
+        assert stub.RoutingControl.READ == "READ"
+
+    def test_neo4j_stub_has_exceptions_module(self):
+        import sys
+        stub = sys.modules["neo4j"]
+        assert hasattr(stub, "exceptions")
+        assert "neo4j.exceptions" in sys.modules
+
+    def test_neo4j_exceptions_has_predefined_errors(self):
+        import sys
+        exceptions = sys.modules["neo4j.exceptions"]
+        expected_errors = ["Neo4jError", "ClientError", "DriverError", "CypherSyntaxError", "CypherTypeError"]
+        for error_name in expected_errors:
+            assert hasattr(exceptions, error_name)
+            error_class = getattr(exceptions, error_name)
+            assert isinstance(error_class, type)
+            assert issubclass(error_class, RuntimeError)
+
+    def test_neo4j_exceptions_dynamic_getattr(self):
+        import sys
+        exceptions = sys.modules["neo4j.exceptions"]
+        CustomError = exceptions.CustomError
+        assert isinstance(CustomError, type)
+        assert issubclass(CustomError, RuntimeError)
+        assert hasattr(exceptions, "CustomError")
+
+    def test_neo4j_exceptions_created_dynamically_are_cached(self):
+        import sys
+        exceptions = sys.modules["neo4j.exceptions"]
+        Error1 = exceptions.TestError
+        Error2 = exceptions.TestError
+        assert Error1 is Error2
+
+
+class TestEnvFixture:
+    """Tests for the env fixture."""
+
+    def test_env_fixture_sets_openai_key(self, env):
+        import os
+        assert os.environ.get("OPENAI_API_KEY") == "test-key"
+
+    def test_env_fixture_sets_neo4j_uri(self, env):
+        import os
+        assert os.environ.get("NEO4J_URI") == "bolt://example"
+
+    def test_env_fixture_sets_neo4j_username(self, env):
+        import os
+        assert os.environ.get("NEO4J_USERNAME") == "neo4j"
+
+    def test_env_fixture_sets_neo4j_password(self, env):
+        import os
+        assert os.environ.get("NEO4J_PASSWORD") == "secret"
+
+    def test_env_fixture_values_persist_in_test(self, env):
+        import os
+        assert os.environ.get("OPENAI_API_KEY") == "test-key"
+        assert os.environ.get("NEO4J_URI") == "bolt://example"
+        assert os.environ.get("NEO4J_USERNAME") == "neo4j"
+        assert os.environ.get("NEO4J_PASSWORD") == "secret"
+
+
+class TestFakeDriverIntegration:
+    """Integration tests combining FakeDriver with other test doubles."""
+
+    def test_driver_with_pipeline_async_context(self):
+        driver = FakeDriver()
+        class FakeEmbedder:
+            def embed_query(self, text):
+                pass
+        class FakeLLM:
+            def invoke(self, text):
+                pass
+        pipeline = FakePipeline(
+            llm=FakeLLM(),
+            driver=driver,
+            embedder=FakeEmbedder(),
+            from_pdf=False,
+            text_splitter=None,
+            neo4j_database="test",
+        )
+        async def _run():
+            async with driver:
+                await pipeline.run_async(text="test")
+        asyncio.run(_run())
+        assert pipeline.driver is driver
+
+    def test_driver_query_tracking_across_sessions(self):
+        driver = FakeDriver()
+        with driver:
+            driver.execute_query("MATCH (n) RETURN n")
+        with driver:
+            driver.execute_query("DETACH DELETE n")
+        assert len(driver.queries) == 2
+        assert "MATCH (n)" in driver.queries[0]
+        assert "DETACH DELETE" in driver.queries[1]
+
+    def test_driver_state_modification_between_queries(self):
+        driver = FakeDriver()
+        result1 = driver.execute_query("MATCH (:Document) RETURN count(*)")
+        assert result1 == ([{"value": 2}], None, None)
+        driver.graph_counts["documents"] = 50
+        result2 = driver.execute_query("MATCH (:Document) RETURN count(*)")
+        assert result2 == ([{"value": 50}], None, None)
