@@ -199,8 +199,9 @@ class FakeDriver:
         """
         query_text = query.strip()
         self.queries.append(query_text)
-        params = parameters or kwargs.get("parameters") or {}
         if "DETACH DELETE" in query_text:
+            return ([], None, None)
+        if "ingest_run_key" in query_text:
             return ([], None, None)
         if "MERGE (doc:Document" in query_text:
             return ([], None, None)
@@ -484,6 +485,11 @@ def test_run_fails_on_qa_threshold(tmp_path, monkeypatch, env) -> None:  # noqa:
     assert "Ingestion QA gating failed" in str(excinfo.value)
     # Ensure rollback attempted
     assert any("DETACH DELETE" in query for query in failing_driver.queries)
+    assert any("rel.ingest_run_key" in query for query in failing_driver.queries)
+    assert any(
+        "node.ingest_run_key" in query and "DETACH DELETE" in query
+        for query in failing_driver.queries
+    )
 
 
 def test_missing_file_raises(env, monkeypatch):  # noqa: ARG001 - env fixture for parity

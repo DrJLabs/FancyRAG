@@ -220,6 +220,7 @@ class QaSourceRecord:
     git_commit: str | None
     document_checksum: str
     chunks: list[QaChunkRecord]
+    ingest_run_key: str | None = None
 
 
 @dataclass
@@ -858,6 +859,18 @@ def _sanitize_property_value(value: Any) -> Any:
 class SanitizingNeo4jWriter(Neo4jWriter):
     """Neo4j writer that coerces complex properties into Neo4j-friendly primitives."""
 
+    _INGEST_RUN_KEY_FIELD = "ingest_run_key"
+
+    def set_ingest_run_key(self, run_key: str | None) -> None:
+        """Attach the ingest run key used to tag nodes and relationships written by this writer."""
+
+        self._ingest_run_key = run_key
+
+    def _get_ingest_run_key(self) -> str | None:
+        """Return the ingest run key associated with the current writer instance."""
+
+        return getattr(self, "_ingest_run_key", None)
+
     def _sanitize_properties(self, properties: Mapping[str, Any]) -> dict[str, Any]:
         """
         Sanitize a mapping of node/relationship properties into Neo4j-friendly primitives.
@@ -892,7 +905,11 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         rows = super()._nodes_to_rows(nodes, lexical_graph_config)
         for row in rows:
             properties = row.get("properties") or {}
-            row["properties"] = self._sanitize_properties(properties)
+            sanitized = self._sanitize_properties(properties)
+            run_key = self._get_ingest_run_key()
+            if run_key:
+                sanitized.setdefault(self._INGEST_RUN_KEY_FIELD, run_key)
+            row["properties"] = sanitized
         return rows
 
     def _relationships_to_rows(self, relationships):  # type: ignore[override]
@@ -909,7 +926,11 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         rows = super()._relationships_to_rows(relationships)
         for row in rows:
             properties = row.get("properties") or {}
-            row["properties"] = self._sanitize_properties(properties)
+            sanitized = self._sanitize_properties(properties)
+            run_key = self._get_ingest_run_key()
+            if run_key:
+                sanitized.setdefault(self._INGEST_RUN_KEY_FIELD, run_key)
+            row["properties"] = sanitized
         return rows
 
     @validate_call
@@ -1414,15 +1435,17 @@ def _execute_pipeline(
     llm: SharedOpenAILLM,
     splitter: FixedSizeSplitter,
     reset_database: bool,
+    ingest_run_key: str | None = None,
 ) -> str | None:
     """
     Execute the knowledge-graph pipeline against a Neo4j instance and return the pipeline run identifier.
-    
+
     When requested, this call resets the target Neo4j database before running the pipeline and writes sanitized nodes and relationships via the provided writer and components.
-    
+
     Parameters:
         database (str | None): Name of the Neo4j database to use; pass `None` to use the server default.
         reset_database (bool): When True, remove all nodes and relationships prior to running the pipeline.
+        ingest_run_key (str | None): Unique identifier applied to nodes and relationships written during this execution for rollback targeting.
     
     Returns:
         run_id (str | None): The pipeline run identifier if produced, `None` otherwise.
@@ -1432,6 +1455,7 @@ def _execute_pipeline(
         if reset_database:
             _reset_database(driver, database=database)
         writer = SanitizingNeo4jWriter(driver=driver, neo4j_database=database)
+        writer.set_ingest_run_key(ingest_run_key)
         pipeline = SimpleKGPipeline(
             llm=llm,
             driver=driver,
@@ -1537,14 +1561,43 @@ def _rollback_ingest(
     sources: Sequence[QaSourceRecord],
 ) -> None:
     """
-    Delete Chunk nodes referenced by the provided QA sources and remove Document nodes that become orphaned.
-    
-    Deletes Chunk nodes whose `uid` values appear in `sources`' chunk records. After removing chunks, deletes Document nodes with `relative_path` values from `sources` only if the Document has no remaining `HAS_CHUNK` relationships. The deletions are performed in the specified Neo4j `database` (or the driver's default if `None`).
-    
+    Delete graph elements produced during the provided ingestion sources.
+
+    Removes Chunk nodes whose `uid` values appear in `sources`, detaches and deletes Documents that become orphaned, and
+    eliminates any additional nodes or relationships tagged with the ingestion run key associated with the sources. The
+    deletions are performed in the specified Neo4j `database` (or the driver's default if `None`).
+
     Parameters:
         database (str | None): Target Neo4j database name, or `None` to use the driver's default.
-        sources (Sequence[QaSourceRecord]): Sequence of QA source records whose chunks' `uid` values identify Chunk nodes to remove and whose `relative_path` values identify Documents to consider for deletion.
+        sources (Sequence[QaSourceRecord]): Sequence of QA source records describing the ingested artifacts to roll back.
     """
+
+    run_keys = {
+        record.ingest_run_key for record in sources if record.ingest_run_key
+    }
+    if run_keys:
+        driver.execute_query(
+            """
+            UNWIND $run_keys AS run_key
+            MATCH ()-[rel]-()
+            WHERE rel.ingest_run_key = run_key
+            DELETE rel
+            """,
+            {"run_keys": list(run_keys)},
+            database_=database,
+        )
+        driver.execute_query(
+            """
+            UNWIND $run_keys AS run_key
+            MATCH (node)
+            WHERE node.ingest_run_key = run_key
+              AND NOT node:Document
+              AND NOT node:Chunk
+            DETACH DELETE node
+            """,
+            {"run_keys": list(run_keys)},
+            database_=database,
+        )
 
     chunk_uids = [chunk.uid for record in sources for chunk in record.chunks]
     if chunk_uids:
@@ -1681,6 +1734,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         for spec in source_specs:
             scope_token = str(spec.path.resolve())
             with splitter.scoped(scope_token):
+                ingest_run_key = f"kg-build:{uuid4()}"
                 try:
                     run_id = _execute_pipeline(
                         uri=uri,
@@ -1691,6 +1745,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                         llm=llm,
                         splitter=splitter,
                         reset_database=reset_pending,
+                        ingest_run_key=ingest_run_key,
                     )
                 except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:  # noqa: TRY003
                     raise RuntimeError(f"OpenAI request failed: {exc}") from exc
@@ -1751,6 +1806,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                             )
                             for i, meta in enumerate(chunk_metadata)
                         ],
+                        ingest_run_key=ingest_run_key,
                     )
                 )
 
