@@ -8,6 +8,7 @@ import asyncio
 import copy
 import functools
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -18,8 +19,9 @@ import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -33,27 +35,210 @@ from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
 from fancyrag.utils import ensure_env
-from neo4j_graphrag.embeddings.base import Embedder
-from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
-from neo4j_graphrag.experimental.components.entity_relation_extractor import (
-    LLMEntityRelationExtractor,
-    OnError,
-)
-from neo4j_graphrag.experimental.components.kg_writer import KGWriterModel, Neo4jWriter
-from neo4j_graphrag.experimental.components.lexical_graph import LexicalGraphConfig
-from neo4j_graphrag.experimental.components.schema import GraphSchema
-from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
-    FixedSizeSplitter,
-)
-from neo4j_graphrag.experimental.components.types import (
-    TextChunk,
-    TextChunks,
-    Neo4jGraph,
-)
-from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
-from neo4j_graphrag.llm.base import LLMInterface
-from neo4j_graphrag.llm.types import LLMResponse
-from pydantic import ValidationError, validate_call
+
+_PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
+
+if _PYDANTIC_AVAILABLE:  # pragma: no branch - import-time dependency check
+    from pydantic import ValidationError, validate_call
+else:  # pragma: no cover - exercised only in minimal CI environments
+    class ValidationError(ValueError):  # type: ignore[no-redef]
+        """Fallback validation error when pydantic is unavailable."""
+
+
+    def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
+        """Simplified validate_call decorator that returns the function unchanged."""
+
+        if func is None:
+            return lambda wrapped: wrapped
+        return func
+
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:  # pragma: no cover - importlib quirk when parent is module
+        return False
+
+
+_GRAPHRAG_MODULES = [
+    "neo4j_graphrag.embeddings.base",
+    "neo4j_graphrag.exceptions",
+    "neo4j_graphrag.experimental.components.entity_relation_extractor",
+    "neo4j_graphrag.experimental.components.kg_writer",
+    "neo4j_graphrag.experimental.components.lexical_graph",
+    "neo4j_graphrag.experimental.components.schema",
+    "neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter",
+    "neo4j_graphrag.experimental.components.types",
+    "neo4j_graphrag.experimental.pipeline.kg_builder",
+    "neo4j_graphrag.llm.base",
+    "neo4j_graphrag.llm.types",
+]
+
+_GRAPHRAG_AVAILABLE = all(_module_available(module_name) for module_name in _GRAPHRAG_MODULES)
+
+if _GRAPHRAG_AVAILABLE:  # pragma: no branch - import-time dependency check
+    from neo4j_graphrag.embeddings.base import Embedder
+    from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
+    from neo4j_graphrag.experimental.components.entity_relation_extractor import (
+        LLMEntityRelationExtractor,
+        OnError,
+    )
+    from neo4j_graphrag.experimental.components.kg_writer import (
+        KGWriterModel,
+        Neo4jWriter,
+    )
+    from neo4j_graphrag.experimental.components.lexical_graph import LexicalGraphConfig
+    from neo4j_graphrag.experimental.components.schema import GraphSchema
+    from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
+        FixedSizeSplitter,
+    )
+    from neo4j_graphrag.experimental.components.types import (
+        TextChunk,
+        TextChunks,
+        Neo4jGraph,
+    )
+    from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
+    from neo4j_graphrag.llm.base import LLMInterface
+    from neo4j_graphrag.llm.types import LLMResponse
+else:  # pragma: no cover - exercised only in minimal CI environments
+    class _GraphRagMissingDependency(ModuleNotFoundError):
+        """Raised when neo4j_graphrag functionality is required but unavailable."""
+
+
+    class Embedder:  # type: ignore[no-redef]
+        """Placeholder Embedder base when neo4j_graphrag is absent."""
+
+
+    class EmbeddingsGenerationError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback embeddings error used when neo4j_graphrag is unavailable."""
+
+
+    class LLMGenerationError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback LLM error used when neo4j_graphrag is unavailable."""
+
+
+    class LLMInterface:  # type: ignore[no-redef]
+        """Minimal LLM interface placeholder for SharedOpenAILLM."""
+
+        def __init__(
+            self,
+            *_args,
+            model_name: str | None = None,
+            model_params: Mapping[str, Any] | None = None,
+            **_kwargs,
+        ) -> None:
+            self.model_name = model_name
+            self.model_params = dict(model_params or {})
+
+
+    @dataclass
+    class LLMResponse:  # type: ignore[no-redef]
+        """Lightweight response container mirroring neo4j_graphrag.llm.types.LLMResponse."""
+
+        content: str | None = None
+
+
+    class OnError(Enum):  # type: ignore[no-redef]
+        """Subset of the neo4j_graphrag OnError enumeration."""
+
+        RAISE = "raise"
+
+
+    class LLMEntityRelationExtractor:  # type: ignore[no-redef]
+        """Placeholder extractor that raises when semantic enrichment is requested without dependencies."""
+
+        def __init__(self, *_, **__) -> None:
+            raise _GraphRagMissingDependency(
+                "neo4j_graphrag is required for semantic enrichment support"
+            )
+
+
+    @dataclass
+    class KGWriterModel:  # type: ignore[no-redef]
+        """Minimal writer model capturing node/relationship counts."""
+
+        nodes_created: int = 0
+        relationships_created: int = 0
+
+
+    class Neo4jWriter:  # type: ignore[no-redef]
+        """Fallback writer with inert behavior when neo4j_graphrag is unavailable."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def run(self, *_args, **_kwargs) -> KGWriterModel:
+            raise _GraphRagMissingDependency(
+                "neo4j_graphrag is required for Neo4j writer execution"
+            )
+
+        def _nodes_to_rows(self, *_args, **_kwargs) -> list[dict[str, Any]]:
+            return []
+
+        def _relationships_to_rows(self, *_args, **_kwargs) -> list[dict[str, Any]]:
+            return []
+
+
+    class LexicalGraphConfig:  # type: ignore[no-redef]
+        """Placeholder lexical graph configuration object."""
+
+
+    class GraphSchema:  # type: ignore[no-redef]
+        """Placeholder schema returned when neo4j_graphrag is unavailable."""
+
+        @classmethod
+        def model_validate(cls, *_args, **_kwargs) -> "GraphSchema":
+            return cls()
+
+
+    @dataclass
+    class TextChunk:  # type: ignore[no-redef]
+        """Simple text chunk representation used for caching in tests."""
+
+        text: str
+        index: int
+        metadata: Any | None = None
+        uid: str = field(default_factory=lambda: str(uuid4()))
+
+
+    @dataclass
+    class TextChunks:  # type: ignore[no-redef]
+        """Container matching the interface expected from neo4j_graphrag splitters."""
+
+        chunks: list[TextChunk]
+
+
+    @dataclass
+    class Neo4jGraph:  # type: ignore[no-redef]
+        """Lightweight graph container for semantic enrichment statistics."""
+
+        nodes: list[Any] = field(default_factory=list)
+        relationships: list[Any] = field(default_factory=list)
+
+
+    class FixedSizeSplitter:  # type: ignore[no-redef]
+        """Simple splitter that yields one chunk per input string when dependencies are absent."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def run(self, text: str | Sequence[str], *_args, **_kwargs) -> TextChunks:
+            if isinstance(text, str):
+                items = [text]
+            else:
+                items = list(text)
+            chunks = [
+                TextChunk(text=item, index=index, metadata=None) for index, item in enumerate(items)
+            ]
+            return TextChunks(chunks=chunks)
+
+
+    class SimpleKGPipeline:  # type: ignore[no-redef]
+        """Pipeline stub that raises when executed without neo4j_graphrag installed."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise _GraphRagMissingDependency(
+                "neo4j_graphrag is required for the KG builder pipeline"
+            )
 
 # Maintain compatibility with earlier async driver import paths used in tests.
 AsyncGraphDatabase = GraphDatabase
