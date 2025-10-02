@@ -4,3 +4,4 @@
 |------|-----------------------------|----------------------------------------------------------------------------------------|
 | 1    | Environment & Workspace     | Establish reproducible Python environment and configuration surface for local stack.   |
 | 2    | Local GraphRAG Minimal Path | Deliver Dockerized Neo4j/Qdrant plus scripts covering KG build, vector sync, retrieval. |
+| 3    | Ingestion Quality Hardening | Add adaptive chunking, ingestion QA, and semantic enrichment for reliable GraphRAG pipelines. |

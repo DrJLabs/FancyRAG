@@ -1,5 +1,8 @@
 # Epic 2: Local GraphRAG Minimal Path — Dockerized Stack
 
+## Status
+Done — 2025-10-01. All stories (2.1–2.5) delivered local Docker stack, automation scripts, documentation, and CI smoke coverage. Follow-up: keep compose smoke enabled with managed OpenAI credentials.
+
 ## Epic Goal
 Stand up a fully local GraphRAG evaluation stack that operators can provision end-to-end in under one hour using Docker Compose, the official `neo4j-graphrag` tooling, and scripted hand-offs between Neo4j, Qdrant, and OpenAI.
 
@@ -59,7 +62,7 @@ Stand up a fully local GraphRAG evaluation stack that operators can provision en
 ## Story Manager Handoff
 "Please draft focused user stories for this epic with the following anchors:
 
-- We now own a Docker Compose definition (`docker-compose.neo4j-qdrant.yml`) that launches Neo4j 5.26 with APOC Core and Qdrant latest, exposing `7474/7687` and `6333` respectively.
+- We now own a Docker Compose definition (`docker-compose.neo4j-qdrant.yml`) that launches Neo4j 5.26.12 with APOC Core and Qdrant 1.15.4, exposing `7474/7687` and `6333` respectively.
 - Scripts to deliver: `scripts/create_vector_index.py`, `scripts/kg_build.py`, and `scripts/export_to_qdrant.py` plus `scripts/ask_qdrant.py` for retrieval validation. All scripts must load shared settings and honour `.env` values (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `QDRANT_URL`, `OPENAI_API_KEY`).
 - Acceptance hinges on successfully generating embeddings via `SimpleKGPipeline`, replicating them into Qdrant with payload join keys, and returning a grounded answer using `GraphRAG` with `QdrantNeo4jRetriever`.
 - Preserve compatibility with the official `neo4j-graphrag` public APIs—no forks or custom patches. Align logging, retries, and error handling with `docs/architecture/coding-standards.md`.

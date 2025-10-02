@@ -7,7 +7,7 @@
 - Maintain compatibility with production-bound settings so the same scripts can later point at managed services without code changes.
 
 ### Background Context
-Earlier iterations assumed existing managed Neo4j and Qdrant deployments. That scope stalled adoption because teams could not safely experiment without access to those services. Version 1 focuses on a project-owned stack: Dockerized Neo4j 5.26 (with APOC Core) and Qdrant latest, paired with Python 3.12 tooling that relies exclusively on the public `neo4j-graphrag` APIs (`SimpleKGPipeline`, `create_vector_index`, `QdrantNeo4jRetriever`). Once the local workflow is proven, the same scripts will target managed infrastructure by overriding connection variables.
+Earlier iterations assumed existing managed Neo4j and Qdrant deployments. That scope stalled adoption because teams could not safely experiment without access to those services. Version 1 focuses on a project-owned stack: Dockerized Neo4j 5.26.12 (APOC Core) and Qdrant 1.15.4 (see [Version Matrix](../README.md#version-matrix)), paired with Python 3.12 tooling that relies exclusively on the public `neo4j-graphrag` APIs (`SimpleKGPipeline`, `create_vector_index`, `QdrantNeo4jRetriever`). Once the local workflow is proven, the same scripts will target managed infrastructure by overriding connection variables.
 
 ### Change Log
 | Date       | Version | Description                                                    | Author     |
@@ -17,7 +17,7 @@ Earlier iterations assumed existing managed Neo4j and Qdrant deployments. That s
 
 ## Requirements
 ### Functional
-- **FR1:** Provide `docker-compose.neo4j-qdrant.yml` that starts Neo4j 5.26 (APOC enabled) and Qdrant latest with persistent volumes and configurable credentials.
+- **FR1:** Provide `docker-compose.neo4j-qdrant.yml` that starts Neo4j 5.26.12 (APOC enabled) and Qdrant 1.15.4 with persistent volumes and configurable credentials.
 - **FR2:** Ship a reproducible Python 3.12 environment that installs `neo4j-graphrag[experimental,openai,qdrant]`, validates imports, and documents required `.env` variables.
 - **FR3:** Implement a script that creates the Neo4j vector index on `Chunk.embedding` with configurable dimensions (default 1536) while reusing `neo4j_graphrag.indexes.create_vector_index`.
 - **FR4:** Implement a KG builder script that runs `SimpleKGPipeline` against sample content (text or PDF) and persists Document/Chunk nodes plus embeddings.
@@ -65,4 +65,3 @@ Earlier iterations assumed existing managed Neo4j and Qdrant deployments. That s
 - Add `docker-compose.neo4j-qdrant.yml` with persistent volumes and documented environment overrides.
 - Provide a script that runs `create_vector_index` and a `SimpleKGPipeline` ingestion with sample content.
 - Provide export and retrieval scripts that push embeddings to Qdrant and execute `GraphRAG.search()` to verify grounded answers.
-
