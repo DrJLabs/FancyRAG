@@ -1,0 +1,73 @@
+schema: 1
+story: "3.3"
+story_title: "Native Qdrant Retriever Integration"
+gate: "CONCERNS"
+status_reason: "Risk TECH-101 scored 6 (medium probability, high impact), so the gate is downgraded while documentation automation follow-up remains outstanding."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-02T10:17:12.564007+00:00"
+waiver: { active: false }
+top_issues:
+  - id: "DOC-001"
+    severity: medium
+    finding: "Add automated documentation lint/checks to enforce architecture overview updates referenced in AC5."
+    suggested_action: "Introduce CI automation that validates architecture overview updates when retriever configuration changes."
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src pytest tests/unit/scripts/test_ask_qdrant.py"
+    - "PYTHONPATH=src pytest tests/integration/local_stack/test_minimal_path_smoke.py"
+  risks_identified:
+    - "TECH-101 (medium probability × high impact)"
+  trace:
+    totals:
+      requirements: 5
+      full: 4
+      partial: 1
+      none: 0
+    planning_ref: docs/qa/assessments/3.3-test-design-20251002.md
+    uncovered:
+      - "AC5 relies on manual documentation verification; add CI guard."
+    notes: docs/qa/assessments/3.3-trace-20251002.md
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 2
+    low: 1
+  highest: TECH-101
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Watch telemetry for unexpected empty matches that could indicate join-key misconfiguration."
+      - "Add CI guard for documentation updates tied to retriever configuration."
+test_design:
+  scenarios_total: 6
+  by_level:
+    unit: 3
+    integration: 2
+    e2e: 1
+  by_priority:
+    p0: 2
+    p1: 3
+    p2: 1
+    p3: 0
+  coverage_gaps: []
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "No new secrets exposed; sanitized logs unchanged."
+  performance:
+    status: PASS
+    notes: "Library retriever keeps request count stable; top-k still configurable."
+  reliability:
+    status: PASS
+    notes: "Minimal-path smoke passed with OpenAI credentials; retriever integration validated end-to-end."
+  maintainability:
+    status: PASS
+    notes: "Code now defers to official GraphRAG components; tests/documentation updated."
+references:
+  risk_profile: docs/qa/assessments/3.3-risk-20251002.md
+  test_design: docs/qa/assessments/3.3-test-design-20251002.md
+  trace: docs/qa/assessments/3.3-trace-20251002.md
+  nfr_assessment: docs/qa/assessments/3.3-nfr-20251002.md
+  review: docs/qa/assessments/3.3-review-20251002.md

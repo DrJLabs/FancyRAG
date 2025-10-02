@@ -84,6 +84,7 @@ graph TD
    - Run logs capture both ingestion duration and `qa.qa_evaluation_ms`, and reports are scrubbed via the shared sanitizer to avoid leaking secrets or absolute filesystem paths.
 7. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
 8. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
+   - The CLI now delegates vector search + context joins to `neo4j_graphrag.retrievers.QdrantNeo4jRetriever`, wiring the Qdrant payload `chunk_id` to Neo4j `Chunk` nodes and returning the same sanitized log payload used by QA telemetry. Override the collection name or join properties via existing CLI/env settings if your deployment stores alternative identifiers.
 9. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).
 
 Both scripts load credentials from `.env`, reuse `SharedOpenAIClient` for retries/telemetry, and emit sanitized JSON logs under `artifacts/local_stack/` for smoke assertions. Adjust options as needed for managed deployments (e.g., `--database`, alternative chunk sizes).
