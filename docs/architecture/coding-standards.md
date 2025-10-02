@@ -27,3 +27,4 @@
 ## Testing Expectations
 - Run `pytest` for unit/integration suites; add CI workflow to gate merges.
 - Provide sandbox fixtures or mocks for Neo4j, Qdrant, and OpenAI dependencies. Integration smoke test should spin up the compose stack, seed sample content, and assert a grounded answer.
+- Ingestion QA must remain fully covered by tests: ensure unit coverage for metric collectors/threshold evaluators and integration coverage proving that failed gates roll back partial graph writes.

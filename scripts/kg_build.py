@@ -9,14 +9,16 @@ import copy
 import functools
 import hashlib
 import json
+import math
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -62,6 +64,8 @@ DEFAULT_CHUNK_OVERLAP = 100
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent / "config" / "kg_schema.json"
 
 DEFAULT_PROFILE = "text"
+QA_REPORT_VERSION = "ingestion-qa-report/v1"
+DEFAULT_QA_DIR = Path("artifacts/ingestion")
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "text": {
         "chunk_size": 600,
@@ -199,6 +203,344 @@ class ChunkMetadata:
     git_commit: str | None
 
 
+@dataclass
+class QaChunkRecord:
+    """Minimal chunk data required for QA evaluation."""
+
+    uid: str
+    checksum: str
+    text: str
+
+
+@dataclass
+class QaSourceRecord:
+    """Aggregated ingestion artifact metadata for a single source."""
+
+    relative_path: str
+    git_commit: str | None
+    document_checksum: str
+    chunks: list[QaChunkRecord]
+
+
+@dataclass
+class QaThresholds:
+    """Threshold configuration controlling QA gating."""
+
+    max_missing_embeddings: int = 0
+    max_orphan_chunks: int = 0
+    max_checksum_mismatches: int = 0
+
+
+@dataclass
+class QaResult:
+    """Result payload produced by the ingestion QA evaluator."""
+
+    status: str
+    summary: str
+    metrics: dict[str, Any]
+    anomalies: list[str]
+    thresholds: QaThresholds
+    report_json: str
+    report_markdown: str
+    timestamp: datetime
+    version: str
+    duration_ms: int
+
+    @property
+    def passed(self) -> bool:
+        return self.status == "pass"
+
+
+class IngestionQaEvaluator:
+    """Compute ingestion quality metrics and enforce gating thresholds."""
+
+    TOKEN_BINS = (64, 128, 256, 512, 1024, 2048)
+
+    def __init__(
+        self,
+        *,
+        driver,
+        database: str | None,
+        sources: Sequence[QaSourceRecord],
+        thresholds: QaThresholds,
+        report_root: Path,
+        report_version: str,
+    ) -> None:
+        self._driver = driver
+        self._database = database
+        self._sources = list(sources)
+        self._thresholds = thresholds
+        self._report_root = report_root
+        self._report_version = report_version
+
+    def evaluate(self) -> QaResult:
+        eval_start = time.perf_counter()
+        timestamp = datetime.now(timezone.utc)
+        metrics: dict[str, Any] = {}
+        anomalies: list[str] = []
+
+        document_paths = sorted({record.relative_path for record in self._sources})
+        chunk_uids = [chunk.uid for record in self._sources for chunk in record.chunks]
+
+        counts = _collect_counts(self._driver, database=self._database)
+        metrics["graph_counts"] = counts
+
+        missing_embeddings = self._query_value(
+            """
+            UNWIND $uids AS uid
+            MATCH (c:Chunk {uid: uid})
+            WHERE c.embedding IS NULL OR size(c.embedding) = 0
+            RETURN count(*) AS value
+            """,
+            {"uids": chunk_uids} if chunk_uids else {"uids": [None]},
+        )
+        orphan_chunks = self._query_value(
+            """
+            UNWIND $uids AS uid
+            MATCH (c:Chunk {uid: uid})
+            WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) )
+            RETURN count(*) AS value
+            """,
+            {"uids": chunk_uids} if chunk_uids else {"uids": [None]},
+        )
+        checksum_mismatches = self._query_value(
+            """
+            UNWIND $chunks AS row
+            MATCH (c:Chunk {uid: row.uid})
+            WHERE coalesce(c.checksum, "") <> row.checksum
+            RETURN count(*) AS value
+            """,
+            {
+                "chunks": [
+                    {"uid": chunk.uid, "checksum": chunk.checksum}
+                    for record in self._sources
+                    for chunk in record.chunks
+                ]
+                or [{"uid": None, "checksum": ""}]
+            },
+        )
+
+        metrics["missing_embeddings"] = missing_embeddings
+        metrics["orphan_chunks"] = orphan_chunks
+        metrics["checksum_mismatches"] = checksum_mismatches
+
+        totals = self._compute_totals()
+        metrics.update(totals)
+
+        per_file = [
+            {
+                "relative_path": record.relative_path,
+                "git_commit": record.git_commit,
+                "document_checksum": record.document_checksum,
+                "chunks": len(record.chunks),
+            }
+            for record in self._sources
+        ]
+        metrics["files"] = per_file
+
+        if missing_embeddings > self._thresholds.max_missing_embeddings:
+            anomalies.append(
+                f"missing_embeddings={missing_embeddings} exceeds max {self._thresholds.max_missing_embeddings}"
+            )
+        if orphan_chunks > self._thresholds.max_orphan_chunks:
+            anomalies.append(
+                f"orphan_chunks={orphan_chunks} exceeds max {self._thresholds.max_orphan_chunks}"
+            )
+        if checksum_mismatches > self._thresholds.max_checksum_mismatches:
+            anomalies.append(
+                f"checksum_mismatches={checksum_mismatches} exceeds max {self._thresholds.max_checksum_mismatches}"
+            )
+
+        status = "pass" if not anomalies else "fail"
+        summary = (
+            f"QA {status.upper()}: missing_embeddings={missing_embeddings}, "
+            f"orphan_chunks={orphan_chunks}, checksum_mismatches={checksum_mismatches}"
+        )
+
+        report_dir = self._report_root / timestamp.strftime("%Y%m%dT%H%M%S")
+        json_path = report_dir / "quality_report.json"
+        md_path = report_dir / "quality_report.md"
+        _ensure_directory(json_path)
+
+        payload = {
+            "version": self._report_version,
+            "generated_at": timestamp.isoformat(),
+            "status": status,
+            "summary": summary,
+            "metrics": metrics,
+            "thresholds": asdict(self._thresholds),
+            "anomalies": anomalies,
+        }
+        eval_duration_ms = int((time.perf_counter() - eval_start) * 1000)
+        metrics["qa_evaluation_ms"] = eval_duration_ms
+
+        sanitized_payload = scrub_object(payload)
+        json_path.write_text(json.dumps(sanitized_payload, indent=2), encoding="utf-8")
+        md_path.write_text(self._render_markdown(sanitized_payload), encoding="utf-8")
+
+        report_json_rel = _relative_to_repo(json_path)
+        report_md_rel = _relative_to_repo(md_path)
+
+        return QaResult(
+            status=status,
+            summary=summary,
+            metrics=metrics,
+            anomalies=anomalies,
+            thresholds=self._thresholds,
+            report_json=report_json_rel,
+            report_markdown=report_md_rel,
+            timestamp=timestamp,
+            version=self._report_version,
+            duration_ms=eval_duration_ms,
+        )
+
+    def _compute_totals(self) -> dict[str, Any]:
+        chunk_texts = [chunk.text for record in self._sources for chunk in record.chunks]
+        chunk_lengths = [len(text) for text in chunk_texts]
+        token_estimates = [self._estimate_tokens(text) for text in chunk_texts]
+
+        histogram = self._token_histogram(token_estimates)
+
+        return {
+            "files_processed": len(self._sources),
+            "chunks_processed": len(chunk_texts),
+            "token_estimate": {
+                "total": sum(token_estimates),
+                "max": max(token_estimates) if token_estimates else 0,
+                "mean": statistics.fmean(token_estimates) if token_estimates else 0.0,
+                "histogram": histogram,
+            },
+            "char_lengths": {
+                "total": sum(chunk_lengths),
+                "max": max(chunk_lengths) if chunk_lengths else 0,
+                "mean": statistics.fmean(chunk_lengths) if chunk_lengths else 0.0,
+            },
+        }
+
+    def _token_histogram(self, token_counts: Sequence[int]) -> dict[str, int]:
+        buckets = {self._bucket_label(None, upper): 0 for upper in self.TOKEN_BINS}
+        buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] = 0
+        for count in token_counts:
+            placed = False
+            for upper in self.TOKEN_BINS:
+                if count <= upper:
+                    buckets[self._bucket_label(None, upper)] += 1
+                    placed = True
+                    break
+            if not placed:
+                buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] += 1
+        return buckets
+
+    @staticmethod
+    def _bucket_label(lower: int | None, upper: int | None) -> str:
+        if lower is None and upper is not None:
+            return f"<= {upper}"
+        if lower is not None and upper is None:
+            return f"> {lower}"
+        if lower is None and upper is None:
+            return "unknown"
+        return f"{lower + 1}-{upper}"
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        if not text:
+            return 0
+        # Rough heuristic assuming ~4 characters per token for mixed-language corpora.
+        return max(1, math.ceil(len(text) / 4))
+
+    def _query_value(self, query: str, parameters: Mapping[str, Any]) -> int:
+        if not self._sources:
+            return 0
+        result = self._driver.execute_query(query, parameters, database_=self._database)
+        records = result[0] if isinstance(result, tuple) else result
+        if not records:
+            return 0
+        record = records[0]
+        if isinstance(record, Mapping):
+            value = record.get("value")
+        elif hasattr(record, "value"):
+            value = getattr(record, "value")
+        else:
+            try:
+                value = record[0]  # type: ignore[index]
+            except Exception:
+                value = None
+        return int(value or 0)
+
+    def _render_markdown(self, payload: Mapping[str, Any]) -> str:
+        lines: list[str] = []
+        lines.append(f"# Ingestion QA Report ({payload['version']})")
+        lines.append("")
+        lines.append(f"- Generated: {payload['generated_at']}")
+        lines.append(f"- Status: {payload['status'].upper()}")
+        lines.append(f"- Summary: {payload['summary']}")
+        lines.append("")
+        metrics_obj = payload.get("metrics", {})
+        metrics = metrics_obj if isinstance(metrics_obj, Mapping) else {}
+        lines.append("## Metrics")
+        lines.append("")
+        token_stats_obj = metrics.get("token_estimate", {})
+        token_stats = token_stats_obj if isinstance(token_stats_obj, Mapping) else {}
+        lines.append(
+            f"- Files processed: {metrics.get('files_processed', 0)}"
+        )
+        lines.append(
+            f"- Chunks processed: {metrics.get('chunks_processed', 0)}"
+        )
+        lines.append(
+            f"- Token estimate total: {token_stats.get('total', 0)}"
+        )
+        lines.append(
+            f"- Token estimate mean: {round(token_stats.get('mean', 0.0), 2)}"
+        )
+        lines.append(
+            f"- Missing embeddings: {metrics.get('missing_embeddings', 0)}"
+        )
+        lines.append(
+            f"- Orphan chunks: {metrics.get('orphan_chunks', 0)}"
+        )
+        lines.append(
+            f"- Checksum mismatches: {metrics.get('checksum_mismatches', 0)}"
+        )
+        lines.append("")
+        histogram = token_stats.get("histogram", {})
+        if isinstance(histogram, Mapping) and histogram:
+            lines.append("### Token Histogram")
+            lines.append("")
+            lines.append("| Bucket | Count |")
+            lines.append("| --- | ---: |")
+            for bucket, count in histogram.items():
+                lines.append(f"| {bucket} | {count} |")
+            lines.append("")
+        anomalies = payload.get("anomalies", [])
+        lines.append("## Findings")
+        lines.append("")
+        if isinstance(anomalies, Sequence) and not isinstance(anomalies, (str, bytes)) and anomalies:
+            for item in anomalies:
+                lines.append(f"- ❌ {item}")
+        else:
+            lines.append("- ✅ All thresholds satisfied")
+        lines.append("")
+        thresholds = payload.get("thresholds", {})
+        if isinstance(thresholds, Mapping) and thresholds:
+            lines.append("## Thresholds")
+            lines.append("")
+            for key, value in thresholds.items():
+                lines.append(f"- {key}: {value}")
+            lines.append("")
+        files = metrics.get("files", [])
+        if isinstance(files, Sequence) and not isinstance(files, (str, bytes)) and files:
+            lines.append("## Files")
+            lines.append("")
+            lines.append("| Relative Path | Chunks | Checksum | Git Commit |")
+            lines.append("| --- | ---: | --- | --- |")
+            for entry in files:
+                if isinstance(entry, Mapping):
+                    lines.append(
+                        f"| {entry.get('relative_path', '***')} | {entry.get('chunks', '***')} | {entry.get('document_checksum', '***')} | {entry.get('git_commit') or '-'} |"
+                    )
+            lines.append("")
+        return "\n".join(lines)
 def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
     """Load and validate the default GraphSchema definition from disk."""
 
@@ -530,6 +872,29 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--log-path",
         default=str(DEFAULT_LOG_PATH),
         help="Location for the structured JSON log (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-report-dir",
+        default=str(DEFAULT_QA_DIR),
+        help="Directory for ingestion QA reports (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-missing-embeddings",
+        type=int,
+        default=0,
+        help="Maximum allowed chunks missing embeddings before failing QA (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-orphan-chunks",
+        type=int,
+        default=0,
+        help="Maximum allowed orphan chunks (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--qa-max-checksum-mismatches",
+        type=int,
+        default=0,
+        help="Maximum allowed checksum mismatches (default: %(default)s)",
     )
     parser.add_argument(
         "--reset-database",
@@ -1044,6 +1409,40 @@ def _ensure_document_relationships(
     )
 
 
+def _rollback_ingest(
+    driver,
+    *,
+    database: str | None,
+    sources: Sequence[QaSourceRecord],
+) -> None:
+    """Remove chunks and documents created during a failed ingestion run."""
+
+    chunk_uids = [chunk.uid for record in sources for chunk in record.chunks]
+    if chunk_uids:
+        driver.execute_query(
+            """
+            UNWIND $uids AS uid
+            MATCH (c:Chunk {uid: uid})
+            DETACH DELETE c
+            """,
+            {"uids": chunk_uids},
+            database_=database,
+        )
+
+    relative_paths = {record.relative_path for record in sources}
+    if relative_paths:
+        driver.execute_query(
+            """
+            UNWIND $paths AS path
+            MATCH (doc:Document {relative_path: path})
+            WHERE NOT (doc)-[:HAS_CHUNK]->(:Chunk)
+            DETACH DELETE doc
+            """,
+            {"paths": list(relative_paths)},
+            database_=database,
+        )
+
+
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     """
     Builds a knowledge graph from a source file and writes a structured JSON run log.
@@ -1140,9 +1539,11 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     run_ids: list[str | None] = []
     log_files: list[dict[str, Any]] = []
     log_chunks: list[dict[str, Any]] = []
+    qa_sources: list[QaSourceRecord] = []
     reset_pending = bool(args.reset_database)
 
-    counts: Mapping[str, int] = {}
+    qa_section: dict[str, Any] | None = None
+    counts: Mapping[str, int] | None = None
     with GraphDatabase.driver(uri, auth=auth) as driver:
         for spec in source_specs:
             scope_token = str(spec.path.resolve())
@@ -1204,8 +1605,61 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                         }
                     )
 
-        counts = _collect_counts(driver, database=args.database)
+                qa_sources.append(
+                    QaSourceRecord(
+                        relative_path=spec.relative_path,
+                        git_commit=git_commit,
+                        document_checksum=spec.checksum,
+                        chunks=[
+                            QaChunkRecord(
+                                uid=meta.uid,
+                                checksum=meta.checksum,
+                                text=getattr(chunk_result.chunks[i], "text", ""),
+                            )
+                            for i, meta in enumerate(chunk_metadata)
+                        ],
+                    )
+                )
 
+        thresholds = QaThresholds(
+            max_missing_embeddings=args.qa_max_missing_embeddings,
+            max_orphan_chunks=args.qa_max_orphan_chunks,
+            max_checksum_mismatches=args.qa_max_checksum_mismatches,
+        )
+        evaluator = IngestionQaEvaluator(
+            driver=driver,
+            database=args.database,
+            sources=qa_sources,
+            thresholds=thresholds,
+            report_root=Path(args.qa_report_dir),
+            report_version=QA_REPORT_VERSION,
+        )
+
+        qa_result = evaluator.evaluate()
+        qa_section = {
+            "status": qa_result.status,
+            "summary": qa_result.summary,
+            "report_version": qa_result.version,
+            "report_json": qa_result.report_json,
+            "report_markdown": qa_result.report_markdown,
+            "thresholds": asdict(qa_result.thresholds),
+            "metrics": qa_result.metrics,
+            "anomalies": qa_result.anomalies,
+            "duration_ms": qa_result.duration_ms,
+        }
+
+        if not qa_result.passed:
+            _rollback_ingest(driver, database=args.database, sources=qa_sources)
+            raise RuntimeError(
+                "Ingestion QA gating failed; see ingestion QA report for details"
+            )
+
+        counts = qa_result.metrics.get("graph_counts", {})
+        if not counts:
+            counts = _collect_counts(driver, database=args.database)
+
+    if qa_section is None:
+        raise RuntimeError("QA evaluation did not produce a result")
     duration_ms = int((time.perf_counter() - start) * 1000)
 
     total_bytes = sum(len(spec.text.encode("utf-8")) for spec in source_specs)
@@ -1237,6 +1691,8 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "files": log_files,
         "chunks": log_chunks,
     }
+    if qa_section is not None:
+        log["qa"] = qa_section
 
     log_path = Path(args.log_path)
     _ensure_directory(log_path)

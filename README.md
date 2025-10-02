@@ -44,6 +44,8 @@ FancyRAG delivers a local-first GraphRAG playground backed by Neo4j, Qdrant, and
    PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5
    ```
    - Use `--profile text|markdown|code` to apply tuned chunk sizes/overlaps. For example, `PYTHONPATH=src python scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"` ingests every Markdown file with metadata captured for Neo4j and Qdrant payloads (relative paths, git commit, chunk checksums).
+   - The ingestion step emits a QA report (`ingestion-qa-report/v1`) under `artifacts/ingestion/<timestamp>/quality_report.{json,md}` and enforces thresholds for missing embeddings, orphaned chunks, and checksum mismatches. Override limits with `--qa-max-missing-embeddings`, `--qa-max-orphan-chunks`, or `--qa-max-checksum-mismatches` as needed.
+   - The QA section of the run log now records `duration_ms` alongside `metrics.qa_evaluation_ms`, giving a quick view into the overhead added by telemetry so you can track runtime against your baselines.
 6. **Tear down when finished**
    ```bash
    scripts/check_local_stack.sh --down --destroy-volumes
