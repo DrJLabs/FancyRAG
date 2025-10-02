@@ -14,12 +14,16 @@ existing_neo4j = sys.modules.get("neo4j")
 if existing_neo4j is None:
     stub_neo4j = ModuleType("neo4j")
     stub_neo4j.GraphDatabase = SimpleNamespace(driver=lambda *_, **__: None)
+    stub_neo4j.RoutingControl = SimpleNamespace(READ="READ")
     stub_neo4j.__spec__ = ModuleSpec("neo4j", loader=None)
     sys.modules.setdefault("neo4j", stub_neo4j)
 else:
     if getattr(existing_neo4j, "__spec__", None) is None:
         existing_neo4j.__spec__ = ModuleSpec("neo4j", loader=None)
+    if not hasattr(existing_neo4j, "RoutingControl"):
+        existing_neo4j.RoutingControl = SimpleNamespace(READ="READ")
     stub_neo4j = existing_neo4j
+
 stub_neo4j_exceptions = ModuleType("neo4j.exceptions")
 stub_neo4j_exceptions.Neo4jError = Exception
 stub_neo4j_exceptions.__spec__ = ModuleSpec("neo4j.exceptions", loader=None)
@@ -46,7 +50,6 @@ if util.find_spec("qdrant_client") is None:
     sys.modules.setdefault("qdrant_client.http", stub_qdrant_http)
     sys.modules.setdefault("qdrant_client.http.exceptions", stub_qdrant_exceptions)
 
-
 stub_openai_client = ModuleType("cli.openai_client")
 
 
@@ -65,6 +68,28 @@ stub_openai_client.OpenAIClientError = _StubOpenAIClientError
 stub_openai_client.SharedOpenAIClient = _StubSharedOpenAIClient
 if util.find_spec("cli.openai_client") is None:
     sys.modules.setdefault("cli.openai_client", stub_openai_client)
+
+stub_graphrag = ModuleType("neo4j_graphrag")
+stub_graphrag.__spec__ = ModuleSpec("neo4j_graphrag", loader=None)
+sys.modules.setdefault("neo4j_graphrag", stub_graphrag)
+
+stub_graphrag_exceptions = ModuleType("neo4j_graphrag.exceptions")
+stub_graphrag_exceptions.__spec__ = ModuleSpec("neo4j_graphrag.exceptions", loader=None)
+stub_graphrag_exceptions.RetrieverInitializationError = Exception
+stub_graphrag_exceptions.SearchValidationError = Exception
+sys.modules.setdefault("neo4j_graphrag.exceptions", stub_graphrag_exceptions)
+
+stub_graphrag_retrievers = ModuleType("neo4j_graphrag.retrievers")
+stub_graphrag_retrievers.__spec__ = ModuleSpec("neo4j_graphrag.retrievers", loader=None)
+
+
+class _StubRetriever:  # pragma: no cover - import stub
+    def __init__(self, *_, **__):
+        raise NotImplementedError("Stub retriever should be patched in tests")
+
+
+stub_graphrag_retrievers.QdrantNeo4jRetriever = _StubRetriever
+sys.modules.setdefault("neo4j_graphrag.retrievers", stub_graphrag_retrievers)
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "scripts" / "ask_qdrant.py"
 SPEC = util.spec_from_file_location("ask_qdrant", MODULE_PATH)
@@ -95,14 +120,10 @@ def _setup_shared_client(monkeypatch, *, vector):
     monkeypatch.setattr(ask, "SharedOpenAIClient", lambda settings: FakeClient(settings))
 
 
-def _setup_driver(monkeypatch, record):
-    class FakeDriver:
-        def execute_query(self, query, params, database_=None):  # noqa: ARG002
-            return ([{**record, "chunk_id": params["chunk_id"]}], None, None)
-
+def _setup_driver(monkeypatch):
     class FakeDriverCtx:
         def __enter__(self):
-            return FakeDriver()
+            return object()
 
         def __exit__(self, _exc_type, _exc, _tb):
             return False
@@ -110,8 +131,26 @@ def _setup_driver(monkeypatch, record):
     monkeypatch.setattr(ask.GraphDatabase, "driver", lambda *_, **__: FakeDriverCtx())
 
 
-def _setup_qdrant(monkeypatch, points):
-    monkeypatch.setattr(ask, "_query_qdrant", lambda *_, **__: points)
+def _setup_retriever(monkeypatch, *, records, capture):
+    class FakeRecord:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def data(self):
+            return dict(self._payload)
+
+    class FakeRetriever:
+        def __init__(self, *args, **kwargs):
+            capture["args"] = args
+            capture["kwargs"] = kwargs
+            self._records = [FakeRecord(item) for item in records]
+
+        def get_search_results(self, *, query_vector, top_k):  # noqa: ARG002
+            capture["top_k"] = top_k
+            capture["query_vector"] = query_vector
+            return SimpleNamespace(records=self._records, metadata=None)
+
+    monkeypatch.setattr(ask, "QdrantNeo4jRetriever", FakeRetriever)
 
 
 def _configure_identity_scrubber(monkeypatch):
@@ -124,21 +163,29 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(ask, "_load_settings", lambda: object())
     _configure_identity_scrubber(monkeypatch)
     _setup_shared_client(monkeypatch, vector=[0.1, 0.2, 0.3])
-    _setup_qdrant(
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
         monkeypatch,
-        [
-            SimpleNamespace(payload={"chunk_id": "1"}, id="1", score=0.99),
-            SimpleNamespace(payload=None, id="2", score=0.42),
+        records=[
+            {
+                "chunk_id": "1",
+                "text": "example chunk",
+                "source_path": "doc.txt",
+                "document_name": "Doc",
+                "document_source_path": "doc.txt",
+                "score": 0.99,
+            },
+            {
+                "chunk_id": "2",
+                "text": "other chunk",
+                "source_path": "other.txt",
+                "document_name": None,
+                "document_source_path": None,
+                "score": 0.42,
+            },
         ],
-    )
-    _setup_driver(
-        monkeypatch,
-        {
-            "text": "example chunk",
-            "source_path": "doc.txt",
-            "document_name": "Doc",
-            "document_source_path": "doc.txt",
-        },
+        capture=capture,
     )
 
     ask.main()
@@ -150,7 +197,12 @@ def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
     assert saved["matches"][0]["chunk_id"] == "1"
+    assert saved["matches"][0]["score"] == pytest.approx(0.99)
     assert saved["matches"][1]["chunk_id"] == "2"
+    assert capture["top_k"] == 2
+    kwargs = capture["kwargs"]
+    assert kwargs["id_property_external"] == "chunk_id"
+    assert "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node)" in kwargs["retrieval_query"]
 
 
 def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):
@@ -188,45 +240,31 @@ def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):
     assert saved["status"] == "error"
 
 
-def test_query_qdrant_fallback_to_search():
-    """_query_qdrant should fallback to client.search when query_points is unavailable/legacy."""
-    class LegacyClient:
-        def query_points(self, *_, **__):
-            raise AttributeError
-        def search(self, *_, **__):
-            return [SimpleNamespace(payload={"chunk_id": "x"}, id="x", score=0.1)]
-    results = ask._query_qdrant(LegacyClient(), collection="coll", vector=[0.1], limit=1)
-    assert isinstance(results, list)
-    assert results and results[0].payload["chunk_id"] == "x"
-
-
-def test_query_qdrant_query_points_modern_api():
-    """_query_qdrant should use modern query_points API when available."""
-    class ModernClient:
-        def query_points(self, *_, **__):
-            return SimpleNamespace(points=[SimpleNamespace(payload={"chunk_id": "y"}, id="y", score=0.2)])
-    results = ask._query_qdrant(ModernClient(), collection="coll", vector=[0.2], limit=1)
-    assert len(results) == 1
-    assert results[0].payload["chunk_id"] == "y"
-
-
-def test_main_with_custom_collection_populates_log(monkeypatch, tmp_path, capsys):
-    """Ensure --collection is propagated to the output log and artifact."""
+def test_retriever_initialization_error(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Which?", "--collection", "alt_collection"])
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "How?", "--top-k", "2"])
     monkeypatch.setattr(ask, "_load_settings", lambda: object())
     _configure_identity_scrubber(monkeypatch)
-    _setup_shared_client(monkeypatch, vector=[0.33, 0.44])
-    _setup_qdrant(monkeypatch, [SimpleNamespace(payload={"chunk_id": "c1"}, id="c1", score=0.88)])
-    _setup_driver(monkeypatch, {"text": "ctx", "source_path": "doc.txt", "document_name": "Doc", "document_source_path": "doc.txt"})
+    _setup_shared_client(monkeypatch, vector=[0.1, 0.2])
+    _setup_driver(monkeypatch)
 
-    ask.main()
+    class Boom(Exception):
+        pass
 
+    def _boom(*_args, **_kwargs):
+        raise Boom("init failed")
+
+    monkeypatch.setattr(ask, "QdrantNeo4jRetriever", _boom)
+    monkeypatch.setattr(ask, "RetrieverInitializationError", Boom)
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
     captured = capsys.readouterr()
     payload = json.loads(captured.out.strip())
-    assert payload["status"] == "success"
-    assert payload["collection"] == "alt_collection"
-
+    assert payload["status"] == "error"
+    assert "init failed" in payload["message"]
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
-    assert saved["collection"] == "alt_collection"
+    assert saved["status"] == "error"

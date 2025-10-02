@@ -29,6 +29,11 @@ from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from config.settings import OpenAISettings
 from fancyrag.utils import ensure_env
+from neo4j_graphrag.exceptions import (
+    RetrieverInitializationError,
+    SearchValidationError,
+)
+from neo4j_graphrag.retrievers import QdrantNeo4jRetriever
 
 
 def _load_settings() -> OpenAISettings:
@@ -41,74 +46,22 @@ def _load_settings() -> OpenAISettings:
     return OpenAISettings.load(actor="ask_qdrant")
 
 
-def _query_qdrant(
-    client: QdrantClient,
-    *,
-    collection: str,
-    vector: list[float],
-    limit: int,
-) -> list[Any]:
-    """
-    Query a Qdrant collection for the nearest points to a provided embedding vector.
-    
-    Parameters:
-        client (QdrantClient): Qdrant client used to perform the query.
-        collection (str): Name of the Qdrant collection to search.
-        vector (list[float]): Embedding vector used as the query.
-        limit (int): Maximum number of matching points to return.
-    
-    Returns:
-        list[Any]: A list of matching point objects (including payload) from Qdrant.
-    """
-    try:
-        response = client.query_points(
-            collection_name=collection,
-            query=vector,
-            limit=limit,
-            with_payload=True,
-        )
-        return list(response.points)
-    except AttributeError:
-        return client.search(
-            collection_name=collection,
-            query_vector=vector,
-            limit=limit,
-            with_payload=True,
-        )
+def _record_to_match(record: Any) -> dict[str, Any]:
+    """Normalize a retriever record into the match dictionary used by the CLI."""
 
+    data_getter = getattr(record, "data", None)
+    if callable(data_getter):
+        payload = data_getter()
+    elif isinstance(record, dict):
+        payload = dict(record)
+    else:  # pragma: no cover - defensive guard when record implements mapping protocol
+        payload = dict(record)
 
-def _fetch_chunk_context(driver, *, chunk_id: str, database: str | None) -> dict[str, Any]:
-    """
-    Retrieve stored text and document metadata for a chunk identified by `chunk_id` from Neo4j.
-    
-    Parameters:
-    	chunk_id (str): The chunk identifier to look up.
-    	database (str | None): Optional Neo4j database name to execute the query against.
-    
-    Returns:
-    	context (dict[str, Any]): A mapping with at least `chunk_id`. When a matching chunk is found, includes:
-    		- `chunk_id` (str)
-    		- `text` (str): chunk text content
-    		- `source_path` (str): path or source of the chunk
-    		- `document_name` (str, optional): name of the parent document when available
-    		- `document_source_path` (str, optional): source path of the parent document when available
-    	If no matching node exists, returns `{"chunk_id": chunk_id}`.
-    """
-    records, _, _ = driver.execute_query(
-        """
-        MATCH (chunk:Chunk {chunk_id: $chunk_id})
-        OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(chunk)
-        RETURN chunk.chunk_id AS chunk_id,
-               chunk.text AS text,
-               chunk.source_path AS source_path,
-               doc.name AS document_name,
-               doc.source_path AS document_source_path
-        LIMIT 1
-        """,
-        {"chunk_id": chunk_id},
-        database_=database,
-    )
-    return dict(records[0]) if records else {"chunk_id": chunk_id}
+    chunk_identifier = payload.get("chunk_id") or payload.get("id")
+    if chunk_identifier is not None:
+        payload["chunk_id"] = str(chunk_identifier)
+
+    return payload
 
 
 def main() -> None:
@@ -144,36 +97,61 @@ def main() -> None:
     status = "success"
     message = ""
     matches: list[dict[str, Any]] = []
+    records: list[Any] = []
 
     try:
         embedding_result = client.embedding(input_text=args.question)
         query_vector = embedding_result.vector
 
-        points = _query_qdrant(
-            qdrant_client,
-            collection=args.collection,
-            vector=query_vector,
-            limit=max(1, args.top_k),
-        )
-        if not points:
+        with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
+            retriever = QdrantNeo4jRetriever(
+                driver=driver,
+                client=qdrant_client,
+                collection_name=args.collection,
+                id_property_neo4j="chunk_id",
+                id_property_external="chunk_id",
+                neo4j_database=neo4j_database,
+                retrieval_query=(
+                    "WITH node, score "
+                    "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
+                    "RETURN node.chunk_id AS chunk_id, "
+                    "node.text AS text, "
+                    "node.source_path AS source_path, "
+                    "node.relative_path AS relative_path, "
+                    "node.git_commit AS git_commit, "
+                    "node.checksum AS checksum, "
+                    "node.chunk_index AS chunk_index, "
+                    "doc.name AS document_name, "
+                    "doc.source_path AS document_source_path, "
+                    "score"
+                ),
+            )
+
+            raw_result = retriever.get_search_results(
+                query_vector=query_vector,
+                top_k=max(1, args.top_k),
+            )
+            records = getattr(raw_result, "records", [])
+
+        if not records:
             status = "skipped"
             message = "Qdrant returned no matches"
         else:
-            with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
-                for point in points:
-                    payload = point.payload or {}
-                    chunk_id = payload.get("chunk_id") or str(point.id)
-                    context = _fetch_chunk_context(driver, chunk_id=chunk_id, database=neo4j_database)
-                    context.update(
-                        {
-                            "score": point.score,
-                            "chunk_id": chunk_id,
-                        }
-                    )
-                    matches.append(context)
+            for record in records:
+                match = _record_to_match(record)
+                if "score" in match and match["score"] is not None:
+                    try:
+                        match["score"] = float(match["score"])
+                    except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                        pass
+                matches.append(match)
     except OpenAIClientError as exc:
         status = "error"
         message = getattr(exc, "remediation", None) or str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    except (RetrieverInitializationError, SearchValidationError) as exc:
+        status = "error"
+        message = str(exc)
         print(f"error: {exc}", file=sys.stderr)
     except Neo4jError as exc:  # pragma: no cover - defensive guard
         status = "error"
