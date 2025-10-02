@@ -85,6 +85,12 @@ stub_graphrag_retrievers.__spec__ = ModuleSpec("neo4j_graphrag.retrievers", load
 
 class _StubRetriever:  # pragma: no cover - import stub
     def __init__(self, *_, **__):
+        """
+        Constructor placeholder for the stub retriever that indicates it must be patched in tests.
+        
+        Raises:
+            NotImplementedError: Always raised with the message "Stub retriever should be patched in tests".
+        """
         raise NotImplementedError("Stub retriever should be patched in tests")
 
 
@@ -110,6 +116,15 @@ def _env(monkeypatch):
 
 
 def _setup_shared_client(monkeypatch, *, vector):
+    """
+    Patch ask.SharedOpenAIClient with a fake client whose embedding method returns a preset vector.
+    
+    This helper installs a FakeClient via monkeypatch that captures the provided settings and whose embedding(...) call returns a SimpleNamespace with attribute `vector` set to the given `vector`. Use in tests to deterministically control embedding output.
+    
+    Parameters:
+        monkeypatch: pytest.MonkeyPatch — fixture used to apply the monkeypatch.
+        vector (Sequence[float]): The embedding vector that FakeClient.embedding will return.
+    """
     class FakeClient:
         def __init__(self, settings):
             self.settings = settings
@@ -121,6 +136,14 @@ def _setup_shared_client(monkeypatch, *, vector):
 
 
 def _setup_driver(monkeypatch):
+    """
+    Patch ask.GraphDatabase.driver to return a simple context manager that simulates a Neo4j driver.
+    
+    The provided fake context manager yields a plain object on enter and does not suppress exceptions on exit, allowing tests to run code that uses `with GraphDatabase.driver(...) as ...:` without creating a real driver.
+    
+    Parameters:
+        monkeypatch: The pytest monkeypatch fixture used to apply the attribute patch.
+    """
     class FakeDriverCtx:
         def __enter__(self):
             return object()
@@ -132,6 +155,18 @@ def _setup_driver(monkeypatch):
 
 
 def _setup_retriever(monkeypatch, *, records, capture):
+    """
+    Register a test fake retriever implementation on ask.QdrantNeo4jRetriever and capture invocation details.
+    
+    Parameters:
+        monkeypatch (pytest.MonkeyPatch): Fixture used to set the attribute on the ask module.
+        records (Iterable[dict]): Sequence of payload dicts that each fake record's .data() will return.
+        capture (dict): Mutable mapping where the fake retriever stores captured information:
+            - "args": positional arguments passed to the retriever constructor
+            - "kwargs": keyword arguments passed to the retriever constructor
+            - "top_k": value passed to get_search_results
+            - "query_vector": query_vector passed to get_search_results
+    """
     class FakeRecord:
         def __init__(self, payload):
             self._payload = payload
@@ -141,11 +176,30 @@ def _setup_retriever(monkeypatch, *, records, capture):
 
     class FakeRetriever:
         def __init__(self, *args, **kwargs):
+            """
+            Initialize the fake retriever while recording the initialization arguments.
+            
+            Stores the passed positional and keyword arguments into the shared `capture` mapping under keys `"args"` and `"kwargs"`, and creates `FakeRecord` instances from the surrounding `records` sequence, assigning them to `self._records`.
+            
+            Parameters:
+                *args: Positional arguments supplied to the retriever constructor; captured in `capture["args"]`.
+                **kwargs: Keyword arguments supplied to the retriever constructor; captured in `capture["kwargs"]`.
+            """
             capture["args"] = args
             capture["kwargs"] = kwargs
             self._records = [FakeRecord(item) for item in records]
 
         def get_search_results(self, *, query_vector, top_k):  # noqa: ARG002
+            """
+            Record the provided `query_vector` and `top_k` in the shared `capture` dictionary and return the preconfigured search results.
+            
+            Parameters:
+            	query_vector (Sequence[float]): Embedding vector used for the search query.
+            	top_k (int): Number of top matches requested.
+            
+            Returns:
+            	SimpleNamespace: An object with `records` set to the retriever's stored records and `metadata` set to None.
+            """
             capture["top_k"] = top_k
             capture["query_vector"] = query_vector
             return SimpleNamespace(records=self._records, metadata=None)
@@ -154,6 +208,9 @@ def _setup_retriever(monkeypatch, *, records, capture):
 
 
 def _configure_identity_scrubber(monkeypatch):
+    """
+    Replace ask.scrub_object with an identity function so payloads are not altered during tests.
+    """
     monkeypatch.setattr(ask, "scrub_object", lambda payload: payload)
 
 
@@ -252,6 +309,12 @@ def test_retriever_initialization_error(monkeypatch, tmp_path, capsys):
         pass
 
     def _boom(*_args, **_kwargs):
+        """
+        Helper function that always raises a retriever initialization error.
+        
+        Raises:
+            Boom: Always raised with the message "init failed".
+        """
         raise Boom("init failed")
 
     monkeypatch.setattr(ask, "QdrantNeo4jRetriever", _boom)
