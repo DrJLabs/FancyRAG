@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import functools
 import hashlib
 import json
@@ -108,10 +109,10 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # Store cached results per input so the pipeline can reuse them once.
-        # Each key maps to a single-use stack to prevent sharing chunk objects
-        # across different files that happen to contain identical content.
-        self._cache: dict[str | tuple[str, ...], list[TextChunks]] = {}
+        # Store cached results keyed by the raw text (or tuple of segments).  Each
+        # lookup returns a deep copy so per-file provenance stays isolated even
+        # when different inputs share identical content.
+        self._cache: dict[str | tuple[str, ...], TextChunks] = {}
 
     @staticmethod
     def _cache_key(text: str | Sequence[str]) -> str | tuple[str, ...]:
@@ -125,26 +126,23 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         if config is not None:
             # Defer to the base implementation when custom configuration is
             # supplied; caching only targets the default execution path.
-            return await super().run(text, config)
+            return await super().run(text, config=config)
 
         key = self._cache_key(text)
-        stack = self._cache.get(key)
-        if stack:
-            cached = stack.pop()
-            if not stack:
-                self._cache.pop(key, None)
-            return cached
+        cached = self._cache.get(key)
+        if cached is not None:
+            return copy.deepcopy(cached)
 
-        result = await super().run(text, config)
-        self._cache.setdefault(key, []).append(result)
+        result = await super().run(text, config=config)
+        self._cache[key] = copy.deepcopy(result)
         return result
 
     def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
         """Return the cached chunk result for ``text`` if available."""
 
-        stack = self._cache.get(self._cache_key(text))
-        if stack:
-            return stack[-1]
+        cached = self._cache.get(self._cache_key(text))
+        if cached is not None:
+            return copy.deepcopy(cached)
         return None
 
 
