@@ -403,3 +403,700 @@ def test_retriever_initialization_error(monkeypatch, tmp_path, capsys):
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
     assert saved["status"] == "error"
+def test_main_with_default_top_k(monkeypatch, tmp_path, capsys):
+    """Test that default top_k value (5) is used when not specified."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "What is AI?"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.5, 0.5])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    assert capture["top_k"] == 5
+
+
+def test_main_with_custom_database(monkeypatch, tmp_path, capsys):
+    """Test that custom NEO4J_DATABASE environment variable is respected."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NEO4J_DATABASE", "custom_db")
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    kwargs = capture["kwargs"]
+    assert kwargs.get("neo4j_database") == "custom_db"
+
+
+def test_main_with_qdrant_api_key(monkeypatch, tmp_path, capsys):
+    """Test that QDRANT_API_KEY is passed to QdrantClient."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("QDRANT_API_KEY", "test-api-key")
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    qdrant_init: dict = {}
+
+    class FakeQdrantClient:
+        def __init__(self, *, url, api_key=None, **_):
+            qdrant_init["url"] = url
+            qdrant_init["api_key"] = api_key
+
+    monkeypatch.setattr(ask, "QdrantClient", FakeQdrantClient)
+
+    ask.main()
+
+    assert qdrant_init.get("api_key") == "test-api-key"
+
+
+def test_main_empty_results(monkeypatch, tmp_path, capsys):
+    """Test handling of empty search results."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Nonexistent"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1, 0.2])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+    assert payload["status"] == "skipped"
+    assert payload["message"] == "Qdrant returned no matches"
+    artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
+    saved = json.loads(artifact_path.read_text())
+    assert saved["matches"] == []
+    assert saved["status"] == "skipped"
+
+
+def test_main_search_validation_error(monkeypatch, tmp_path, capsys):
+    """Test handling of search validation errors from retriever."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+
+    class ValidationError(Exception):
+        pass
+
+    class FailingRetriever:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_search_results(self, **kwargs):
+            raise ValidationError("Invalid search parameters")
+
+    monkeypatch.setattr(ask, "QdrantNeo4jRetriever", FailingRetriever)
+    monkeypatch.setattr(ask, "SearchValidationError", ValidationError)
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+    assert "Invalid search parameters" in payload["message"]
+
+
+def test_main_qdrant_api_exception(monkeypatch, tmp_path, capsys):
+    """Test handling of Qdrant API exceptions."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+
+    class QdrantAPIError(Exception):
+        pass
+
+    class FailingRetriever:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_search_results(self, **kwargs):
+            raise QdrantAPIError("Connection to Qdrant failed")
+
+    monkeypatch.setattr(ask, "QdrantNeo4jRetriever", FailingRetriever)
+    monkeypatch.setattr(ask, "ApiException", QdrantAPIError)
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+    assert "Qdrant" in payload["message"] or "Connection" in payload["message"]
+
+
+def test_main_neo4j_connection_error(monkeypatch, tmp_path, capsys):
+    """Test handling of Neo4j connection failures."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--include-semantic"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+
+    class Neo4jConnError(Exception):
+        pass
+
+    class FailingDriver:
+        def __enter__(self):
+            raise Neo4jConnError("Failed to connect to Neo4j")
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(ask.GraphDatabase, "driver", lambda *_, **__: FailingDriver())
+    monkeypatch.setattr(ask, "Neo4jError", Neo4jConnError)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "chunk_uid": "uid-1", "text": "test", "score": 0.9}],
+        capture=capture,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+
+
+def test_main_with_missing_question_argument(monkeypatch, tmp_path, capsys):
+    """Test that missing --question argument is handled appropriately."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py"])
+
+    with pytest.raises(SystemExit):
+        ask.main()
+
+
+def test_main_with_invalid_top_k_value(monkeypatch, tmp_path, capsys):
+    """Top-k <= 0 should be clamped to 1."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--top-k", "0"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    assert capture["top_k"] == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] in {"skipped", "success"}
+
+
+def test_main_with_large_top_k_value(monkeypatch, tmp_path, capsys):
+    """Test handling of very large top_k values."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--top-k", "1000"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    assert capture["top_k"] == 1000
+
+
+def test_main_with_empty_question(monkeypatch, tmp_path, capsys):
+    """Test handling of empty question string."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", ""])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.0])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] in {"skipped", "success"}
+
+
+def test_main_with_unicode_question(monkeypatch, tmp_path, capsys):
+    """Test handling of Unicode characters in questions."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "What is AI? 你好 🤖"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1, 0.2])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] in {"skipped", "success"}
+
+
+def test_main_result_with_missing_optional_fields(monkeypatch, tmp_path, capsys):
+    """Test handling of results with missing optional fields like document_name."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--top-k", "1"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[
+            {
+                "chunk_id": "1",
+                "chunk_uid": "chunk-1",
+                "text": "minimal",
+                "score": 0.5,
+            }
+        ],
+        capture=capture,
+    )
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] in {"skipped", "success"}
+    assert payload["matches"][0]["chunk_id"] == "1"
+
+
+def test_main_semantic_context_with_empty_result(monkeypatch, tmp_path, capsys):
+    """Test that empty semantic context is handled gracefully."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["ask_qdrant.py", "--question", "Test", "--include-semantic"]
+    )
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "chunk_uid": "uid-1", "text": "test", "score": 0.9}],
+        capture=capture,
+    )
+    monkeypatch.setattr(ask, "_fetch_semantic_context", lambda *_, **__: {})
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "success"
+
+
+def test_main_semantic_context_fetch_error(monkeypatch, tmp_path, capsys):
+    """Test handling of errors when fetching semantic context."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["ask_qdrant.py", "--question", "Test", "--include-semantic"]
+    )
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "chunk_uid": "uid-1", "text": "test", "score": 0.9}],
+        capture=capture,
+    )
+
+    def failing_semantic_fetch(*args, **kwargs):
+        raise Exception("Semantic fetch failed")
+
+    monkeypatch.setattr(ask, "_fetch_semantic_context", failing_semantic_fetch)
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+
+
+def test_main_artifact_directory_creation(monkeypatch, tmp_path, capsys):
+    """Test that artifact directory is created if it doesn't exist."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    artifact_dir = tmp_path / "artifacts" / "local_stack"
+    assert not artifact_dir.exists()
+
+    ask.main()
+
+    assert artifact_dir.exists()
+    assert (artifact_dir / "ask_qdrant.json").exists()
+
+
+def test_main_with_very_long_question(monkeypatch, tmp_path, capsys):
+    """Test handling of very long question strings."""
+    monkeypatch.chdir(tmp_path)
+    long_question = "What is " + "very " * 1000 + "important?"
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", long_question])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1] * 100)
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] in {"skipped", "success"}
+
+
+def test_main_multiple_results_with_same_score(monkeypatch, tmp_path, capsys):
+    """Test handling of multiple results with identical scores."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--top-k", "3"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[
+            {"chunk_id": "1", "chunk_uid": "uid-1", "text": "a", "score": 0.9},
+            {"chunk_id": "2", "chunk_uid": "uid-2", "text": "b", "score": 0.9},
+            {"chunk_id": "3", "chunk_uid": "uid-3", "text": "c", "score": 0.9},
+        ],
+        capture=capture,
+    )
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "success"
+    assert len(payload["matches"]) == 3
+    assert all(m["score"] == pytest.approx(0.9) for m in payload["matches"])
+
+
+def test_main_result_with_special_characters_in_text(monkeypatch, tmp_path, capsys):
+    """Test handling of special characters in chunk text."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[
+            {
+                "chunk_id": "1",
+                "chunk_uid": "uid-1",
+                "text": 'Special: <>"\\n\\t\\/\b\f\r',
+                "score": 0.9,
+            }
+        ],
+        capture=capture,
+    )
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] in {"skipped", "success"}
+    artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
+    saved = json.loads(artifact_path.read_text())
+    assert "Special:" in saved["matches"][0]["text"]
+
+
+def test_main_with_openai_rate_limit_error(monkeypatch, tmp_path, capsys):
+    """Test handling of OpenAI rate limit errors."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+
+    class RateLimitError(Exception):
+        def __init__(self, message, remediation=None):
+            super().__init__(message)
+            self.remediation = remediation
+
+    monkeypatch.setattr(ask, "OpenAIClientError", RateLimitError)
+
+    class RateLimitedClient:
+        def __init__(self, settings):
+            pass
+
+        def embedding(self, *, input_text: str):
+            raise RateLimitError(
+                "Rate limit exceeded", remediation="Wait and retry after some time"
+            )
+
+    monkeypatch.setattr(ask, "SharedOpenAIClient", lambda settings: RateLimitedClient(settings))
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+    assert "retry" in payload["message"].lower() or "rate" in payload["message"].lower()
+
+
+def test_embedding_vector_passed_correctly(monkeypatch, tmp_path, capsys):
+    """Test that the embedding vector is correctly passed to the retriever."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    test_vector = [0.123, 0.456, 0.789]
+    _setup_shared_client(monkeypatch, vector=test_vector)
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    assert capture["query_vector"] == test_vector
+
+
+def test_retrieval_query_structure(monkeypatch, tmp_path, capsys):
+    """Test that the retrieval query includes expected Cypher patterns."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    kwargs = capture["kwargs"]
+    query = kwargs["retrieval_query"]
+    assert "OPTIONAL MATCH" in query
+    assert "Document" in query
+    assert "HAS_CHUNK" in query
+
+
+def test_main_with_json_output_format(monkeypatch, tmp_path, capsys):
+    """Test that output is valid JSON in all cases."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(monkeypatch, records=[], capture=capture)
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert isinstance(payload, dict)
+    assert "status" in payload
+    assert "message" in payload
+    assert "matches" in payload
+
+
+def test_scrub_object_called_on_results(monkeypatch, tmp_path, capsys):
+    """Test that scrub_object is called on result payloads."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "chunk_uid": "uid-1", "text": "test", "score": 0.9}],
+        capture=capture,
+    )
+
+    scrub_calls = []
+
+    def tracking_scrub(payload):
+        scrub_calls.append(payload)
+        return payload
+
+    monkeypatch.setattr(ask, "scrub_object", tracking_scrub)
+
+    ask.main()
+
+    assert len(scrub_calls) > 0
+
+
+def test_main_result_ordering_by_score(monkeypatch, tmp_path, capsys):
+    """Test that results maintain score-based ordering from retriever."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--top-k", "3"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[
+            {"chunk_id": "1", "chunk_uid": "uid-1", "text": "high", "score": 0.95},
+            {"chunk_id": "2", "chunk_uid": "uid-2", "text": "medium", "score": 0.75},
+            {"chunk_id": "3", "chunk_uid": "uid-3", "text": "low", "score": 0.45},
+        ],
+        capture=capture,
+    )
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    scores = [m["score"] for m in payload["matches"]]
+    assert scores == [0.95, 0.75, 0.45]
+
+
+def test_main_unexpected_exception_handling(monkeypatch, tmp_path, capsys):
+    """Test that unexpected exceptions are caught and reported properly."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+
+    class UnexpectedError(Exception):
+        pass
+
+    class FailingRetriever:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_search_results(self, **kwargs):
+            raise UnexpectedError("Something went wrong unexpectedly")
+
+    monkeypatch.setattr(ask, "QdrantNeo4jRetriever", FailingRetriever)
+
+    with pytest.raises(SystemExit) as excinfo:
+        ask.main()
+
+    assert excinfo.value.code == 1
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+
+
+def test_record_to_match_from_data(monkeypatch):
+    """_record_to_match handles objects with data() and coerces IDs to strings."""
+    class R:
+        def data(self):
+            return {"chunk_id": 123, "chunk_uid": 456, "text": "t"}
+
+    out = ask._record_to_match(R())
+    assert out["chunk_id"] == "123"
+    assert out["chunk_uid"] == "456"
+    assert out["text"] == "t"
+
+
+def test_record_to_match_from_dict_with_id_fallback():
+    """_record_to_match uses 'id' when 'chunk_id' is absent."""
+    out = ask._record_to_match({"id": 99, "score": 0.7})
+    assert out["chunk_id"] == "99"
+    assert out["score"] == 0.7
+
+
+def test_record_to_match_from_sequence_mapping():
+    """_record_to_match accepts mapping-like sequences."""
+    seq = [("chunk_id", 1), ("chunk_uid", "u1")]
+    out = ask._record_to_match(seq)
+    assert out["chunk_id"] == "1"
+    assert out["chunk_uid"] == "u1"
+
+
+def test_main_score_non_numeric_remains_unchanged(monkeypatch, tmp_path, capsys):
+    """Non-numeric score should remain unchanged after normalization attempt."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Test", "--top-k", "1"])
+    monkeypatch.setattr(ask, "_load_settings", lambda: object())
+    _configure_identity_scrubber(monkeypatch)
+    _setup_shared_client(monkeypatch, vector=[0.1])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "chunk_uid": "u1", "text": "x", "score": "oops"}],
+        capture=capture,
+    )
+
+    ask.main()
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["matches"][0]["score"] == "oops"
+
+
+def test_fetch_semantic_context_happy_path(monkeypatch):
+    """Unit test for _fetch_semantic_context node and relationship shaping."""
+    _configure_identity_scrubber(monkeypatch)
+
+    class FakeDriver:
+        def execute_query(self, *args, **kwargs):
+            return [
+                {
+                    "chunk_uid": "U1",
+                    "nodes": [
+                        {"id": "1:Person", "labels": ["Person"], "properties": {"name": "Alice"}}
+                    ],
+                    "relationships": [
+                        None,
+                        {
+                            "type": "KNOWS",
+                            "start": "1:Person",
+                            "end": "2:Person",
+                            "properties": {"w": 1.0},
+                        },
+                    ],
+                }
+            ]
+
+    out = ask._fetch_semantic_context(FakeDriver(), database="db", chunk_uids=["U1"])
+    assert "U1" in out
+    assert out["U1"]["nodes"][0]["id"] == "1:Person"
+    assert out["U1"]["nodes"][0]["labels"] == ["Person"]
+    assert out["U1"]["nodes"][0]["properties"]["name"] == "Alice"
+    assert out["U1"]["relationships"][0]["type"] == "KNOWS"
+
+
+def test_fetch_semantic_context_no_ids(monkeypatch):
+    """_fetch_semantic_context returns empty dict for empty input."""
+    _configure_identity_scrubber(monkeypatch)
+    class FakeDriver:
+        def execute_query(self, *args, **kwargs):
+            raise AssertionError("execute_query should not be called when no chunk_uids")
+    out = ask._fetch_semantic_context(FakeDriver(), database=None, chunk_uids=[])
+    assert out == {}
