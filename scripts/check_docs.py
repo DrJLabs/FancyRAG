@@ -80,22 +80,22 @@ class LintIssue:
     missing_tokens: tuple[str, ...]
     description: str
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, object]:
         """
         Serialize the lint issue to a dictionary suitable for JSON output.
-        
+
         Returns:
-            dict[str, str]: A mapping with keys:
+            dict[str, object]: A mapping with keys:
                 - "path": filesystem path to the document as a string.
                 - "check_id": identifier of the failed check.
                 - "description": human-readable description of the issue.
-                - "missing_tokens": comma-separated string of tokens that were not found.
+                - "missing_tokens": list of tokens that were not found.
         """
         return {
             "path": str(self.path),
             "check_id": self.check_id,
             "description": self.description,
-            "missing_tokens": ", ".join(self.missing_tokens),
+            "missing_tokens": list(self.missing_tokens),
         }
 
 
@@ -195,7 +195,9 @@ def _evaluate_rule(rule: LintRule, *, root: Path) -> tuple[list[dict[str, str]],
     return evidence, issues
 
 
-def _gather_results(rules: Iterable[LintRule], *, root: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+def _gather_results(
+    rules: Iterable[LintRule], *, root: Path
+) -> tuple[list[dict[str, str]], list[dict[str, object]]]:
     """
     Run lint rules across the provided rules and collect evidence and issues.
     
@@ -205,11 +207,11 @@ def _gather_results(rules: Iterable[LintRule], *, root: Path) -> tuple[list[dict
     Returns:
         tuple:
             - evidence (list[dict[str, str]]): Passed-check records with keys `path`, `check_id`, `status`, and `description`.
-            - issues (list[dict[str, str]]): Failure records produced by `LintIssue.to_dict()` with keys `path`, `check_id`, `description`, and `missing_tokens` (comma-separated).
+            - issues (list[dict[str, object]]): Failure records produced by `LintIssue.to_dict()` with keys `path`, `check_id`, `description`, and `missing_tokens` (list of tokens).
     """
 
     evidence: list[dict[str, str]] = []
-    issues: list[dict[str, str]] = []
+    issues: list[dict[str, object]] = []
 
     for rule in rules:
         rule_evidence, rule_issues = _evaluate_rule(rule, root=root)
