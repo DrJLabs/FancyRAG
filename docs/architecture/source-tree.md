@@ -22,6 +22,7 @@ neo4j-graphrag/
 ├── requirements.lock
 ├── scripts/
 │   ├── audit_openai_allowlist.py
+│   ├── check_docs.py
 │   └── bootstrap.sh
 ├── src/
 │   ├── __init__.py
@@ -51,4 +52,6 @@ neo4j-graphrag/
 │       └── config/
 └── .github/workflows/
     └── openai-allowlist-audit.yml
+
+`scripts/check_docs.py` provides the documentation lint guard referenced in the architecture overview and CI workflows.
 ```

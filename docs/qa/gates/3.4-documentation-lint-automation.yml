@@ -1,0 +1,74 @@
+schema: 1
+story: "3.4"
+story_title: "Documentation Lint Automation"
+gate: "PASS"
+status_reason: "Documentation lint guard, .env auto-loading, and smoke integration verified via automated tests and live stack run; residual risk limited to monitoring lint noise."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-02T10:44:00-07:00"
+waiver: { active: false }
+top_issues: []
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src pytest tests/unit/scripts/test_check_docs.py"
+    - "PYTHONPATH=src pytest tests/integration/cli/test_check_docs_cli.py"
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/test_env_utils.py"
+    - "PYTHONPATH=stubs:src python3 scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine"
+    - "PYTHONPATH=stubs:src python3 scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100"
+    - "PYTHONPATH=stubs:src python3 scripts/export_to_qdrant.py --collection chunks_main"
+    - "PYTHONPATH=stubs:src python3 scripts/ask_qdrant.py --question 'What did Acme launch?' --top-k 3"
+    - "PYTHONPATH=src python -m scripts.check_docs --strict"
+  risks_identified:
+    - "TECH-001 (documentation lint coverage)"
+  trace:
+    totals:
+      requirements: 4
+      full: 4
+      partial: 0
+      none: 0
+    planning_ref: docs/qa/assessments/3.4-test-design-20251002.md
+    uncovered: []
+    notes: docs/qa/assessments/3.4-trace-20251002.md
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 2
+    low: 1
+  highest: TECH-001
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Track lint failure frequency in CI; expand rule set as documentation grows."
+      - "Monitor Neo4j QA queries referencing legacy `uid` property for potential cleanup."
+test_design:
+  scenarios_total: 7
+  by_level:
+    unit: 3
+    integration: 3
+    e2e: 1
+  by_priority:
+    p0: 5
+    p1: 2
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "Lint guard operates on docs and scrubs JSON output; no secrets surfaced."
+  performance:
+    status: PASS
+    notes: "Targeted token checks complete rapidly; negligible impact on pipeline."
+  reliability:
+    status: PASS
+    notes: "Unit/integration coverage plus smoke execution confirm deterministic behaviour across environments."
+  maintainability:
+    status: PASS
+    notes: "Rules centralized and documented; tests enforce behaviour and .env discovery override provided."
+references:
+  risk_profile: docs/qa/assessments/3.4-risk-20251002.md
+  test_design: docs/qa/assessments/3.4-test-design-20251002.md
+  trace: docs/qa/assessments/3.4-trace-20251002.md
+  nfr_assessment: docs/qa/assessments/3.4-nfr-20251002.md
+  review: docs/qa/assessments/3.4-review-20251002.md
