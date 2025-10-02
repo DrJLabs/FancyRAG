@@ -189,7 +189,7 @@ def _setup_retriever(monkeypatch, *, records, capture):
             capture["kwargs"] = kwargs
             self._records = [FakeRecord(item) for item in records]
 
-        def get_search_results(self, *, query_vector, top_k):  # noqa: ARG002
+        def get_search_results(self, *, query_vector, top_k):
             """
             Record the provided `query_vector` and `top_k` in the shared `capture` dictionary and return the preconfigured search results.
             

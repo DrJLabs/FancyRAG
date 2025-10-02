@@ -118,8 +118,8 @@ def main() -> None:
                 driver=driver,
                 client=qdrant_client,
                 collection_name=args.collection,
-                id_property_neo4j="chunk_id",
-                id_property_external="chunk_id",
+                id_property_neo4j=os.environ.get("QDRANT_NEO4J_ID_PROPERTY_NEO4J", "chunk_id"),
+                id_property_external=os.environ.get("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL", "chunk_id"),
                 neo4j_database=neo4j_database,
                 retrieval_query=(
                     "WITH node, score "
