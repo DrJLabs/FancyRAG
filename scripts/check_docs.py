@@ -39,8 +39,7 @@ class LintRule:
 DEFAULT_RULES: tuple[LintRule, ...] = (
     LintRule(
         relative_path=Path("docs/architecture/overview.md"),
-        checks=
-        (
+        checks=(
             TokenCheck(
                 check_id="minimal-path-commands",
                 tokens=("scripts/check_local_stack.sh --config", "scripts/check_local_stack.sh --up"),
@@ -110,7 +109,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         argparse.Namespace: Parsed arguments with attributes:
             - root (Path): Project root containing the docs directory.
             - json_output (Path): Path to write sanitized JSON results.
-            - strict (bool): Compatibility flag; lint fails on missing tokens.
     """
 
     parser = argparse.ArgumentParser(description=__doc__ or "Documentation lint guard")
@@ -125,11 +123,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_JSON_PATH,
         type=Path,
         help="Path to write sanitized JSON results (default: artifacts/docs/check_docs.json)",
-    )
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Retained for compatibility; lint always fails on missing tokens.",
     )
     return parser.parse_args(argv)
 
