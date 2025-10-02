@@ -108,7 +108,10 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._cache: dict[str | tuple[str, ...], TextChunks] = {}
+        # Store cached results per input so the pipeline can reuse them once.
+        # Each key maps to a single-use stack to prevent sharing chunk objects
+        # across different files that happen to contain identical content.
+        self._cache: dict[str | tuple[str, ...], list[TextChunks]] = {}
 
     @staticmethod
     def _cache_key(text: str | Sequence[str]) -> str | tuple[str, ...]:
@@ -116,19 +119,33 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
             return text
         return tuple(text)
 
-    async def run(self, text: str | Sequence[str]) -> TextChunks:  # type: ignore[override]
+    async def run(
+        self, text: str | Sequence[str], config: Any | None = None
+    ) -> TextChunks:  # type: ignore[override]
+        if config is not None:
+            # Defer to the base implementation when custom configuration is
+            # supplied; caching only targets the default execution path.
+            return await super().run(text, config)
+
         key = self._cache_key(text)
-        cached = self._cache.get(key)
-        if cached is not None:
+        stack = self._cache.get(key)
+        if stack:
+            cached = stack.pop()
+            if not stack:
+                self._cache.pop(key, None)
             return cached
-        result = await super().run(text)
-        self._cache[key] = result
+
+        result = await super().run(text, config)
+        self._cache.setdefault(key, []).append(result)
         return result
 
     def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
         """Return the cached chunk result for ``text`` if available."""
 
-        return self._cache.get(self._cache_key(text))
+        stack = self._cache.get(self._cache_key(text))
+        if stack:
+            return stack[-1]
+        return None
 
 
 @dataclass
@@ -958,7 +975,7 @@ def _ensure_document_relationships(
                         doc.title = $document_name
         // Refresh document-level provenance on every ingestion
         SET doc.relative_path = $relative_path,
-            doc.git_commit = coalesce($git_commit, doc.git_commit),
+            doc.git_commit = $git_commit,
             doc.checksum = $document_checksum
         WITH doc
         // Process each chunk emitted by the current pipeline execution
@@ -969,7 +986,7 @@ def _ensure_document_relationships(
         // Update per-chunk provenance while preserving existing identifiers when re-ingesting
         SET chunk.source_path = $source_path,
             chunk.relative_path = meta.relative_path,
-            chunk.git_commit = coalesce(meta.git_commit, chunk.git_commit),
+            chunk.git_commit = meta.git_commit,
             chunk.checksum = meta.checksum
         FOREACH (_ IN CASE WHEN chunk.chunk_id IS NULL THEN [1] ELSE [] END |
             SET chunk.chunk_id = meta.sequence
