@@ -36,6 +36,22 @@ from neo4j_graphrag.exceptions import (
 from neo4j_graphrag.retrievers import QdrantNeo4jRetriever
 
 
+_RETRIEVAL_QUERY = (
+    "WITH node, score "
+    "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
+    "RETURN node.chunk_id AS chunk_id, "
+    "node.text AS text, "
+    "node.source_path AS source_path, "
+    "node.relative_path AS relative_path, "
+    "node.git_commit AS git_commit, "
+    "node.checksum AS checksum, "
+    "node.chunk_index AS chunk_index, "
+    "doc.name AS document_name, "
+    "doc.source_path AS document_source_path, "
+    "score"
+)
+
+
 def _load_settings() -> OpenAISettings:
     """
     Load OpenAI settings configured for the "ask_qdrant" actor.
@@ -64,7 +80,11 @@ def _record_to_match(record: Any) -> dict[str, Any]:
     else:  # pragma: no cover - defensive guard when record implements mapping protocol
         payload = dict(record)
 
-    chunk_identifier = payload.get("chunk_id") or payload.get("id")
+    if "chunk_id" in payload and payload["chunk_id"] is not None:
+        chunk_identifier = payload["chunk_id"]
+    else:
+        chunk_identifier = payload.get("id")
+
     if chunk_identifier is not None:
         payload["chunk_id"] = str(chunk_identifier)
 
@@ -121,20 +141,7 @@ def main() -> None:
                 id_property_neo4j=os.environ.get("QDRANT_NEO4J_ID_PROPERTY_NEO4J", "chunk_id"),
                 id_property_external=os.environ.get("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL", "chunk_id"),
                 neo4j_database=neo4j_database,
-                retrieval_query=(
-                    "WITH node, score "
-                    "OPTIONAL MATCH (doc:Document)-[:HAS_CHUNK]->(node) "
-                    "RETURN node.chunk_id AS chunk_id, "
-                    "node.text AS text, "
-                    "node.source_path AS source_path, "
-                    "node.relative_path AS relative_path, "
-                    "node.git_commit AS git_commit, "
-                    "node.checksum AS checksum, "
-                    "node.chunk_index AS chunk_index, "
-                    "doc.name AS document_name, "
-                    "doc.source_path AS document_source_path, "
-                    "score"
-                ),
+                retrieval_query=_RETRIEVAL_QUERY,
             )
 
             raw_result = retriever.get_search_results(
