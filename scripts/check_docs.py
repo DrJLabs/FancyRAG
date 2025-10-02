@@ -81,6 +81,16 @@ class LintIssue:
     description: str
 
     def to_dict(self) -> dict[str, str]:
+        """
+        Serialize the lint issue to a dictionary suitable for JSON output.
+        
+        Returns:
+            dict[str, str]: A mapping with keys:
+                - "path": filesystem path to the document as a string.
+                - "check_id": identifier of the failed check.
+                - "description": human-readable description of the issue.
+                - "missing_tokens": comma-separated string of tokens that were not found.
+        """
         return {
             "path": str(self.path),
             "check_id": self.check_id,
@@ -90,7 +100,18 @@ class LintIssue:
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
+    """
+    Parse command-line arguments for the documentation lint script.
+    
+    Parameters:
+        argv (Sequence[str] | None): Command-line arguments to parse. If None, the system arguments are used.
+    
+    Returns:
+        argparse.Namespace: Parsed arguments with attributes:
+            - root (Path): Project root containing the docs directory.
+            - json_output (Path): Path to write sanitized JSON results.
+            - strict (bool): Compatibility flag; lint fails on missing tokens.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__ or "Documentation lint guard")
     parser.add_argument(
@@ -120,7 +141,18 @@ def _load_text(path: Path) -> str:
 
 
 def _evaluate_rule(rule: LintRule, *, root: Path) -> tuple[list[dict[str, str]], list[LintIssue]]:
-    """Evaluate a lint rule and return collected evidence."""
+    """
+    Check a LintRule against the repository root and collect passing evidence and any lint issues found.
+    
+    Parameters:
+        rule (LintRule): Rule containing a relative documentation path and its TokenChecks.
+        root (Path): Project root used to resolve the rule's relative_path.
+    
+    Returns:
+        tuple[list[dict[str, str]], list[LintIssue]]: 
+            - evidence: list of dictionaries for checks that passed; each dictionary contains keys `path`, `check_id`, `status` (set to `"passed"`), and `description`.
+            - issues: list of LintIssue objects for failed checks or a missing file. If the documentation file is absent a single LintIssue is returned with `check_id` `"missing-file"` and an empty `missing_tokens`.
+    """
 
     absolute_path = root / rule.relative_path
     evidence: list[dict[str, str]] = []
@@ -164,7 +196,17 @@ def _evaluate_rule(rule: LintRule, *, root: Path) -> tuple[list[dict[str, str]],
 
 
 def _gather_results(rules: Iterable[LintRule], *, root: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Run lint rules and return (evidence, issues)."""
+    """
+    Run lint rules across the provided rules and collect evidence and issues.
+    
+    Parameters:
+        root (Path): Filesystem root used to resolve each rule's relative_path.
+    
+    Returns:
+        tuple:
+            - evidence (list[dict[str, str]]): Passed-check records with keys `path`, `check_id`, `status`, and `description`.
+            - issues (list[dict[str, str]]): Failure records produced by `LintIssue.to_dict()` with keys `path`, `check_id`, `description`, and `missing_tokens` (comma-separated).
+    """
 
     evidence: list[dict[str, str]] = []
     issues: list[dict[str, str]] = []
@@ -178,7 +220,13 @@ def _gather_results(rules: Iterable[LintRule], *, root: Path) -> tuple[list[dict
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
-    """Write sanitized JSON payload to disk."""
+    """
+    Sanitize the given payload and write it as pretty-printed JSON to the specified file path, creating parent directories as needed.
+    
+    Parameters:
+        path (Path): Destination file path where the JSON will be written.
+        payload (dict[str, object]): Data to be sanitized and serialized to JSON.
+    """
 
     sanitized = scrub_object(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +234,17 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point for command-line execution."""
+    """
+    Run the documentation lint checks and emit results.
+    
+    Runs the configured lint rules against documentation files under the given project root, writes a sanitized JSON summary to the configured output path, and logs the final result.
+    
+    Parameters:
+        argv (Sequence[str] | None): Command-line arguments to parse; defaults to sys.argv when None.
+    
+    Returns:
+        int: Exit code: 0 if all checks passed, 1 if any check failed.
+    """
 
     args = _parse_args(argv)
     root = args.root.resolve()

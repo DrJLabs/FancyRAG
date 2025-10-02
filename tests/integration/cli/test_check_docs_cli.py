@@ -12,6 +12,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.mark.integration
 def test_check_docs_cli_passes(tmp_path: Path) -> None:
+    """
+    Run the check_docs CLI against the project root and assert it reports a passing status.
+    
+    Executes the scripts.check_docs module with --strict and writes JSON output to a temporary file; fails the test if the process exits non‑zero and asserts that the JSON payload's "status" field equals "pass".
+    """
     json_output = tmp_path / "lint.json"
     result = subprocess.run(
         [
