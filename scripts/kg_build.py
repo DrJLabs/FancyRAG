@@ -304,7 +304,6 @@ class IngestionQaEvaluator:
         metrics: dict[str, Any] = {}
         anomalies: list[str] = []
 
-        document_paths = sorted({record.relative_path for record in self._sources})
         chunk_uids = [chunk.uid for record in self._sources for chunk in record.chunks]
 
         counts = _collect_counts(self._driver, database=self._database)
@@ -622,7 +621,7 @@ class IngestionQaEvaluator:
         anomalies = payload.get("anomalies", [])
         lines.append("## Findings")
         lines.append("")
-        if isinstance(anomalies, Sequence) and not isinstance(anomalies, (str, bytes)) and anomalies:
+        if anomalies:
             for item in anomalies:
                 lines.append(f"- ❌ {item}")
         else:
@@ -1792,8 +1791,6 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
         if not counts:
             counts = _collect_counts(driver, database=args.database)
 
-    if qa_section is None:
-        raise RuntimeError("QA evaluation did not produce a result")
     duration_ms = int((time.perf_counter() - start) * 1000)
 
     total_bytes = sum(len(spec.text.encode("utf-8")) for spec in source_specs)
