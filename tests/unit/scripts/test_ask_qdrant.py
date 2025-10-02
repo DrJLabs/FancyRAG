@@ -11,9 +11,13 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 existing_neo4j = sys.modules.get("neo4j")
+def _stub_driver(*_args, **_kwargs):
+    raise ImportError("neo4j driver not available in test stub")
+
+
 if existing_neo4j is None:
     stub_neo4j = ModuleType("neo4j")
-    stub_neo4j.GraphDatabase = SimpleNamespace(driver=lambda *_, **__: None)
+    stub_neo4j.GraphDatabase = SimpleNamespace(driver=_stub_driver)
     stub_neo4j.RoutingControl = SimpleNamespace(READ="READ")
     stub_neo4j.__spec__ = ModuleSpec("neo4j", loader=None)
     sys.modules.setdefault("neo4j", stub_neo4j)
@@ -22,6 +26,7 @@ else:
         existing_neo4j.__spec__ = ModuleSpec("neo4j", loader=None)
     if not hasattr(existing_neo4j, "RoutingControl"):
         existing_neo4j.RoutingControl = SimpleNamespace(READ="READ")
+    existing_neo4j.GraphDatabase = SimpleNamespace(driver=_stub_driver)
     stub_neo4j = existing_neo4j
 
 stub_neo4j_exceptions = ModuleType("neo4j.exceptions")
@@ -1070,11 +1075,14 @@ def test_fetch_semantic_context_happy_path(monkeypatch):
             return [
                 {
                     "chunk_uid": "U1",
-                    "nodes": [
+                    "entity_nodes": [
                         {"id": "1:Person", "labels": ["Person"], "properties": {"name": "Alice"}}
                     ],
-                    "relationships": [
+                    "related_nodes": [
+                        {"id": "2:Person", "labels": ["Person"], "properties": {"name": "Bob"}},
                         None,
+                    ],
+                    "relationships": [
                         {
                             "type": "KNOWS",
                             "start": "1:Person",
@@ -1087,9 +1095,11 @@ def test_fetch_semantic_context_happy_path(monkeypatch):
 
     out = ask._fetch_semantic_context(FakeDriver(), database="db", chunk_uids=["U1"])
     assert "U1" in out
-    assert out["U1"]["nodes"][0]["id"] == "1:Person"
-    assert out["U1"]["nodes"][0]["labels"] == ["Person"]
-    assert out["U1"]["nodes"][0]["properties"]["name"] == "Alice"
+    node_ids = {node["id"] for node in out["U1"]["nodes"]}
+    assert node_ids == {"1:Person", "2:Person"}
+    person_node = next(node for node in out["U1"]["nodes"] if node["id"] == "1:Person")
+    assert person_node["labels"] == ["Person"]
+    assert person_node["properties"]["name"] == "Alice"
     assert out["U1"]["relationships"][0]["type"] == "KNOWS"
 
 

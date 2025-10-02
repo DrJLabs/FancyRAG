@@ -251,21 +251,33 @@ def _fetch_semantic_context(
     MATCH (entity)
     WHERE entity.semantic_source = $source AND entity.chunk_uid IN $chunk_uids
     OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]-(target)
-    RETURN entity.chunk_uid AS chunk_uid,
-           collect(DISTINCT {
-               id: entity.id,
-               labels: labels(entity),
-               properties: entity
-           }) AS nodes,
-           collect(DISTINCT CASE
-               WHEN rel IS NULL THEN NULL
-               ELSE {
-                   type: type(rel),
-                   start: startNode(rel).id,
-                   end: endNode(rel).id,
-                   properties: rel
-               }
-           END) AS relationships
+    WITH entity.chunk_uid AS chunk_uid,
+         collect(DISTINCT {
+             id: entity.id,
+             labels: labels(entity),
+             properties: entity
+         }) AS entity_nodes,
+         collect(DISTINCT CASE
+             WHEN target IS NULL THEN NULL
+             ELSE {
+                 id: target.id,
+                 labels: labels(target),
+                 properties: target
+             }
+         END) AS related_nodes,
+         collect(DISTINCT CASE
+             WHEN rel IS NULL THEN NULL
+             ELSE {
+                 type: type(rel),
+                 start: startNode(rel).id,
+                 end: endNode(rel).id,
+                 properties: rel
+             }
+         END) AS relationship_entries
+    RETURN chunk_uid,
+           entity_nodes,
+           [node IN related_nodes WHERE node IS NOT NULL] AS related_nodes,
+           [rel IN relationship_entries WHERE rel IS NOT NULL] AS relationships
     """
 
     result = driver.execute_query(
@@ -280,7 +292,9 @@ def _fetch_semantic_context(
         if not chunk_uid:
             continue
 
-        node_entries = record.get("nodes", [])
+        entity_nodes = record.get("entity_nodes", [])
+        related_nodes = record.get("related_nodes", [])
+        node_entries = [*entity_nodes, *related_nodes]
         relationship_entries = [
             entry
             for entry in record.get("relationships", [])
@@ -288,16 +302,26 @@ def _fetch_semantic_context(
         ]
 
         nodes_payload = []
+        seen_node_ids: set[str] = set()
         for node_entry in node_entries:
+            if not node_entry:
+                continue
             node_dict = dict(node_entry)
+            node_id = node_dict.get("id")
+            if node_id is not None:
+                node_id = str(node_id)
+            if node_id in seen_node_ids:
+                continue
             properties = scrub_object(node_dict.get("properties", {}))
             nodes_payload.append(
                 {
-                    "id": node_dict.get("id"),
+                    "id": node_id,
                     "labels": list(node_dict.get("labels", [])),
                     "properties": properties,
                 }
             )
+            if node_id is not None:
+                seen_node_ids.add(node_id)
 
         relationships_payload = []
         for rel_entry in relationship_entries:

@@ -17,21 +17,21 @@ else:
     class CollectorRegistry:  # type: ignore[no-redef]
         """No-op CollectorRegistry replacement when prometheus_client is unavailable."""
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: D401 - simple shim
-            """Create a collector registry that silently drops metrics."""
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            """Initialize a collector registry that silently drops metrics."""
 
 
     class _NoOpMetric:  # pragma: no cover - trivial forwarding methods
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             pass
 
-        def labels(self, *args: Any, **kwargs: Any) -> "_NoOpMetric":
+        def labels(self, *_args: Any, **_kwargs: Any) -> "_NoOpMetric":
             return self
 
-        def observe(self, *args: Any, **kwargs: Any) -> None:
+        def observe(self, *_args: Any, **_kwargs: Any) -> None:
             return None
 
-        def inc(self, *args: Any, **kwargs: Any) -> None:
+        def inc(self, *_args: Any, **_kwargs: Any) -> None:
             return None
 
 

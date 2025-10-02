@@ -18,7 +18,7 @@ Always consult the canonical documentation set below before running any GraphRAG
 - `docs/architecture/source-tree.md` — current locations for CLI entrypoints, pipelines, and support modules.
 - `docs/architecture/coding-standards.md` — logging, retry, and testing expectations that every command must uphold.
 - `PYTHONPATH=src python3 -m scripts.check_docs --strict` — documentation lint guard that enforces minimal-path instructions and native retriever references remain accurate before shipping ingestion or retrieval updates. Results are written to `artifacts/docs/check_docs.json` and failures surface actionable remediation hints.
-- `PYTHONPATH=src python scripts/kg_build.py --enable-semantic` — optional semantic enrichment pass that invokes the GraphRAG `LLMEntityRelationExtractor`, writes entity/relationship nodes tagged with `semantic_source=kg_build.semantic_enrichment.v1`, and records additional QA metrics governed by `--qa-max-semantic-failures` and `--qa-max-semantic-orphans` thresholds.
+- `PYTHONPATH=src python3 scripts/kg_build.py --enable-semantic` — optional semantic enrichment pass that invokes the GraphRAG `LLMEntityRelationExtractor`, writes entity/relationship nodes tagged with `semantic_source=kg_build.semantic_enrichment.v1`, and records additional QA metrics governed by `--qa-max-semantic-failures` and `--qa-max-semantic-orphans` thresholds.
 
 Re-read the sections relevant to the command you intend to run and confirm the workflow still matches the latest documented steps. If a command deviates from the documented behaviour, halt and update the documentation before proceeding.
 
