@@ -80,15 +80,15 @@ graph TD
 2. Validate compose configuration: `scripts/check_local_stack.sh --config` (wraps `docker compose config`).
 3. Start containers: `scripts/check_local_stack.sh --up` (or run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` directly).
 4. Wait for health checks to pass (`scripts/check_local_stack.sh --status` polls container health).
-5. Create the vector index (idempotent): `PYTHONPATH=src python scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine`.
-6. Build the minimal knowledge graph: `PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
-   - For larger corpora, choose a chunking profile (e.g., `--profile markdown` or `--profile code`) and optionally point at a directory: `PYTHONPATH=src python scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"`. Profiles auto-tune chunk size/overlap and ensure deterministic ordering.
+5. Create the vector index (idempotent): `PYTHONPATH=src python3 scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine`.
+6. Build the minimal knowledge graph: `PYTHONPATH=src python3 scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
+   - For larger corpora, choose a chunking profile (e.g., `--profile markdown` or `--profile code`) and optionally point at a directory: `PYTHONPATH=src python3 scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"`. Profiles auto-tune chunk size/overlap and ensure deterministic ordering.
    - Turn on semantic enrichment when you need entity and relationship extraction: append `--enable-semantic` (tune concurrency with `--semantic-max-concurrency`). Semantic runs tag new nodes and relationships with `semantic_source=kg_build.semantic_enrichment.v1` and add QA coverage controlled by `--qa-max-semantic-failures` and `--qa-max-semantic-orphans`.
    - Directory ingestion skips non-text/binary files, logs warnings, and records per-chunk metadata (relative path, git commit, SHA-256 checksum, chunk indices) so downstream retrieval can filter by provenance.
    - Every ingestion run executes a QA gate before finalizing Neo4j writes and emits a versioned report (`ingestion-qa-report/v1`) under `artifacts/ingestion/<timestamp>/` (`quality_report.json` + `quality_report.md`). The report captures chunk/token histograms, orphan integrity, and checksum validation results. Override thresholds with `--qa-max-missing-embeddings`, `--qa-max-orphan-chunks`, and `--qa-max-checksum-mismatches`; failing gates roll back newly created chunks/documents and return a non-zero exit code.
    - Run logs capture both ingestion duration and `qa.qa_evaluation_ms`, and reports are scrubbed via the shared sanitizer to avoid leaking secrets or absolute filesystem paths.
-7. Export embeddings: `PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main`.
-8. Smoke retrieval: `PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
+7. Export embeddings: `PYTHONPATH=src python3 scripts/export_to_qdrant.py --collection chunks_main`.
+8. Smoke retrieval: `PYTHONPATH=src python3 scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
    - The CLI now delegates vector search + context joins to `neo4j_graphrag.retrievers.QdrantNeo4jRetriever`, wiring the Qdrant payload `chunk_id` to Neo4j `Chunk` nodes and returning the same sanitized log payload used by QA telemetry. Override the collection name or join properties via existing CLI/env settings if your deployment stores alternative identifiers.
 9. Documentation lint guard: `PYTHONPATH=src python3 -m scripts.check_docs` verifies `docs/architecture/overview.md` and `docs/architecture/source-tree.md` still reflect the minimal-path workflow and native retriever usage.
 10. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).

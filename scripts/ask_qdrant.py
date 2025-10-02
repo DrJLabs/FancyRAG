@@ -176,9 +176,9 @@ def main() -> None:
                         match["score"] = float(match["score"])
                     except (TypeError, ValueError):  # pragma: no cover - defensive guard
                         pass
-                chunk_identifier = match.get("chunk_uid") or match.get("chunk_id")
-                if isinstance(chunk_identifier, str):
-                    semantic_chunk_uids.setdefault(chunk_identifier, None)
+                chunk_uid = match.get("chunk_uid")
+                if isinstance(chunk_uid, str) and chunk_uid:
+                    semantic_chunk_uids.setdefault(chunk_uid, None)
                 matches.append(match)
             if args.include_semantic and semantic_chunk_uids:
                 with GraphDatabase.driver(neo4j_uri, auth=neo4j_auth) as driver:
@@ -188,8 +188,8 @@ def main() -> None:
                         chunk_uids=list(semantic_chunk_uids.keys()),
                     )
                 for match in matches:
-                    chunk_uid = match.get("chunk_uid") or match.get("chunk_id")
-                    context = semantic_context.get(chunk_uid) if chunk_uid is not None else None
+                    chunk_uid = match.get("chunk_uid")
+                    context = semantic_context.get(chunk_uid) if isinstance(chunk_uid, str) else None
                     if context:
                         match["semantic"] = context
     except OpenAIClientError as exc:
@@ -209,6 +209,10 @@ def main() -> None:
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)
     except (RuntimeError, ValueError, TypeError) as exc:  # pragma: no cover - defensive guard
+        status = "error"
+        message = str(exc)
+        print(f"error: {exc}", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover - final safety net for unexpected errors
         status = "error"
         message = str(exc)
         print(f"error: {exc}", file=sys.stderr)
@@ -248,19 +252,21 @@ def _fetch_semantic_context(
         return {}
 
     query = """
-    MATCH (entity)
+    MATCH (entity:__Entity__)
     WHERE entity.semantic_source = $source AND entity.chunk_uid IN $chunk_uids
-    OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]-(target)
+    OPTIONAL MATCH (entity)-[rel {semantic_source: $source}]-(target:__Entity__)
     WITH entity.chunk_uid AS chunk_uid,
          collect(DISTINCT {
-             id: entity.id,
+             id: coalesce(entity.id, elementId(entity)),
+             element_id: elementId(entity),
              labels: labels(entity),
              properties: entity
          }) AS entity_nodes,
          collect(DISTINCT CASE
              WHEN target IS NULL THEN NULL
              ELSE {
-                 id: target.id,
+                 id: coalesce(target.id, elementId(target)),
+                 element_id: elementId(target),
                  labels: labels(target),
                  properties: target
              }
@@ -269,8 +275,8 @@ def _fetch_semantic_context(
              WHEN rel IS NULL THEN NULL
              ELSE {
                  type: type(rel),
-                 start: startNode(rel).id,
-                 end: endNode(rel).id,
+                 start: elementId(startNode(rel)),
+                 end: elementId(endNode(rel)),
                  properties: rel
              }
          END) AS relationship_entries
@@ -310,18 +316,23 @@ def _fetch_semantic_context(
             node_id = node_dict.get("id")
             if node_id is not None:
                 node_id = str(node_id)
-            if node_id in seen_node_ids:
+            element_id = node_dict.get("element_id")
+            if element_id is not None:
+                element_id = str(element_id)
+            dedupe_key = element_id or node_id
+            if dedupe_key in seen_node_ids:
                 continue
             properties = scrub_object(node_dict.get("properties", {}))
             nodes_payload.append(
                 {
                     "id": node_id,
+                    "element_id": element_id,
                     "labels": list(node_dict.get("labels", [])),
                     "properties": properties,
                 }
             )
-            if node_id is not None:
-                seen_node_ids.add(node_id)
+            if dedupe_key is not None:
+                seen_node_ids.add(dedupe_key)
 
         relationships_payload = []
         for rel_entry in relationship_entries:
@@ -330,8 +341,8 @@ def _fetch_semantic_context(
             relationships_payload.append(
                 {
                     "type": rel_dict.get("type"),
-                    "start": rel_dict.get("start"),
-                    "end": rel_dict.get("end"),
+                    "start": (str(rel_dict.get("start")) if rel_dict.get("start") is not None else None),
+                    "end": (str(rel_dict.get("end")) if rel_dict.get("end") is not None else None),
                     "properties": rel_properties,
                 }
             )

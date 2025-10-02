@@ -1076,17 +1076,27 @@ def test_fetch_semantic_context_happy_path(monkeypatch):
                 {
                     "chunk_uid": "U1",
                     "entity_nodes": [
-                        {"id": "1:Person", "labels": ["Person"], "properties": {"name": "Alice"}}
+                        {
+                            "id": "1:Person",
+                            "element_id": "node-1",
+                            "labels": ["Person"],
+                            "properties": {"name": "Alice"},
+                        }
                     ],
                     "related_nodes": [
-                        {"id": "2:Person", "labels": ["Person"], "properties": {"name": "Bob"}},
+                        {
+                            "id": "2:Person",
+                            "element_id": "node-2",
+                            "labels": ["Person"],
+                            "properties": {"name": "Bob"},
+                        },
                         None,
                     ],
                     "relationships": [
                         {
                             "type": "KNOWS",
-                            "start": "1:Person",
-                            "end": "2:Person",
+                            "start": "node-1",
+                            "end": "node-2",
                             "properties": {"w": 1.0},
                         },
                     ],
@@ -1097,10 +1107,15 @@ def test_fetch_semantic_context_happy_path(monkeypatch):
     assert "U1" in out
     node_ids = {node["id"] for node in out["U1"]["nodes"]}
     assert node_ids == {"1:Person", "2:Person"}
+    element_ids = {node["element_id"] for node in out["U1"]["nodes"]}
+    assert element_ids == {"node-1", "node-2"}
     person_node = next(node for node in out["U1"]["nodes"] if node["id"] == "1:Person")
     assert person_node["labels"] == ["Person"]
     assert person_node["properties"]["name"] == "Alice"
-    assert out["U1"]["relationships"][0]["type"] == "KNOWS"
+    rel = out["U1"]["relationships"][0]
+    assert rel["type"] == "KNOWS"
+    assert rel["start"] == "node-1"
+    assert rel["end"] == "node-2"
 
 
 def test_fetch_semantic_context_no_ids(monkeypatch):
