@@ -310,40 +310,46 @@ class IngestionQaEvaluator:
         counts = _collect_counts(self._driver, database=self._database)
         metrics["graph_counts"] = counts
 
-        missing_embeddings = self._query_value(
-            """
-            UNWIND $uids AS uid
-            MATCH (c:Chunk {uid: uid})
-            WHERE c.embedding IS NULL OR size(c.embedding) = 0
-            RETURN count(*) AS value
-            """,
-            {"uids": chunk_uids} if chunk_uids else {"uids": [None]},
-        )
-        orphan_chunks = self._query_value(
-            """
-            UNWIND $uids AS uid
-            MATCH (c:Chunk {uid: uid})
-            WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) )
-            RETURN count(*) AS value
-            """,
-            {"uids": chunk_uids} if chunk_uids else {"uids": [None]},
-        )
-        checksum_mismatches = self._query_value(
-            """
-            UNWIND $chunks AS row
-            MATCH (c:Chunk {uid: row.uid})
-            WHERE coalesce(c.checksum, "") <> row.checksum
-            RETURN count(*) AS value
-            """,
-            {
-                "chunks": [
-                    {"uid": chunk.uid, "checksum": chunk.checksum}
-                    for record in self._sources
-                    for chunk in record.chunks
-                ]
-                or [{"uid": None, "checksum": ""}]
-            },
-        )
+        if chunk_uids:
+            missing_embeddings = self._query_value(
+                """
+                UNWIND $uids AS uid
+                MATCH (c:Chunk {uid: uid})
+                WHERE c.embedding IS NULL OR size(c.embedding) = 0
+                RETURN count(*) AS value
+                """,
+                {"uids": chunk_uids},
+            )
+            orphan_chunks = self._query_value(
+                """
+                UNWIND $uids AS uid
+                MATCH (c:Chunk {uid: uid})
+                WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) )
+                RETURN count(*) AS value
+                """,
+                {"uids": chunk_uids},
+            )
+        else:
+            missing_embeddings = 0
+            orphan_chunks = 0
+
+        chunk_rows = [
+            {"uid": chunk.uid, "checksum": chunk.checksum}
+            for record in self._sources
+            for chunk in record.chunks
+        ]
+        if chunk_rows:
+            checksum_mismatches = self._query_value(
+                """
+                UNWIND $chunks AS row
+                MATCH (c:Chunk {uid: row.uid})
+                WHERE coalesce(c.checksum, "") <> row.checksum
+                RETURN count(*) AS value
+                """,
+                {"chunks": chunk_rows},
+            )
+        else:
+            checksum_mismatches = 0
 
         metrics["missing_embeddings"] = missing_embeddings
         metrics["orphan_chunks"] = orphan_chunks
@@ -548,7 +554,7 @@ class IngestionQaEvaluator:
         else:
             try:
                 value = record[0]  # type: ignore[index]
-            except Exception:
+            except (IndexError, TypeError):
                 value = None
         return int(value or 0)
 
