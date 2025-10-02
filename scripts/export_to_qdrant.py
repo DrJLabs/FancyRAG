@@ -46,7 +46,9 @@ def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
     records, _, _ = driver.execute_query(
         """
         MATCH (chunk:Chunk)
-        RETURN chunk.chunk_id AS chunk_id,
+        WHERE chunk.embedding IS NOT NULL AND size(chunk.embedding) > 0
+        RETURN coalesce(chunk.chunk_id, chunk.uid) AS chunk_id,
+               chunk.uid AS chunk_uid,
                chunk.index AS chunk_index,
                chunk.text AS text,
                chunk.embedding AS embedding,
@@ -54,7 +56,7 @@ def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
                chunk.relative_path AS relative_path,
                chunk.git_commit AS git_commit,
                chunk.checksum AS checksum
-        ORDER BY chunk_index ASC
+        ORDER BY chunk.index ASC
         """,
         database_=database,
     )
@@ -236,6 +238,7 @@ def main() -> None:
                         payloads.append(
                             {
                                 "chunk_id": chunk_id,
+                                "chunk_uid": record.get("chunk_uid"),
                                 "chunk_index": record.get("chunk_index"),
                                 "source_path": record.get("source_path"),
                                 "relative_path": record.get("relative_path"),

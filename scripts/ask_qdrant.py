@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -215,7 +216,11 @@ def main() -> None:
     except Exception as exc:  # pragma: no cover - final safety net for unexpected errors
         status = "error"
         message = str(exc)
-        print(f"error: {exc}", file=sys.stderr)
+        print(
+            f"error: unexpected {exc.__class__.__name__}: {exc}",
+            file=sys.stderr,
+        )
+        print(traceback.format_exc(), file=sys.stderr)
 
     duration_ms = int((time.perf_counter() - start) * 1000)
     log = {
@@ -260,7 +265,7 @@ def _fetch_semantic_context(
              id: coalesce(entity.id, elementId(entity)),
              element_id: elementId(entity),
              labels: labels(entity),
-             properties: entity
+             properties: properties(entity)
          }) AS entity_nodes,
          collect(DISTINCT CASE
              WHEN target IS NULL THEN NULL
@@ -268,7 +273,7 @@ def _fetch_semantic_context(
                  id: coalesce(target.id, elementId(target)),
                  element_id: elementId(target),
                  labels: labels(target),
-                 properties: target
+                 properties: properties(target)
              }
          END) AS related_nodes,
          collect(DISTINCT CASE
@@ -277,7 +282,7 @@ def _fetch_semantic_context(
                  type: type(rel),
                  start: elementId(startNode(rel)),
                  end: elementId(endNode(rel)),
-                 properties: rel
+                 properties: properties(rel)
              }
          END) AS relationship_entries
     RETURN chunk_uid,
@@ -322,7 +327,10 @@ def _fetch_semantic_context(
             dedupe_key = element_id or node_id
             if dedupe_key in seen_node_ids:
                 continue
-            properties = scrub_object(node_dict.get("properties", {}))
+            raw_properties = node_dict.get("properties", {}) or {}
+            if not isinstance(raw_properties, dict):
+                raw_properties = dict(raw_properties)
+            properties = scrub_object(raw_properties)
             nodes_payload.append(
                 {
                     "id": node_id,
@@ -337,7 +345,10 @@ def _fetch_semantic_context(
         relationships_payload = []
         for rel_entry in relationship_entries:
             rel_dict = dict(rel_entry)
-            rel_properties = scrub_object(rel_dict.get("properties", {}))
+            raw_rel_properties = rel_dict.get("properties", {}) or {}
+            if not isinstance(raw_rel_properties, dict):
+                raw_rel_properties = dict(raw_rel_properties)
+            rel_properties = scrub_object(raw_rel_properties)
             relationships_payload.append(
                 {
                     "type": rel_dict.get("type"),
