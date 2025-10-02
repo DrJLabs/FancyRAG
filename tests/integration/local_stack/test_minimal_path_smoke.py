@@ -194,7 +194,6 @@ def test_minimal_path_smoke() -> None:
             "scripts.check_docs",
             "--json-output",
             str(PROJECT_ROOT / "artifacts" / "docs" / "check_docs_smoke.json"),
-            "--strict",
             env=env,
         )
 

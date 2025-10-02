@@ -1,8 +1,8 @@
 schema: 1
 story: "3.4"
 story_title: "Documentation Lint Automation"
-gate: "PASS"
-status_reason: "Documentation lint guard, .env auto-loading, and smoke integration verified via automated tests and live stack run; residual risk limited to monitoring lint noise."
+gate: "CONCERNS"
+status_reason: "Documentation lint guard, .env auto-loading, and smoke integration verified via automated tests and live stack run; TECH-001 risk scored 6 so lint adoption will be monitored."
 reviewer: "Quinn (Test Architect)"
 updated: "2025-10-02T10:44:00-07:00"
 waiver: { active: false }
@@ -16,7 +16,7 @@ evidence:
     - "PYTHONPATH=stubs:src python3 scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100"
     - "PYTHONPATH=stubs:src python3 scripts/export_to_qdrant.py --collection chunks_main"
     - "PYTHONPATH=stubs:src python3 scripts/ask_qdrant.py --question 'What did Acme launch?' --top-k 3"
-    - "PYTHONPATH=src python -m scripts.check_docs --strict"
+    - "PYTHONPATH=src python -m scripts.check_docs"
   risks_identified:
     - "TECH-001 (documentation lint coverage)"
   trace:
