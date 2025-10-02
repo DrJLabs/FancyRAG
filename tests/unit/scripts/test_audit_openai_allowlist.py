@@ -20,7 +20,7 @@ for path in (REPO_ROOT, SRC_ROOT):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from scripts.audit_openai_allowlist import (
+from scripts.audit_openai_allowlist import (  # noqa: E402
     _fetch_models,
     _format_list,
     _family_of,
@@ -604,8 +604,8 @@ class TestFetchModelsAdvanced:
     @patch("urllib.request.Request")
     def test_fetch_models_multiple_pages_with_empty_page(self, mock_request, mock_urlopen):
         """Test pagination when one page returns empty data."""
-        first_page = {"data": [{"id": "model-1"}], "has_more": True}
-        second_page = {"data": [], "has_more": True}
+        first_page = {"data": [{"id": "model-1"}], "has_more": True, "last_id": "cursor-1"}
+        second_page = {"data": [], "has_more": True, "last_id": "cursor-2"}
         third_page = {"data": [{"id": "model-2"}], "has_more": False}
 
         mock_resp = MagicMock()

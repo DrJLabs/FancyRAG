@@ -1,7 +1,7 @@
 # PRD Requirements
 
 ## Functional Requirements
-- **FR1:** Ship `docker-compose.neo4j-qdrant.yml` that brings up Neo4j 5.26 with APOC Core and Qdrant latest using persistent named volumes and configurable credentials.
+- **FR1:** Ship `docker-compose.neo4j-qdrant.yml` that brings up Neo4j 5.26.12 with APOC Core and Qdrant 1.15.4 using persistent named volumes and configurable credentials.
 - **FR2:** Provide a bootstrap workflow that installs `neo4j-graphrag[experimental,openai,qdrant]`, validates imports, and documents `.env` variables pointing at the local stack.
 - **FR3:** Supply scripts for Neo4j vector index creation and `SimpleKGPipeline` execution targeting sample source material.
 - **FR4:** Supply scripts that export chunk embeddings to Qdrant with payload join keys and run a retrieval smoke test via `GraphRAG.search()`.

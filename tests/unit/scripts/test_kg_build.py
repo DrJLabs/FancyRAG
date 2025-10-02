@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import pathlib
@@ -76,8 +77,8 @@ def _patch_driver(monkeypatch: pytest.MonkeyPatch, factory) -> None:
     if hasattr(kg, "AsyncGraphDatabase"):
         monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", factory)
 
-import scripts.kg_build as kg
-from cli.openai_client import OpenAIClientError
+import scripts.kg_build as kg  # noqa: E402
+from cli.openai_client import OpenAIClientError  # noqa: E402
 
 
 class FakeSharedClient:
@@ -363,8 +364,7 @@ def test_parse_args_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_parse_args_database_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_DATABASE", "test_db")
     args = kg._parse_args([])
-    # The actual behavior depends on implementation, but we test the parsing
-    assert args.database is None or args.database == "test_db"
+    assert args.database == "test_db"
     monkeypatch.delenv("NEO4J_DATABASE", raising=False)
 
 
@@ -529,6 +529,26 @@ def test_sanitize_property_value_arbitrary_object() -> None:
     assert sanitized == "<custom>"
 
 
+def test_splitter_cache_scoped_per_source() -> None:
+    splitter = kg.CachingFixedSizeSplitter(chunk_size=200, chunk_overlap=0)
+    text = "identical content across files"
+
+    with splitter.scoped("first-file"):
+        result_a = asyncio.run(splitter.run(text))
+        cached_a = splitter.get_cached(text)
+
+    with splitter.scoped("second-file"):
+        result_b = asyncio.run(splitter.run(text))
+        cached_b = splitter.get_cached(text)
+
+    assert cached_a is result_a
+    assert cached_b is result_b
+    assert result_a is not result_b
+    uid_a = {chunk.uid for chunk in result_a.chunks}
+    uid_b = {chunk.uid for chunk in result_b.chunks}
+    assert uid_a.isdisjoint(uid_b)
+
+
 def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
     source = tmp_path / "empty.txt"
     source.write_text("", encoding="utf-8")
@@ -577,6 +597,9 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
 
     assert log["status"] == "success"
     assert pipelines[0].run_args["text"] == ""
+
+
+def test_sanitizing_writer_drops_none_values() -> None:
     writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
     sanitized = writer._sanitize_properties({"values": [None, None]})
     assert sanitized == {"values": []}

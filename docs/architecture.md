@@ -16,7 +16,7 @@ Greenfield implementation grounded in the official `neo4j-graphrag` Python packa
 
 ## High Level Architecture
 ### Technical Summary
-The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. Docker Compose (`docker-compose.neo4j-qdrant.yml`) launches Neo4j 5.26 with APOC Core and Qdrant latest on the developer host. Python scripts create the Neo4j vector index, run `SimpleKGPipeline`, export embeddings to Qdrant, and execute retrieval with `QdrantNeo4jRetriever` and OpenAI GPT models.
+The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. Docker Compose (`docker-compose.neo4j-qdrant.yml`) launches Neo4j 5.26.12 with APOC Core and Qdrant 1.15.4 on the developer host. Python scripts create the Neo4j vector index, run `SimpleKGPipeline`, export embeddings to Qdrant, and execute retrieval with `QdrantNeo4jRetriever` and OpenAI GPT models.
 
 ### High Level Overview
 - **Architectural style:** Monolithic CLI orchestrator with local containerized dependencies.
@@ -32,7 +32,7 @@ graph TD
     Compose[Docker Compose]
     CLI[Python CLI (venv)]
     KGB[GraphRAG Scripts]
-    Neo4j[(Neo4j 5.26)]
+    Neo4j[(Neo4j 5.26.12)]
     Qdrant[(Qdrant)]
     OpenAI[(OpenAI APIs)]
 
@@ -55,8 +55,8 @@ graph TD
 ## Tech Stack
 See `docs/architecture/tech-stack.md` for the authoritative table. Highlights:
 - Python 3.12 with `neo4j-graphrag[experimental,openai,qdrant]`.
-- Neo4j 5.26 (Docker) with APOC Core.
-- Qdrant latest (Docker) accessed via `qdrant-client` ≥ 1.8.
+- Neo4j 5.26.12 (Docker) with APOC Core.
+- Qdrant 1.15.4 (Docker) accessed via `qdrant-client` ≥ 1.8.
 - OpenAI GPT-4.1 models (`gpt-4.1-mini`, fallback `gpt-4o-mini`) and `text-embedding-3-small`.
 - Structured logging through `structlog` or JSON `logging` handlers.
 

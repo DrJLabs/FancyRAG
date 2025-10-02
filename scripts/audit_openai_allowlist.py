@@ -10,7 +10,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Iterable
+from typing import Iterable, cast
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
@@ -18,12 +18,14 @@ _SRC_PATH = os.path.join(_PROJECT_ROOT, "src")
 if _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from config.settings import ALLOWED_CHAT_MODELS
+from config.settings import ALLOWED_CHAT_MODELS  # noqa: E402
 
 CATALOG_URL = "https://api.openai.com/v1/models"
 
 _DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})(?:-[a-z0-9]+)?$", re.IGNORECASE)
-_VARIANT_SUFFIX_PATTERN = re.compile(r"(?i)^(mini(?:-[a-z0-9]+)?|turbo|flash|lite|light|pro)$")
+_VARIANT_SUFFIX_PATTERN = re.compile(r"(?i)^(mini(?:-[a-z0-9]+)?|flash|lite|light|pro)$")
+_NUMERIC_SUFFIX_PATTERN = re.compile(r"^(\d+)(k)?$", re.IGNORECASE)
+_LONG_NAME_THRESHOLD = 40
 
 
 def _family_of(model: str) -> str:
@@ -32,8 +34,18 @@ def _family_of(model: str) -> str:
     base = _DATE_SUFFIX.sub("", model)
     segments = base.split("-")
 
-    while segments and segments[-1].lower() in {"preview", "latest"}:
-        segments.pop()
+    while segments:
+        suffix = segments[-1].lower()
+        if suffix in {"preview", "latest"}:
+            segments.pop()
+            continue
+        if suffix.startswith("v") and suffix[1:].isdigit() and len(segments) > 2:
+            segments.pop()
+            continue
+        if _NUMERIC_SUFFIX_PATTERN.match(suffix) and len(segments) > 2:
+            segments.pop()
+            continue
+        break
 
     base = "-".join(segments)
     if not base or "-" not in base:
@@ -78,14 +90,23 @@ def _fetch_models(api_key: str) -> set[str]:
             payload = json.load(response)
 
         data = [item for item in payload.get("data", []) if isinstance(item, dict)]
-        models.update(item["id"] for item in data if item.get("id"))
+        for item in data:
+            model_id = item.get("id")
+            if isinstance(model_id, str) and model_id:
+                models.add(model_id)
 
-        if not payload.get("has_more") or not data:
+        has_more = bool(payload.get("has_more"))
+        if not has_more:
             break
 
-        after = data[-1].get("id")
-        if not after:
+        next_after = cast(str | None, payload.get("last_id"))
+        if not next_after and data:
+            next_after = cast(str | None, data[-1].get("id"))
+
+        if not next_after or next_after == after:
             break
+
+        after = next_after
 
     return models
 
@@ -100,7 +121,8 @@ def _format_list(models: Iterable[str]) -> str:
     Returns:
         A comma-separated string of the models sorted lexicographically; returns "<none>" if `models` is empty.
     """
-    return ", ".join(sorted(models)) or "<none>"
+    sorted_models = sorted(models, key=lambda model: (len(model) > _LONG_NAME_THRESHOLD, model))
+    return ", ".join(sorted_models) or "<none>"
 
 
 def main() -> int:
@@ -139,15 +161,37 @@ def main() -> int:
 
     missing = sorted(model for model in ALLOWED_CHAT_MODELS if model not in available_models)
     families = {_family_of(model) for model in ALLOWED_CHAT_MODELS}
+    family_roots: set[str] = set()
+    family_prefixes: set[str] = set()
+    for family in families:
+        if not family or "-" not in family:
+            continue
+        head, _, tail = family.rpartition("-")
+        if head and tail.isdigit():
+            family_roots.add(head)
+        segments = family.split("-")
+        if len(segments) >= 2:
+            family_prefixes.add("-".join(segments[:2]))
     new_variants = sorted(
         model
         for model in available_models
         if model not in ALLOWED_CHAT_MODELS
-        and any(
-            model == family
-            or model.startswith(f"{family}-")
-            or model.startswith(f"{family}.")
-            for family in families
+        and (
+            any(
+                model == family
+                or model.startswith(f"{family}-")
+                or model.startswith(f"{family}.")
+                for family in families
+            )
+            or (
+                "-" in model
+                and model.rpartition("-")[0] in family_roots
+                and model.rpartition("-")[2].isdigit()
+            )
+            or any(
+                prefix and model.startswith(f"{prefix}-")
+                for prefix in family_prefixes
+            )
         )
     )
 

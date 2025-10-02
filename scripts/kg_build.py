@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,7 +29,7 @@ from _compat.structlog import get_logger
 from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
-from config.settings import DEFAULT_EMBEDDING_DIMENSIONS, OpenAISettings
+from config.settings import OpenAISettings
 from fancyrag.utils import ensure_env
 from neo4j_graphrag.embeddings.base import Embedder
 from neo4j_graphrag.exceptions import EmbeddingsGenerationError, LLMGenerationError
@@ -112,12 +113,35 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         super().__init__(*args, **kwargs)
         self._blueprints: dict[str | tuple[str, ...], list[dict[str, Any]]] = {}
         self._last_outputs: dict[str | tuple[str, ...], TextChunks] = {}
+        self._scope_stack: list[str | None] = []
 
-    @staticmethod
-    def _cache_key(text: str | Sequence[str]) -> str | tuple[str, ...]:
+    @contextmanager
+    def scoped(self, scope: str | Path | None):
+        """Scope cache lookups to a specific source identifier."""
+
+        scope_id = str(scope) if scope is not None else None
+        self._scope_stack.append(scope_id)
+        try:
+            yield self
+        finally:
+            self._scope_stack.pop()
+
+    def _current_scope(self) -> str | None:
+        if not self._scope_stack:
+            return None
+        return self._scope_stack[-1]
+
+    def _cache_key(self, text: str | Sequence[str]) -> str | tuple[str, ...]:
         if isinstance(text, str):
-            return text
-        return tuple(text)
+            base_key: str | tuple[str, ...] = text
+        else:
+            base_key = tuple(text)
+        scope = self._current_scope()
+        if scope is None:
+            return base_key
+        if isinstance(base_key, tuple):
+            return (scope, *base_key)
+        return (scope, base_key)
 
     async def run(
         self, text: str | Sequence[str], config: Any | None = None
@@ -990,18 +1014,18 @@ def _ensure_document_relationships(
                         doc.title = $document_name
         // Refresh document-level provenance on every ingestion
         SET doc.relative_path = $relative_path,
-            doc.git_commit = coalesce($git_commit, doc.git_commit),
+            doc.git_commit = $git_commit,
             doc.checksum = $document_checksum
         WITH doc
         // Process each chunk emitted by the current pipeline execution
         UNWIND $chunk_payload AS meta
-        // Locate the unique chunk that matches the current payload entry
+        // Locate the unique chunk that matches the current payload entry using the uid assigned post-pipeline
         MATCH (chunk:Chunk {uid: meta.uid})
         WITH doc, chunk, meta
         // Update per-chunk provenance while preserving existing identifiers when re-ingesting
         SET chunk.source_path = $source_path,
             chunk.relative_path = meta.relative_path,
-            chunk.git_commit = coalesce(meta.git_commit, chunk.git_commit),
+            chunk.git_commit = meta.git_commit,
             chunk.checksum = meta.checksum,
             chunk.chunk_id = coalesce(chunk.chunk_id, meta.sequence),
             chunk.index = coalesce(chunk.index, meta.index)
@@ -1121,62 +1145,64 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     counts: Mapping[str, int] = {}
     with GraphDatabase.driver(uri, auth=auth) as driver:
         for spec in source_specs:
-            try:
-                run_id = _execute_pipeline(
-                    uri=uri,
-                    auth=auth,
-                    source_text=spec.text,
-                    database=args.database,
-                    embedder=embedder,
-                    llm=llm,
-                    splitter=splitter,
-                    reset_database=reset_pending,
+            scope_token = str(spec.path.resolve())
+            with splitter.scoped(scope_token):
+                try:
+                    run_id = _execute_pipeline(
+                        uri=uri,
+                        auth=auth,
+                        source_text=spec.text,
+                        database=args.database,
+                        embedder=embedder,
+                        llm=llm,
+                        splitter=splitter,
+                        reset_database=reset_pending,
+                    )
+                except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:  # noqa: TRY003
+                    raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+                except (Neo4jError, ClientError) as exc:  # noqa: TRY003
+                    raise RuntimeError(f"Neo4j error: {exc}") from exc
+                run_ids.append(run_id)
+                reset_pending = False
+
+                chunk_result = splitter.get_cached(spec.text)
+                if chunk_result is None:
+                    chunk_result = asyncio.run(splitter.run(spec.text))
+                chunk_metadata = _build_chunk_metadata(
+                    chunk_result.chunks,
+                    relative_path=spec.relative_path,
+                    git_commit=git_commit,
                 )
-            except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:  # noqa: TRY003
-                raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-            except (Neo4jError, ClientError) as exc:  # noqa: TRY003
-                raise RuntimeError(f"Neo4j error: {exc}") from exc
-            run_ids.append(run_id)
-            reset_pending = False
 
-            chunk_result = splitter.get_cached(spec.text)
-            if chunk_result is None:
-                chunk_result = asyncio.run(splitter.run(spec.text))
-            chunk_metadata = _build_chunk_metadata(
-                chunk_result.chunks,
-                relative_path=spec.relative_path,
-                git_commit=git_commit,
-            )
+                _ensure_document_relationships(
+                    driver,
+                    database=args.database,
+                    source_path=spec.path,
+                    relative_path=spec.relative_path,
+                    git_commit=git_commit,
+                    document_checksum=spec.checksum,
+                    chunks_metadata=chunk_metadata,
+                )
 
-            _ensure_document_relationships(
-                driver,
-                database=args.database,
-                source_path=spec.path,
-                relative_path=spec.relative_path,
-                git_commit=git_commit,
-                document_checksum=spec.checksum,
-                chunks_metadata=chunk_metadata,
-            )
-
-            log_files.append(
-                {
-                    "source": str(spec.path),
-                    "relative_path": spec.relative_path,
-                    "checksum": spec.checksum,
-                    "chunks": len(chunk_metadata),
-                }
-            )
-            for meta in chunk_metadata:
-                log_chunks.append(
+                log_files.append(
                     {
                         "source": str(spec.path),
-                        "relative_path": meta.relative_path,
-                        "chunk_index": meta.index,
-                        "chunk_id": meta.sequence,
-                        "checksum": meta.checksum,
-                        "git_commit": meta.git_commit,
+                        "relative_path": spec.relative_path,
+                        "checksum": spec.checksum,
+                        "chunks": len(chunk_metadata),
                     }
                 )
+                for meta in chunk_metadata:
+                    log_chunks.append(
+                        {
+                            "source": str(spec.path),
+                            "relative_path": meta.relative_path,
+                            "chunk_index": meta.index,
+                            "chunk_id": meta.sequence,
+                            "checksum": meta.checksum,
+                            "git_commit": meta.git_commit,
+                        }
+                    )
 
         counts = _collect_counts(driver, database=args.database)
 

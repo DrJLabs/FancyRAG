@@ -7,6 +7,18 @@ FancyRAG delivers a local-first GraphRAG playground backed by Neo4j, Qdrant, and
 - **Local GraphRAG Minimal Path (Epic 2):** `docker-compose.neo4j-qdrant.yml` launches Neo4j 5.26.12 + Qdrant 1.15.4, while scripts under `scripts/` create vector indexes, run `SimpleKGPipeline`, export embeddings, and query with `GraphRAG`.
 - **Automation:** Unit tests cover the ingestion/export scripts; `tests/integration/local_stack/test_minimal_path_smoke.py` exercises the end-to-end flow when Docker and OpenAI credentials are available.
 
+## Version Matrix
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Python | 3.12.x | Virtualenv bootstrapped via `scripts/bootstrap.sh` |
+| Neo4j (APOC Core) | 5.26.12 | Pinned in `docker-compose.neo4j-qdrant.yml` |
+| Qdrant | 1.15.4 | Pinned in `docker-compose.neo4j-qdrant.yml` |
+| neo4j-graphrag | latest main (2025-09 snapshot) | Installed via `pip install -r requirements.txt` |
+| OpenAI Models | `gpt-4.1-mini`, `text-embedding-3-small` | Configure via `.env`; audited by `scripts/audit_openai_allowlist.py` |
+
+> All documentation references these canonical versions; update this table first, then propagate changes.
+
 ## Run the Minimal Path Locally
 1. **Bootstrap tooling**
    ```bash

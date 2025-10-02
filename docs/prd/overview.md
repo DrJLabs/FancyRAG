@@ -6,7 +6,7 @@
 - Maintain parity with production-grade settings so the same scripts can later point at managed services.
 
 ## Background Context
-Teams previously depended on pre-provisioned databases, which slowed experimentation and onboarding. Version 1 shifts to a project-owned stack: `docker compose` launches Neo4j 5.26 (APOC Core) and Qdrant latest, while Python scripts powered by `neo4j-graphrag[experimental,openai,qdrant]` take care of the KG build, vector export, and retrieval smoke tests. Configuration lives in `.env`, letting operators swap endpoints without rewriting code.
+Teams previously depended on pre-provisioned databases, which slowed experimentation and onboarding. Version 1 shifts to a project-owned stack: `docker compose` launches Neo4j 5.26.12 (APOC Core) and Qdrant 1.15.4, while Python scripts powered by `neo4j-graphrag[experimental,openai,qdrant]` take care of the KG build, vector export, and retrieval smoke tests. Configuration lives in `.env`, letting operators swap endpoints without rewriting code.
 
 ## Change Log
 | Date       | Version | Description                                       | Author    |
