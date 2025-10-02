@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError, Neo4jError
@@ -37,7 +38,7 @@ from neo4j_graphrag.experimental.components.schema import GraphSchema
 from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
     FixedSizeSplitter,
 )
-from neo4j_graphrag.experimental.components.types import TextChunks
+from neo4j_graphrag.experimental.components.types import TextChunk, TextChunks
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.llm.base import LLMInterface
 from neo4j_graphrag.llm.types import LLMResponse
@@ -105,14 +106,12 @@ class SourceSpec:
 
 
 class CachingFixedSizeSplitter(FixedSizeSplitter):
-    """Fixed-size splitter that caches results to avoid duplicate work."""
+    """Fixed-size splitter that caches results while yielding fresh chunk UIDs."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # Store cached results keyed by the raw text (or tuple of segments).  Each
-        # lookup returns a deep copy so per-file provenance stays isolated even
-        # when different inputs share identical content.
-        self._cache: dict[str | tuple[str, ...], TextChunks] = {}
+        self._blueprints: dict[str | tuple[str, ...], list[dict[str, Any]]] = {}
+        self._last_outputs: dict[str | tuple[str, ...], TextChunks] = {}
 
     @staticmethod
     def _cache_key(text: str | Sequence[str]) -> str | tuple[str, ...]:
@@ -124,32 +123,44 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         self, text: str | Sequence[str], config: Any | None = None
     ) -> TextChunks:  # type: ignore[override]
         if config is not None:
-            # Defer to the base implementation when custom configuration is
-            # supplied; caching only targets the default execution path.  The
-            # upstream splitter signature differs slightly across releases, so
-            # fall back to the simplest invocation if a positional/keyword
-            # mismatch occurs.
             try:
                 return await super().run(text, config)
-            except (TypeError, ValidationError):  # pragma: no cover - safety net
+            except (TypeError, ValidationError):  # pragma: no cover - fallback
                 return await super().run(text)
 
         key = self._cache_key(text)
-        cached = self._cache.get(key)
-        if cached is not None:
-            return copy.deepcopy(cached)
+        blueprint = self._blueprints.get(key)
+        if blueprint is None:
+            result = await super().run(text)
+            self._blueprints[key] = [
+                {
+                    "text": chunk.text,
+                    "index": chunk.index,
+                    "metadata": copy.deepcopy(getattr(chunk, "metadata", None)),
+                }
+                for chunk in result.chunks
+            ]
+            self._last_outputs[key] = result
+            return result
 
-        result = await super().run(text)
-        self._cache[key] = copy.deepcopy(result)
-        return result
+        chunks: list[TextChunk] = []
+        for template in blueprint:
+            chunks.append(
+                TextChunk(
+                    text=template["text"],
+                    index=template["index"],
+                    metadata=copy.deepcopy(template["metadata"]),
+                    uid=str(uuid4()),
+                )
+            )
+        text_chunks = TextChunks(chunks=chunks)
+        self._last_outputs[key] = text_chunks
+        return text_chunks
 
     def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
         """Return the cached chunk result for ``text`` if available."""
 
-        cached = self._cache.get(self._cache_key(text))
-        if cached is not None:
-            return copy.deepcopy(cached)
-        return None
+        return self._last_outputs.get(self._cache_key(text))
 
 
 @dataclass
@@ -979,7 +990,7 @@ def _ensure_document_relationships(
                         doc.title = $document_name
         // Refresh document-level provenance on every ingestion
         SET doc.relative_path = $relative_path,
-            doc.git_commit = $git_commit,
+            doc.git_commit = coalesce($git_commit, doc.git_commit),
             doc.checksum = $document_checksum
         WITH doc
         // Process each chunk emitted by the current pipeline execution
@@ -990,14 +1001,10 @@ def _ensure_document_relationships(
         // Update per-chunk provenance while preserving existing identifiers when re-ingesting
         SET chunk.source_path = $source_path,
             chunk.relative_path = meta.relative_path,
-            chunk.git_commit = meta.git_commit,
-            chunk.checksum = meta.checksum
-        FOREACH (_ IN CASE WHEN chunk.chunk_id IS NULL THEN [1] ELSE [] END |
-            SET chunk.chunk_id = meta.sequence
-        )
-        FOREACH (_ IN CASE WHEN chunk.index IS NULL THEN [1] ELSE [] END |
-            SET chunk.index = meta.index
-        )
+            chunk.git_commit = coalesce(meta.git_commit, chunk.git_commit),
+            chunk.checksum = meta.checksum,
+            chunk.chunk_id = coalesce(chunk.chunk_id, meta.sequence),
+            chunk.index = coalesce(chunk.index, meta.index)
         // Ensure the Document ↔ Chunk relationship exists
         MERGE (doc)-[:HAS_CHUNK]->(chunk)
         """,
@@ -1114,12 +1121,6 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     counts: Mapping[str, int] = {}
     with GraphDatabase.driver(uri, auth=auth) as driver:
         for spec in source_specs:
-            chunk_result = asyncio.run(splitter.run(spec.text))
-            chunk_metadata = _build_chunk_metadata(
-                chunk_result.chunks,
-                relative_path=spec.relative_path,
-                git_commit=git_commit,
-            )
             try:
                 run_id = _execute_pipeline(
                     uri=uri,
@@ -1131,12 +1132,21 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                     splitter=splitter,
                     reset_database=reset_pending,
                 )
-            except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
-                raise RuntimeError("OpenAI request failed") from exc
-            except (Neo4jError, ClientError) as exc:
-                raise RuntimeError("Neo4j error") from exc
+            except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:  # noqa: TRY003
+                raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+            except (Neo4jError, ClientError) as exc:  # noqa: TRY003
+                raise RuntimeError(f"Neo4j error: {exc}") from exc
             run_ids.append(run_id)
             reset_pending = False
+
+            chunk_result = splitter.get_cached(spec.text)
+            if chunk_result is None:
+                chunk_result = asyncio.run(splitter.run(spec.text))
+            chunk_metadata = _build_chunk_metadata(
+                chunk_result.chunks,
+                relative_path=spec.relative_path,
+                git_commit=git_commit,
+            )
 
             _ensure_document_relationships(
                 driver,
