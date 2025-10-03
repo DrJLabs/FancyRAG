@@ -477,7 +477,6 @@ class SemanticQaSummary:
 
 
 @dataclass
-@dataclass
 class QaSourceRecord:
     """Aggregated ingestion artifact metadata for a single source."""
 
@@ -2147,11 +2146,14 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
 
                 if options.semantic_enabled:
                     semantic_stats = _run_semantic_enrichment(
-                        driver,
+                        driver=driver,
                         database=options.database,
-                        shared_client=shared_client,
-                        spec=spec,
-                        qa_sources=qa_sources,
+                        llm=llm,
+                        chunk_result=chunk_result,
+                        chunk_metadata=chunk_metadata,
+                        relative_path=spec.relative_path,
+                        git_commit=git_commit,
+                        document_checksum=spec.checksum,
                         ingest_run_key=ingest_run_key,
                         max_concurrency=semantic_max_concurrency,
                     )
