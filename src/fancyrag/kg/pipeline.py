@@ -10,6 +10,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -1562,21 +1563,17 @@ def _extract_content(raw_response: Any) -> str:
     return _content_from_payload(payload)
 
 
+_FENCE_PATTERN = re.compile(r"^```[ \t]*([^\n`]*)\s*(.*?)\s*```$", re.DOTALL)
+
+
 def _strip_code_fence(text: str) -> str:
-    """
-    Remove surrounding Markdown code fences (``` blocks) from the given text.
-    
-    Returns:
-        The text with a leading and trailing triple-backtick fence removed if present, then trimmed of leading and trailing whitespace.
-    """
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines)
-    return text.strip()
+    """Remove surrounding Markdown code fences from the given text."""
+
+    stripped = text.strip()
+    match = _FENCE_PATTERN.match(stripped)
+    if not match:
+        return stripped
+    return match.group(2).strip()
 
 
 class SharedOpenAIEmbedder(Embedder):
@@ -1687,7 +1684,13 @@ class SharedOpenAILLM(LLMInterface):
             raise LLMGenerationError(str(exc)) from exc
 
         content = _strip_code_fence(_extract_content(result.raw_response))
-        logger.info("kg_build.llm_response", content=content)
+        preview_len = 256
+        logger.debug(
+            "kg_build.llm_response",
+            content_preview=content[:preview_len],
+            content_length=len(content),
+            truncated=len(content) > preview_len,
+        )
         if not content:
             raise LLMGenerationError("OpenAI returned an empty response")
         return LLMResponse(content=content)
@@ -2121,15 +2124,7 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
                         "path": str(spec.path),
                         "relative_path": spec.relative_path,
                         "checksum": spec.checksum,
-                        "chunks": [
-                            {
-                                "uid": chunk.uid,
-                                "index": chunk.index,
-                                "sequence": chunk.sequence,
-                                "checksum": chunk.checksum,
-                            }
-                            for chunk in chunk_metadata
-                        ],
+                        "chunks": len(chunk_metadata),
                     }
                 )
                 log_chunks.extend(
@@ -2257,5 +2252,15 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     sanitized = scrub_object(log)
     log_path.write_text(json.dumps(sanitized, indent=2), encoding="utf-8")
     print(json.dumps(sanitized))
-    logger.info("kg_build.completed", **sanitized)
+    logger.info(
+        "kg_build.completed",
+        status=sanitized.get("status"),
+        duration_ms=sanitized.get("duration_ms"),
+        source=sanitized.get("source"),
+        source_mode=sanitized.get("source_mode"),
+        run_id=sanitized.get("run_id"),
+        files_count=len(sanitized.get("files", [])),
+        chunks_count=len(sanitized.get("chunks", [])),
+        qa_status=(sanitized.get("qa") or {}).get("status"),
+    )
     return log
