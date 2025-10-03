@@ -78,7 +78,7 @@ def _patch_driver(monkeypatch: pytest.MonkeyPatch, factory) -> None:
     if hasattr(kg, "AsyncGraphDatabase"):
         monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", factory)
 
-import scripts.kg_build as kg  # noqa: E402
+import fancyrag.cli.kg_build_main as kg  # noqa: E402
 from cli.openai_client import OpenAIClientError  # noqa: E402
 
 

@@ -6,6 +6,7 @@ FancyRAG delivers a local-first GraphRAG playground backed by Neo4j, Qdrant, and
 - **Environment & Workspace (Epic 1):** `scripts/bootstrap.sh` provisions a Python 3.12 virtualenv with pinned dependencies and scaffolds `.env` defaults.
 - **Local GraphRAG Minimal Path (Epic 2):** `docker-compose.neo4j-qdrant.yml` launches Neo4j 5.26.12 + Qdrant 1.15.4, while scripts under `scripts/` create vector indexes, run `SimpleKGPipeline`, export embeddings, and query with `GraphRAG`.
 - **Automation:** Unit tests cover the ingestion/export scripts; `tests/integration/local_stack/test_minimal_path_smoke.py` exercises the end-to-end flow when Docker and OpenAI credentials are available.
+- **Upcoming Refactor (Epic 4):** Planning underway to decompose `scripts/kg_build.py` into a `src/fancyrag/` package with modular CLI, pipeline, QA, and database helpers. See the refactor docs below for scope, guardrails, and story breakdown.
 
 ## Version Matrix
 
@@ -59,10 +60,16 @@ Each script emits sanitized JSON logs under `artifacts/local_stack/`, making the
 - Directory ingestion (`--source-dir` + `--include-pattern`) walks files deterministically, skips binary inputs, and records per-chunk metadata (relative path, git commit, checksum, indices) in Neo4j and Qdrant payloads to simplify traceability.
 - Structured logs now expose `files`/`chunks` arrays so operators can diff runs and monitor ingestion quality over time.
 
+## Refactor Roadmap — Epic 4
+- Focus: Break the `kg_build.py` monolith into composable modules under `src/fancyrag/` while keeping the CLI entrypoint stable.
+- Planning Artifacts: [Project Brief](docs/prd/projects/fancyrag-kg-build-refactor/project-brief.md), [PRD Shard](docs/prd/projects/fancyrag-kg-build-refactor/prd.md), [Architecture Addendum](docs/architecture/projects/fancyrag-kg-build-refactor.md), [Epic 4](docs/bmad/focused-epics/kg-build-refactor/epic.md).
+- Status: Planned for kick-off following Epics 1–3; tests and CLI smoke will gate completion.
+
 ## Documentation Map
 - [Architecture Overview](docs/architecture/overview.md) – workflow sequencing, environmental guardrails, and change history.
 - [Source Tree Blueprint](docs/architecture/source-tree.md) – file locations for scripts, CLI modules, and tests.
 - [PRD Shards](docs/prd/) – goals, requirements, and epic catalog.
+- [FancyRAG Refactor Artifacts](docs/prd/projects/fancyrag-kg-build-refactor/) – project brief, PRD shard, and architecture addendum for the upcoming modularization.
 - [GraphRAG Quickstart](docs/graphrag/QUICKSTART.md) – condensed setup checklist for newcomers.
 - Story close-outs live in `docs/stories/` with QA evidence under `docs/qa/`.
 

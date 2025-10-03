@@ -20,7 +20,14 @@ Always consult the canonical documentation set below before running any GraphRAG
 - `PYTHONPATH=src python3 -m scripts.check_docs --strict` — documentation lint guard that enforces minimal-path instructions and native retriever references remain accurate before shipping ingestion or retrieval updates. Results are written to `artifacts/docs/check_docs.json` and failures surface actionable remediation hints.
 - `PYTHONPATH=src python3 scripts/kg_build.py --enable-semantic` — optional semantic enrichment pass that invokes the GraphRAG `LLMEntityRelationExtractor`, writes entity/relationship nodes tagged with `semantic_source=kg_build.semantic_enrichment.v1`, and records additional QA metrics governed by `--qa-max-semantic-failures` and `--qa-max-semantic-orphans` thresholds. When either threshold is exceeded the run rolls back semantic nodes/relationships and exits with a non-zero status so base chunk ingestion remains intact.
 
+- **Refactor Reference:** Before touching `scripts/kg_build.py`, review the refactor planning set — [project brief](../prd/projects/fancyrag-kg-build-refactor/project-brief.md), [architecture addendum](projects/fancyrag-kg-build-refactor.md), and [Epic 4](../bmad/focused-epics/kg-build-refactor/epic.md) — to confirm module boundaries, guardrails, and testing expectations.
+
 Re-read the sections relevant to the command you intend to run and confirm the workflow still matches the latest documented steps. If a command deviates from the documented behaviour, halt and update the documentation before proceeding.
+
+## Upcoming Refactor Alignment
+- The `kg_build.py` monolith is slated for decomposition into `src/fancyrag/` modules (CLI, pipeline, QA, DB, config, utils).
+- Keep this overview in sync with the addendum (`projects/fancyrag-kg-build-refactor.md`) as modules land; update the component list and diagrams when the package structure changes.
+- Until the refactor merges, continue running the existing script but stage unit tests and CLI smoke coverage for parity.
 
 ## Diagram
 ```mermaid
@@ -52,6 +59,7 @@ graph TD
 | 2025-09-25 | 0.4     | Documented OpenAI readiness probe workflow          | James     |
 | 2025-09-28 | 0.5     | Added Docker Compose stack and minimal path scripts | Codex CLI |
 | 2025-10-02 | 0.6     | Documented semantic enrichment flag and QA thresholds | James     |
+| 2025-10-02 | 0.7     | Added refactor alignment pointers and planning references        | Codex CLI |
 
 ## Environment Configuration
 - Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4.1-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), and local stack defaults (`NEO4J_URI=bolt://localhost:7687`, `NEO4J_USERNAME=neo4j`, `NEO4J_PASSWORD=neo4j`, `QDRANT_URL=http://localhost:6333`). `QDRANT_API_KEY` may remain blank for local usage.

@@ -13,6 +13,7 @@ Greenfield implementation grounded in the official `neo4j-graphrag` Python packa
 |------------|---------|-------------------------------------------------------------------------------|------------|
 | 2025-09-24 | 0.1     | Recast architecture document into BMAD structure; added diagrams and workflows | Codex CLI  |
 | 2025-09-28 | 0.2     | Shifted scope to local Docker stack and scripted minimal path                 | Codex CLI  |
+| 2025-10-02 | 0.3     | Documented upcoming `kg_build.py` modular refactor and linked addendum      | Codex CLI  |
 
 ## High Level Architecture
 ### Technical Summary
@@ -51,6 +52,12 @@ graph TD
 - **Dependency Injection:** Scripts accept drivers/clients (Neo4j, Qdrant, OpenAI) via configuration helpers for easy swapping.
 - **Vector-Graph Join Pattern:** Store Neo4j identifiers in Qdrant payloads and hydrate graph context post-search to preserve grounded responses.
 - **Idempotent Pipelines:** Each script is safe to rerun; Neo4j writes use `MERGE` and Qdrant upserts replace existing vectors.
+
+## Upcoming Refactor — FancyRAG `kg_build.py`
+- Objective: Transform the current `scripts/kg_build.py` monolith into a `src/fancyrag/` package with modules for CLI wiring, pipeline orchestration, QA/reporting, Neo4j queries, and configuration utilities.
+- Guardrails: Single-responsibility modules (200–400 LOC), typed interfaces, centralized environment helpers, and per-module unit tests with an end-to-end CLI smoke.
+- Planning Artifacts: [Architecture Addendum](architecture/projects/fancyrag-kg-build-refactor.md), [Project Brief](prd/projects/fancyrag-kg-build-refactor/project-brief.md), and [Epic 4](bmad/focused-epics/kg-build-refactor/epic.md).
+- Impact: Source tree will grow under `src/fancyrag/`; update `docs/architecture/source-tree.md` once modules land, and keep `scripts/kg_build.py` as a thin delegator.
 
 ## Tech Stack
 See `docs/architecture/tech-stack.md` for the authoritative table. Highlights:

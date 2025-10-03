@@ -1,0 +1,76 @@
+schema: 1
+story: "4.1"
+story_title: "CLI Bridge for FancyRAG kg_build"
+gate: "PASS"
+status_reason: "Packaged CLI wiring, wrapper delegation, tests, and documentation updates verified; residual risk limited to monitoring help parity during future refactors." 
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-03T11:15:00-07:00"
+waiver: { active: false }
+top_issues:
+  - id: OPS-041
+    severity: medium
+    summary: "Monitor CLI smoke/help snapshots as subsequent FancyRAG modules migrate." 
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=stubs:src pytest tests/unit/fancyrag/cli/test_kg_build_main.py"
+    - "PYTHONPATH=stubs:src pytest tests/unit/scripts/test_kg_build.py"
+  risks_identified:
+    - "TECH-041"
+    - "TECH-042"
+    - "OPS-041"
+  trace:
+    totals:
+      requirements: 3
+      full: 3
+      partial: 0
+      none: 0
+    planning_ref: docs/qa/assessments/4.1-test-design-20251003.md
+    uncovered: []
+    notes: docs/qa/assessments/4.1-trace-20251003.md
+risk_summary:
+  totals:
+    critical: 0
+    high: 3
+    medium: 0
+    low: 0
+  highest: TECH-041
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Automate help parity comparison in CI to guard against future parser drift."
+      - "Keep CLI smoke jobs running with `PYTHONPATH=stubs:src` until remaining FancyRAG modules land."
+test_design:
+  scenarios_total: 6
+  by_level:
+    unit: 3
+    integration: 2
+    e2e: 1
+  by_priority:
+    p0: 1
+    p1: 5
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability, observability]
+  security:
+    status: PASS
+    notes: "Env validation enforced before pipeline execution; sanitization unchanged."
+  performance:
+    status: PASS
+    notes: "CLI help parity confirms no new heavy defaults; pipeline path unchanged."
+  reliability:
+    status: PASS
+    notes: "Wrapper delegation plus unit tests ensure consistent entry point behaviour."
+  maintainability:
+    status: PASS
+    notes: "Source tree updated; code consolidation prepares for upcoming module splits."
+  observability:
+    status: PASS
+    notes: "Log/QA output unchanged; parity snapshots provide reviewer evidence."
+references:
+  risk_profile: docs/qa/assessments/4.1-risk-20251003.md
+  test_design: docs/qa/assessments/4.1-test-design-20251003.md
+  trace: docs/qa/assessments/4.1-trace-20251003.md
+  nfr_assessment: docs/qa/assessments/4.1-nfr-20251003.md
+  review: docs/qa/assessments/4.1-review-20251003.md

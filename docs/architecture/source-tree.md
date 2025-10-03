@@ -22,8 +22,9 @@ neo4j-graphrag/
 ├── requirements.lock
 ├── scripts/
 │   ├── audit_openai_allowlist.py
+│   ├── bootstrap.sh
 │   ├── check_docs.py
-│   └── bootstrap.sh
+│   └── kg_build.py
 ├── src/
 │   ├── __init__.py
 │   ├── _compat/
@@ -38,6 +39,14 @@ neo4j-graphrag/
 │   │   ├── stories.py
 │   │   ├── telemetry.py
 │   │   └── utils.py
+│   ├── fancyrag/
+│   │   ├── __init__.py
+│   │   ├── cli/
+│   │   │   ├── __init__.py
+│   │   │   └── kg_build_main.py
+│   │   └── utils/
+│   │       ├── __init__.py
+│   │       └── env.py
 │   └── config/
 │       ├── __init__.py
 │       └── settings.py
@@ -55,3 +64,13 @@ neo4j-graphrag/
 
 `scripts/check_docs.py` provides the documentation lint guard referenced in the architecture overview and CI workflows.
 ```
+## Upcoming Module Layout
+The FancyRAG `kg_build.py` refactor is gradually introducing a structured package under `src/fancyrag/`:
+- ✅ `cli/kg_build_main.py` — CLI wiring for arguments and entrypoint (`scripts/kg_build.py` now delegates here).
+- ⬜ `kg/pipeline.py` — Orchestration of ingestion stages and dependency checks.
+- `splitters/caching_fixed_size.py` — Standalone splitter implementation.
+- `qa/evaluator.py` and `qa/report.py` — QA metrics, thresholds, and reporting helpers.
+- `db/neo4j_queries.py` — Cypher query catalog and wrappers.
+- `config/schema.py` plus `utils/env.py` — Schema loading and environment utilities.
+
+Keep this source tree file in sync as modules land; the authoritative breakdown lives in [projects/fancyrag-kg-build-refactor.md](projects/fancyrag-kg-build-refactor.md).

@@ -8,8 +8,13 @@
 ## Background Context
 Teams previously depended on pre-provisioned databases, which slowed experimentation and onboarding. Version 1 shifts to a project-owned stack: `docker compose` launches Neo4j 5.26.12 (APOC Core) and Qdrant 1.15.4, while Python scripts powered by `neo4j-graphrag[experimental,openai,qdrant]` take care of the KG build, vector export, and retrieval smoke tests. Configuration lives in `.env`, letting operators swap endpoints without rewriting code.
 
+## Upcoming Work
+- **Epic 4 — FancyRAG `kg_build.py` Monolith Decomposition:** Planning underway to split the monolithic script into a `src/fancyrag/` package. Track progress via the [project brief](projects/fancyrag-kg-build-refactor/project-brief.md), [PRD shard](projects/fancyrag-kg-build-refactor/prd.md), and [Epic 4 handoff](../bmad/focused-epics/kg-build-refactor/epic.md).
+- **Testing Alignment:** Epic 3 hardening complete with QA telemetry and chunking presets; refactor work must preserve these guarantees.
+
 ## Change Log
 | Date       | Version | Description                                       | Author    |
 |------------|---------|---------------------------------------------------|-----------|
 | 2025-09-24 | 0.1     | Seeded overview shard aligned to PRD baseline    | Codex CLI |
 | 2025-09-28 | 0.2     | Narrowed scope to local Docker + scripted path   | Codex CLI |
+| 2025-10-02 | 0.3     | Linked upcoming `kg_build.py` refactor planning artifacts | Codex CLI |
