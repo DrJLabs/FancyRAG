@@ -1,7 +1,7 @@
 # Epic 4: FancyRAG `kg_build.py` Monolith Decomposition
 
 ## Status
-Planned — 2025-10-02. Kickoff scheduled after PM handoff and story refinement.
+In Progress — 2025-10-03. Story 4.1 delivered; remaining stories scheduled per refactor plan.
 
 ## Epic Goal
 Break the `scripts/kg_build.py` monolith into composable modules under `src/fancyrag/`, leaving a thin CLI wrapper and establishing guardrails that improve maintainability, testability, and future extensibility.
@@ -24,7 +24,7 @@ Break the `scripts/kg_build.py` monolith into composable modules under `src/fanc
 - QA and reporting components become individually testable, supporting future automation and telemetry enhancements.
 
 ## Stories
-1. ☐ **Story 4.1:** Extract CLI wiring into `src/fancyrag/cli/kg_build_main.py` and update `scripts/kg_build.py` to call the packaged entry point (`docs/stories/4.1.cli-kg-build-main.md`).
+1. ☑ **Story 4.1:** Extract CLI wiring into `src/fancyrag/cli/kg_build_main.py` and update `scripts/kg_build.py` to call the packaged entry point (`docs/stories/4.1.cli-kg-build-main.md`).
 2. ☐ **Story 4.2:** Move pipeline orchestration and dependency validation into `src/fancyrag/kg/pipeline.py` with cohesive interfaces (`docs/stories/4.2.kg-pipeline.md`).
 3. ☐ **Story 4.3:** Relocate the caching splitter into `src/fancyrag/splitters/caching_fixed_size.py` with reusable configuration hooks (`docs/stories/4.3.caching-fixed-size-splitter.md`).
 4. ☐ **Story 4.4:** Separate QA evaluation logic into `src/fancyrag/qa/evaluator.py` and establish thresholds/totals utilities (`docs/stories/4.4.qa-evaluator.md`).
