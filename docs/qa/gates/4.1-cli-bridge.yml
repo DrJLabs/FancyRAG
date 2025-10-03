@@ -7,17 +7,17 @@ reviewer: "Quinn (Test Architect)"
 updated: "2025-10-03T11:15:00-07:00"
 waiver: { active: false }
 top_issues:
-  - id: OPS-041
+  - id: MNT-041
     severity: medium
-    summary: "Monitor CLI smoke/help snapshots as subsequent FancyRAG modules migrate." 
+    summary: "Monitor CLI smoke/help snapshots as subsequent FancyRAG modules migrate."
 evidence:
   tests_reviewed:
     - "PYTHONPATH=stubs:src pytest tests/unit/fancyrag/cli/test_kg_build_main.py"
     - "PYTHONPATH=stubs:src pytest tests/unit/scripts/test_kg_build.py"
   risks_identified:
-    - "TECH-041"
-    - "TECH-042"
-    - "OPS-041"
+    - "ARCH-041"
+    - "ARCH-042"
+    - "MNT-041"
   trace:
     totals:
       requirements: 3
@@ -33,7 +33,12 @@ risk_summary:
     high: 3
     medium: 0
     low: 0
-  highest: TECH-041
+  highest: ARCH-041
+  thresholds:
+    fail: "risk >= 9"
+    concerns: "risk >= 6"
+    pass: "risk < 6"
+  max_score: 5
   recommendations:
     must_fix: []
     monitor:

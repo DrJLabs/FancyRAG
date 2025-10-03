@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Run the SimpleKGPipeline against sample content for the minimal path workflow."""
 
 from __future__ import annotations
@@ -34,7 +33,27 @@ from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
-from fancyrag.utils import ensure_env
+from fancyrag.utils.env import ensure_env
+
+
+@functools.lru_cache(maxsize=1)
+def _resolve_repo_root() -> Path | None:
+    """Return the repository root directory if git metadata is available."""
+
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
+    try:
+        result = subprocess.run(
+            [git_executable, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return None
+    root = result.stdout.strip()
+    return Path(root) if root else None
 
 _PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
 
@@ -254,7 +273,7 @@ DEFAULT_SOURCE = Path("docs/samples/pilot.txt")
 DEFAULT_LOG_PATH = Path("artifacts/local_stack/kg_build.json")
 DEFAULT_CHUNK_SIZE = 600
 DEFAULT_CHUNK_OVERLAP = 100
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = _resolve_repo_root() or Path(__file__).resolve().parents[3]
 DEFAULT_SCHEMA_PATH = PROJECT_ROOT / "scripts" / "config" / "kg_schema.json"
 
 DEFAULT_PROFILE = "text"
@@ -979,26 +998,6 @@ def _resolve_git_commit() -> str | None:
         return None
     commit = result.stdout.strip()
     return commit or None
-
-
-@functools.lru_cache(maxsize=1)
-def _resolve_repo_root() -> Path | None:
-    """Return the repository root directory if git metadata is available."""
-
-    git_executable = shutil.which("git")
-    if git_executable is None:
-        return None
-    try:
-        result = subprocess.run(
-            [git_executable, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return None
-    root = result.stdout.strip()
-    return Path(root) if root else None
 
 
 def _relative_to_repo(path: Path, *, base: Path | None = None) -> str:
@@ -2182,9 +2181,9 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
                         reset_database=reset_pending,
                         ingest_run_key=ingest_run_key,
                     )
-                except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:  # noqa: TRY003
+                except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
                     raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-                except (Neo4jError, ClientError) as exc:  # noqa: TRY003
+                except (Neo4jError, ClientError) as exc:
                     raise RuntimeError(f"Neo4j error: {exc}") from exc
                 run_ids.append(run_id)
                 reset_pending = False
@@ -2379,13 +2378,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        logger.error("kg_build.error", error=str(exc))
+        logger.exception("kg_build.error", error=str(exc))
         return 1
     except Exception as exc:  # pragma: no cover - final guard
         print(f"error: {exc}", file=sys.stderr)
         logger.exception("kg_build.failed", error=str(exc))
         return 1
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    raise SystemExit(main())

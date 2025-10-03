@@ -10,7 +10,7 @@ The new architecture will follow a layered approach, with a clear separation of 
 
 ### New Directory Structure
 
-```
+```text
 fancyrag/
 ├── scripts/
 │   └── kg_build.py

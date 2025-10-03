@@ -13,7 +13,27 @@ for path in (STUBS, ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-import fancyrag.cli.kg_build_main as kg  # noqa: E402
+neo_stub = sys.modules.get("neo4j")
+if neo_stub is None:
+    neo_stub = types.ModuleType("neo4j")
+    sys.modules["neo4j"] = neo_stub
+if not hasattr(neo_stub, "GraphDatabase"):
+    neo_stub.GraphDatabase = types.SimpleNamespace(driver=lambda *_args, **_kwargs: None)
+if not hasattr(neo_stub, "exceptions"):
+    exceptions_module = types.ModuleType("neo4j.exceptions")
+
+    class _Neo4jError(RuntimeError):
+        pass
+
+    class _ClientError(_Neo4jError):
+        pass
+
+    exceptions_module.Neo4jError = _Neo4jError
+    exceptions_module.ClientError = _ClientError
+    sys.modules["neo4j.exceptions"] = exceptions_module
+    neo_stub.exceptions = exceptions_module
+
+import fancyrag.cli.kg_build_main as kg
 
 
 def test_parse_args_defaults():
@@ -69,8 +89,8 @@ def test_run_invokes_ensure_env_before_pipeline(monkeypatch, tmp_path):
             self.settings = settings
 
     monkeypatch.setattr(kg, "SharedOpenAIClient", DummyClient)
-    monkeypatch.setattr(kg, "SharedOpenAIEmbedder", lambda *args, **kwargs: object())
-    monkeypatch.setattr(kg, "SharedOpenAILLM", lambda *args, **kwargs: object())
+    monkeypatch.setattr(kg, "SharedOpenAIEmbedder", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(kg, "SharedOpenAILLM", lambda *_args, **_kwargs: object())
 
     class DummySplitter:
         def __init__(self, *args, **kwargs):
@@ -96,12 +116,20 @@ def test_run_invokes_ensure_env_before_pipeline(monkeypatch, tmp_path):
 
     monkeypatch.setattr(kg, "CachingFixedSizeSplitter", DummySplitter)
 
-    monkeypatch.setattr(kg, "_execute_pipeline", lambda **_: "run-id")
-    monkeypatch.setattr(kg, "_ensure_document_relationships", lambda *args, **kwargs: None)
-    monkeypatch.setattr(kg, "_build_chunk_metadata", lambda *args, **kwargs: [])
-    monkeypatch.setattr(kg, "_collect_counts", lambda *args, **kwargs: {})
-    monkeypatch.setattr(kg, "_relative_to_repo", lambda path, base=None: pathlib.Path(path).name)
-    monkeypatch.setattr(kg, "_run_semantic_enrichment", lambda **kwargs: kg.SemanticEnrichmentStats())
+    monkeypatch.setattr(kg, "_execute_pipeline", lambda **_kwargs: "run-id")
+    monkeypatch.setattr(kg, "_ensure_document_relationships", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(kg, "_build_chunk_metadata", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(kg, "_collect_counts", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        kg,
+        "_relative_to_repo",
+        lambda path, _base=None: pathlib.Path(path).name,
+    )
+    monkeypatch.setattr(
+        kg,
+        "_run_semantic_enrichment",
+        lambda **_kwargs: kg.SemanticEnrichmentStats(),
+    )
 
     class DummyEvaluator:
         def __init__(self, **kwargs):
