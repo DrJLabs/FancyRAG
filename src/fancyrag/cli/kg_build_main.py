@@ -64,7 +64,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--database",
-        default=None,
+        default=os.environ.get("NEO4J_DATABASE"),
         help="Optional Neo4j database name (defaults to server default)",
     )
     parser.add_argument(
