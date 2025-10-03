@@ -2129,6 +2129,7 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
                 )
                 log_chunks.extend(
                     {
+                        "path": str(spec.path),
                         "uid": chunk.uid,
                         "sequence": chunk.sequence,
                         "index": chunk.index,
