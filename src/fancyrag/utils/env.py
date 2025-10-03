@@ -20,6 +20,7 @@ else:
 
 
 _ENV_LOADED = False
+_DOTENV_PATH: Path | None = None
 
 
 def _discover_dotenv_path() -> Optional[Path]:
@@ -54,12 +55,14 @@ def _load_dotenv_once() -> None:
     """Load environment variables from a `.env` file one time."""
 
     global _ENV_LOADED
+    global _DOTENV_PATH
     if _ENV_LOADED:
         return
 
     env_path = _discover_dotenv_path()
     if env_path is not None:
-        load_dotenv(env_path, override=False)
+        if load_dotenv(env_path, override=False):
+            _DOTENV_PATH = env_path
 
     _ENV_LOADED = True
 
@@ -87,3 +90,10 @@ def ensure_env(var: str) -> str:
     if value is not None:
         return value
     raise SystemExit(f"Missing required environment variable: {var}")
+
+
+def load_project_dotenv() -> Path | None:
+    """Ensure the project's `.env` file (if any) is loaded and return its path."""
+
+    _load_dotenv_once()
+    return _DOTENV_PATH

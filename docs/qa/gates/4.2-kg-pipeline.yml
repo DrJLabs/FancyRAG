@@ -1,0 +1,38 @@
+qa_review:
+  status: PASS
+  reviewer: Quinn (QA)
+  date: 2025-10-03
+  notes:
+    - Unit + smoke suites confirm pipeline parity and centralized env loading.
+    - Documentation shards updated for the new `fancyrag.kg` module boundary.
+    - Schedule ingestion performance benchmark once the remaining Epic 4 modules land.
+  outstanding_risks:
+    - Performance baseline pending after full refactor.
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 1
+    low: 2
+  highest:
+    id: TECH-001
+    score: 6
+    title: "Pipeline extraction misses semantic/QA toggles"
+  recommendations:
+    must_fix:
+      - "Maintain characterization tests for semantic + QA toggles as additional modules extract."
+      - "Document and lint CLI → pipeline import direction to prevent circular dependencies."
+    monitor:
+      - "Spot-check reset behaviour against staging datasets post-merge."
+      - "Verify architecture/source-tree shards stay current as modules ship."
+test_design:
+  scenarios_total: 11
+  by_level:
+    unit: 6
+    integration: 4
+    e2e: 1
+  by_priority:
+    p0: 5
+    p1: 5
+    p2: 1
+  coverage_gaps: []
