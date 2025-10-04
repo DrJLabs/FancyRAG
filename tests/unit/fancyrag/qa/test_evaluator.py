@@ -18,9 +18,11 @@ class SequencedDriver:
         self._results = [list(result) for result in results]
         self.calls: list[str] = []
 
-    def execute_query(self, query, parameters=None, database_=None):  # noqa: D401 - mimics Neo4j driver
+    def execute_query(self, query, parameters=None, database_=None):  # mimics Neo4j driver
+        _ = parameters
+        _ = database_
         if not self._results:
-            raise AssertionError("Driver received more queries than configured")
+            raise AssertionError
         self.calls.append(" ".join(str(query).split()))
         payload = self._results.pop(0)
         return payload
@@ -151,6 +153,7 @@ def test_evaluator_flags_threshold_breaches(tmp_path):
 def test_collect_counts_handles_tuple_result():
     class DummyDriver:
         def execute_query(self, query, database_=None):
+            _ = database_
             if "HAS_CHUNK" in query:
                 return ([{"value": 8}],)
             if "Document" in query:
@@ -161,3 +164,115 @@ def test_collect_counts_handles_tuple_result():
 
     counts = collect_counts(DummyDriver(), database="neo4j")
     assert counts == {"documents": 5, "chunks": 12, "relationships": 8}
+
+
+def test_token_histogram_bucketing(tmp_path):
+    # Instantiate evaluator; we won't call evaluate(), only histogram helpers.
+    evaluator = IngestionQaEvaluator(
+        driver=object(),
+        database=None,
+        sources=[],
+        thresholds=QaThresholds(),
+        report_root=tmp_path,
+        report_version="v1",
+    )
+    counts = evaluator._token_histogram([0, 1, 64, 65, 129, 2048, 5000])
+    # Expected buckets based on TOKEN_BINS = (64, 128, 256, 512, 1024, 2048)
+    assert counts["<= 64"] == 3     # 0, 1, 64
+    assert counts["<= 128"] == 1    # 65
+    assert counts["<= 256"] == 1    # 129
+    assert counts["<= 512"] == 0
+    assert counts["<= 1024"] == 0
+    assert counts["<= 2048"] == 1   # 2048
+    assert counts["> 2048"] == 1    # 5000
+
+
+def test_estimate_tokens_minimum_and_rounding():
+    # Empty -> 0; non-empty minimum 1; 5 chars -> ceil(5/4)=2
+    assert IngestionQaEvaluator._estimate_tokens("") == 0
+    assert IngestionQaEvaluator._estimate_tokens("a") == 1
+    assert IngestionQaEvaluator._estimate_tokens("abcd") == 1
+    assert IngestionQaEvaluator._estimate_tokens("abcde") == 2
+
+
+def test_render_markdown_includes_histogram_and_files(tmp_path):
+    evaluator = IngestionQaEvaluator(
+        driver=object(),
+        database=None,
+        sources=[],
+        thresholds=QaThresholds(max_missing_embeddings=0),
+        report_root=tmp_path,
+        report_version="v1",
+    )
+    payload = {
+        "version": "v1",
+        "generated_at": "2025-01-01T00:00:00Z",
+        "status": "pass",
+        "summary": "All good",
+        "metrics": {
+            "files_processed": 1,
+            "chunks_processed": 2,
+            "token_estimate": {
+                "total": 3,
+                "mean": 1.5,
+                "histogram": {"<= 64": 2, "> 2048": 0},
+            },
+            "missing_embeddings": 0,
+            "orphan_chunks": 0,
+            "checksum_mismatches": 0,
+            "files": [
+                {
+                    "relative_path": "docs/input.txt",
+                    "chunks": 2,
+                    "document_checksum": "abc",
+                    "git_commit": "sha",
+                }
+            ],
+        },
+        "thresholds": {"max_missing_embeddings": 0},
+        "anomalies": [],
+    }
+    md = evaluator._render_markdown(payload)
+    assert "# Ingestion QA Report (v1)" in md
+    assert "Token Histogram" in md
+    assert "| <= 64 | 2 |" in md
+    assert "## Files" in md
+    assert "docs/input.txt" in md
+    assert "abc" in md
+    assert "sha" in md
+    assert "All thresholds satisfied" in md
+
+
+def test_evaluate_report_paths_are_relative(tmp_path):
+    # Driver stub: return a single [{value: 0}] row for any query
+    class NoOpDriver:
+        def execute_query(self, _q, _params=None, database_=None):
+            _ = database_
+            return [{"value": 0}]
+
+    sources = [
+        QaSourceRecord(
+            path="/abs/sample.txt",
+            relative_path="docs/sample.txt",
+            document_checksum="deadbeef",
+            git_commit=None,
+            chunks=[QaChunkRecord(uid="u1", checksum="c1", text="hello world")],
+            ingest_run_key=None,
+        )
+    ]
+    evaluator = IngestionQaEvaluator(
+        driver=NoOpDriver(),
+        database=None,
+        sources=sources,
+        thresholds=QaThresholds(),
+        report_root=tmp_path / "qa",
+        report_version="v1",
+    )
+    result = evaluator.evaluate()
+    # Ensure reported paths are relative strings and point to the right artifacts
+    import os
+
+    assert result.report_json.endswith("quality_report.json")
+    assert result.report_markdown.endswith("quality_report.md")
+    assert not os.path.isabs(result.report_json)
+    assert not os.path.isabs(result.report_markdown)
