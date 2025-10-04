@@ -74,11 +74,17 @@ else:
 
 def _patch_driver(monkeypatch: pytest.MonkeyPatch, factory) -> None:
     """Patch both sync and async driver entry points with a factory."""
-    monkeypatch.setattr(kg.GraphDatabase, "driver", factory)
-    if hasattr(kg, "AsyncGraphDatabase"):
-        monkeypatch.setattr(kg.AsyncGraphDatabase, "driver", factory)
+    for module in (kg_pipeline, kg):
+        graph_db = getattr(module, "GraphDatabase", None)
+        if graph_db is not None:
+            monkeypatch.setattr(graph_db, "driver", factory)
+        async_graph_db = getattr(module, "AsyncGraphDatabase", None)
+        if async_graph_db is not None:
+            monkeypatch.setattr(async_graph_db, "driver", factory)
 
 import fancyrag.cli.kg_build_main as kg
+import fancyrag.kg.pipeline as kg_pipeline
+from fancyrag.splitters import CachingFixedSizeSplitter
 from cli.openai_client import OpenAIClientError
 
 
@@ -267,7 +273,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -278,14 +284,14 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
 
-    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -293,7 +299,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     log = kg.run(
         [
@@ -320,7 +326,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     assert fake_client.embedding_calls
     assert fake_client.chat_calls
     assert pipelines and pipelines[0].run_args["text"] == "sample content"
-    assert isinstance(pipelines[0].kg_writer, kg.SanitizingNeo4jWriter)
+    assert isinstance(pipelines[0].kg_writer, kg_pipeline.SanitizingNeo4jWriter)
     assert created_drivers, "Expected GraphDatabase.driver to be invoked"
     assert any("DETACH DELETE" in query for driver in created_drivers for query in driver.queries)
     saved = json.loads(log_path.read_text())
@@ -328,7 +334,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     assert "qa" in log
     qa_section = log["qa"]
     assert qa_section["status"] == "pass"
-    assert qa_section["report_version"] == kg.QA_REPORT_VERSION
+    assert qa_section["report_version"] == kg_pipeline.QA_REPORT_VERSION
     assert qa_section["duration_ms"] >= 0
     assert "qa_evaluation_ms" in qa_section["metrics"]
     def _resolve_report(path_str: str) -> pathlib.Path:
@@ -344,7 +350,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
         candidate = pathlib.Path(path_str)
         if candidate.is_absolute() and candidate.exists():
             return candidate
-        repo_candidate = (kg._resolve_repo_root() or pathlib.Path.cwd()) / candidate
+        repo_candidate = (kg_pipeline._resolve_repo_root() or pathlib.Path.cwd()) / candidate
         if repo_candidate.exists():
             return repo_candidate
         root_candidate = pathlib.Path("/") / candidate
@@ -371,7 +377,7 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
     pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -382,14 +388,14 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
 
-    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -397,7 +403,7 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     kg.run(
         [
@@ -425,7 +431,7 @@ def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # no
     pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -436,14 +442,14 @@ def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # no
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
 
-    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -454,20 +460,20 @@ def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # no
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     semantic_calls: list[dict[str, Any]] = []
 
-    def fake_semantic(**kwargs) -> kg.SemanticEnrichmentStats:
+    def fake_semantic(**kwargs) -> kg_pipeline.SemanticEnrichmentStats:
         semantic_calls.append(kwargs)
-        return kg.SemanticEnrichmentStats(
+        return kg_pipeline.SemanticEnrichmentStats(
             chunks_processed=2,
             chunk_failures=0,
             nodes_written=4,
             relationships_written=3,
         )
 
-    monkeypatch.setattr(kg, "_run_semantic_enrichment", fake_semantic)
+    monkeypatch.setattr(kg_pipeline, "_run_semantic_enrichment", fake_semantic)
 
     log = kg.run(
         [
@@ -513,7 +519,7 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001
         def embedding(self, *, input_text: str):
             raise OpenAIClientError("boom", remediation="retry later")
 
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -524,10 +530,10 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: FailingClient())
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: FailingClient())
     _patch_driver(monkeypatch, lambda *_, **__: FakeDriver())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
-    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
     with pytest.raises(RuntimeError) as excinfo:
         kg.run(
@@ -550,7 +556,7 @@ def test_run_fails_on_qa_threshold(tmp_path, monkeypatch, env) -> None:  # noqa:
     source.write_text("qa failure content", encoding="utf-8")
 
     fake_client = FakeSharedClient()
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -564,10 +570,10 @@ def test_run_fails_on_qa_threshold(tmp_path, monkeypatch, env) -> None:  # noqa:
     failing_driver = FakeDriver()
     failing_driver.qa_missing_embeddings = 2
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
-    monkeypatch.setattr(kg, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
     _patch_driver(monkeypatch, lambda *_, **__: failing_driver)
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     with pytest.raises(RuntimeError) as excinfo:
         kg.run(
@@ -715,7 +721,7 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
     pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -726,14 +732,14 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
 
-    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -741,7 +747,7 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     log = kg.run(
         [
@@ -775,13 +781,13 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
 
 
 def test_sanitize_property_value_handles_only_none() -> None:
-    sanitized = kg._sanitize_property_value([None, None])
+    sanitized = kg_pipeline._sanitize_property_value([None, None])
     assert sanitized == []
 
 
 def test_sanitize_property_value_heterogeneous_list() -> None:
     raw = [1, "a", 2]
-    sanitized = kg._sanitize_property_value(raw)
+    sanitized = kg_pipeline._sanitize_property_value(raw)
     assert isinstance(sanitized, str)
     assert json.loads(sanitized) == raw
 
@@ -791,14 +797,14 @@ def test_sanitize_property_value_subclass_primitives() -> None:
         pass
 
     raw = [FancyInt(1), FancyInt(0)]
-    sanitized = kg._sanitize_property_value(raw)
+    sanitized = kg_pipeline._sanitize_property_value(raw)
     assert isinstance(sanitized, str)
     assert json.loads(sanitized) == [1, 0]
 
 
 def test_sanitize_property_value_mapping_sorted() -> None:
     raw = {"b": 1, "a": 2}
-    sanitized = kg._sanitize_property_value(raw)
+    sanitized = kg_pipeline._sanitize_property_value(raw)
     assert isinstance(sanitized, str)
     assert json.loads(sanitized) == {"a": 2, "b": 1}
 
@@ -808,12 +814,12 @@ def test_sanitize_property_value_arbitrary_object() -> None:
         def __str__(self) -> str:
             return "<custom>"
 
-    sanitized = kg._sanitize_property_value(Custom())
+    sanitized = kg_pipeline._sanitize_property_value(Custom())
     assert sanitized == "<custom>"
 
 
 def test_splitter_cache_scoped_per_source() -> None:
-    splitter = kg.CachingFixedSizeSplitter(chunk_size=200, chunk_overlap=0)
+    splitter = CachingFixedSizeSplitter(chunk_size=200, chunk_overlap=0)
     text = "identical content across files"
 
     with splitter.scoped("first-file"):
@@ -841,7 +847,7 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
     pipelines: list[FakePipeline] = []
     created_drivers: list[FakeDriver] = []
 
-    settings = kg.OpenAISettings(
+    settings = kg_pipeline.OpenAISettings(
         chat_model="gpt-4.1-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
@@ -852,14 +858,14 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
         enable_fallback=True,
     )
 
-    monkeypatch.setattr(kg, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
 
     def make_pipeline(**kwargs):
         pipeline = FakePipeline(**kwargs)
         pipelines.append(pipeline)
         return pipeline
 
-    monkeypatch.setattr(kg, "SimpleKGPipeline", make_pipeline)
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", make_pipeline)
 
     def driver_factory(*_args, **_kwargs):
         driver = FakeDriver()
@@ -867,7 +873,7 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
 
     log = kg.run(
         [
@@ -883,7 +889,7 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
 
 
 def test_sanitizing_writer_drops_none_values() -> None:
-    writer = kg.SanitizingNeo4jWriter.__new__(kg.SanitizingNeo4jWriter)
+    writer = kg_pipeline.SanitizingNeo4jWriter.__new__(kg_pipeline.SanitizingNeo4jWriter)
     sanitized = writer._sanitize_properties({"values": [None, None]})
     assert sanitized == {"values": []}
 # Testing library/framework: pytest (project-wide standard). These tests follow existing conventions.

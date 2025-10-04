@@ -85,7 +85,7 @@ graph TD
 - **`scripts/kg_build.py`**: Thin wrapper that calls the `main` function in `src/fancyrag/cli/kg_build_main.py`; contains no business logic.
 - **`src/fancyrag/cli/kg_build_main.py`**: Handles CLI argument parsing and orchestrates execution of the KG build pipeline by instantiating classes from other modules.
 - **`src/fancyrag/kg/pipeline.py`**: Orchestrates the KG build stages (data loading, splitting, semantic enrichment, QA, Neo4j interactions) and now exposes a typed `PipelineOptions` + `run_pipeline()` API consumed by the CLI and future automation.
-- **`src/fancyrag/splitters/caching_fixed_size.py`**: Implements the `CachingFixedSizeSplitter` responsible for splitting text into fixed-size chunks.
+- **`src/fancyrag/splitters/caching_fixed_size.py`**: Implements the `CachingFixedSizeSplitter` plus typed configuration and factory helpers for chunk size/overlap reuse.
 - **`src/fancyrag/qa/evaluator.py`**: Contains the `IngestionQaEvaluator` class handling thresholds, totals math, and overall QA evaluation workflow.
 - **`src/fancyrag/qa/report.py`**: Generates JSON and Markdown QA reports.
 - **`src/fancyrag/db/neo4j_queries.py`**: Stores Cypher query strings and thin wrappers for counts and lookups against Neo4j.
