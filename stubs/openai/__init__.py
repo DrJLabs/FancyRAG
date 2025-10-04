@@ -77,7 +77,7 @@ class _ChatCompletions:
         max_tokens: int,
         **_: Any,
     ) -> Any:
-        last = messages[-1]["content"] if messages else ""
+        last = messages[-1].get("content", "") if messages else ""
         content = f"Stubbed response for: {last}".strip()
         usage = _ChatUsage(prompt_tokens=max(len(messages) * 10, 5), completion_tokens=min(max_tokens, 12))
         return SimpleNamespace(
