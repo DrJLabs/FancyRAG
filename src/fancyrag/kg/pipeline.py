@@ -2105,7 +2105,7 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
                     QaChunkRecord(
                         uid=meta.uid,
                         checksum=meta.checksum,
-                        text=_strip_code_fence(getattr(chunk, "text", "") or ""),
+                        text=getattr(chunk, "text", "") or "",
                     )
                     for meta, chunk in zip(chunk_metadata, chunk_result.chunks)
                 ]
