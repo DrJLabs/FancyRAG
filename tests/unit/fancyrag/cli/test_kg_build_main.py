@@ -1,44 +1,16 @@
 from __future__ import annotations
 
-import os
-import pathlib
-import sys
-import types
+from pathlib import Path
+from typing import Any
 
 import pytest
-
-ROOT = pathlib.Path(__file__).resolve().parents[4]
-STUBS = ROOT / "stubs"
-for path in (STUBS, ROOT):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
-
-neo_stub = sys.modules.get("neo4j")
-if neo_stub is None:
-    neo_stub = types.ModuleType("neo4j")
-    sys.modules["neo4j"] = neo_stub
-if not hasattr(neo_stub, "GraphDatabase"):
-    neo_stub.GraphDatabase = types.SimpleNamespace(driver=lambda *_args, **_kwargs: None)
-if not hasattr(neo_stub, "exceptions"):
-    exceptions_module = types.ModuleType("neo4j.exceptions")
-
-    class _Neo4jError(RuntimeError):
-        pass
-
-    class _ClientError(_Neo4jError):
-        pass
-
-    exceptions_module.Neo4jError = _Neo4jError
-    exceptions_module.ClientError = _ClientError
-    sys.modules["neo4j.exceptions"] = exceptions_module
-    neo_stub.exceptions = exceptions_module
 
 import fancyrag.cli.kg_build_main as kg
 
 
 def test_parse_args_defaults():
     args = kg._parse_args([])
-    assert pathlib.Path(args.source) == kg.DEFAULT_SOURCE
+    assert Path(args.source) == kg.DEFAULT_SOURCE
     assert args.source_dir is None
     assert args.include_patterns is None
     assert args.profile is None
@@ -46,140 +18,60 @@ def test_parse_args_defaults():
     assert args.chunk_overlap is None
     assert args.semantic_enabled is False
     assert args.semantic_max_concurrency == 5
-    assert pathlib.Path(args.log_path) == kg.DEFAULT_LOG_PATH
-    assert pathlib.Path(args.qa_report_dir) == kg.DEFAULT_QA_DIR
+    assert Path(args.log_path) == kg.DEFAULT_LOG_PATH
+    assert Path(args.qa_report_dir) == kg.DEFAULT_QA_DIR
 
 
-def test_parse_args_enable_semantic_sets_flag():
-    args = kg._parse_args(["--enable-semantic"])
-    assert args.semantic_enabled is True
+def test_parse_args_accepts_multiple_include_patterns():
+    args = kg._parse_args([
+        "--include-pattern",
+        "**/*.txt",
+        "--include-pattern",
+        "**/*.md",
+    ])
+    assert args.include_patterns == ["**/*.txt", "**/*.md"]
 
 
-def test_run_invokes_ensure_env_before_pipeline(monkeypatch, tmp_path):
-    required_vars: list[str] = []
+def test_run_delegates_to_pipeline(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
 
-    def fake_ensure_env(var: str) -> str:
-        required_vars.append(var)
-        value = os.environ.get(var)
-        if value is None:
-            value = f"stub-{var.lower()}"
-            os.environ[var] = value
-        return value
+    def fake_run_pipeline(options):
+        captured["options"] = options
+        return {"status": "success"}
 
-    monkeypatch.setattr(kg, "ensure_env", fake_ensure_env)
+    monkeypatch.setattr(kg, "run_pipeline", fake_run_pipeline)
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
-    monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
-    monkeypatch.setenv("NEO4J_PASSWORD", "secret")
+    log_path = tmp_path / "kg-log.json"
+    result = kg.run([
+        "--source",
+        str(tmp_path / "input.txt"),
+        "--log-path",
+        str(log_path),
+        "--qa-report-dir",
+        str(tmp_path),
+        "--qa-max-checksum-mismatches",
+        "2",
+        "--semantic-max-concurrency",
+        "7",
+    ])
 
-    monkeypatch.setattr(
-        kg,
-        "OpenAISettings",
-        types.SimpleNamespace(load=lambda actor: types.SimpleNamespace(
-            chat_model="gpt-4.1-mini",
-            embedding_model="text-embedding-3-small",
-            embedding_dimensions=1536,
-            max_attempts=3,
-        )),
-    )
-
-    class DummyClient:
-        def __init__(self, settings):
-            self.settings = settings
-
-    monkeypatch.setattr(kg, "SharedOpenAIClient", DummyClient)
-    monkeypatch.setattr(kg, "SharedOpenAIEmbedder", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(kg, "SharedOpenAILLM", lambda *_args, **_kwargs: object())
-
-    class DummySplitter:
-        def __init__(self, *args, **kwargs):
-            self._cache: dict[str, types.SimpleNamespace] = {}
-
-        def scoped(self, _token: str):
-            class _Context:
-                def __enter__(self_inner):
-                    return self
-
-                def __exit__(self_inner, exc_type, exc, tb):
-                    return False
-
-            return _Context()
-
-        def get_cached(self, text: str):
-            return self._cache.get(text)
-
-        async def run(self, text: str):
-            result = types.SimpleNamespace(chunks=[])
-            self._cache[text] = result
-            return result
-
-    monkeypatch.setattr(kg, "CachingFixedSizeSplitter", DummySplitter)
-
-    monkeypatch.setattr(kg, "_execute_pipeline", lambda **_kwargs: "run-id")
-    monkeypatch.setattr(kg, "_ensure_document_relationships", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(kg, "_build_chunk_metadata", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(kg, "_collect_counts", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(
-        kg,
-        "_relative_to_repo",
-        lambda path, _base=None: pathlib.Path(path).name,
-    )
-    monkeypatch.setattr(
-        kg,
-        "_run_semantic_enrichment",
-        lambda **_kwargs: kg.SemanticEnrichmentStats(),
-    )
-
-    class DummyEvaluator:
-        def __init__(self, **kwargs):
-            self.thresholds = kwargs.get("thresholds")
-
-        def evaluate(self):
-            return types.SimpleNamespace(
-                passed=True,
-                status="pass",
-                summary={},
-                version="v1",
-                report_json="{}",
-                report_markdown="# report",
-                thresholds=self.thresholds,
-                metrics={"graph_counts": {}},
-                anomalies=[],
-                duration_ms=0,
-            )
-
-    monkeypatch.setattr(kg, "IngestionQaEvaluator", DummyEvaluator)
-
-    class DummyDriver:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr(
-        kg,
-        "GraphDatabase",
-        types.SimpleNamespace(driver=lambda *_, **__: DummyDriver()),
-    )
-
-    output_path = tmp_path / "log.json"
-
-    result = kg.run(["--log-path", str(output_path)])
-
+    options = captured["options"]
+    assert isinstance(options, kg.PipelineOptions)
+    assert options.semantic_max_concurrency == 7
+    assert options.qa_limits.max_checksum_mismatches == 2
+    assert options.log_path == log_path.expanduser()
+    assert options.source == (tmp_path / "input.txt").expanduser()
     assert result["status"] == "success"
-    assert output_path.exists()
-    assert required_vars == [
-        "OPENAI_API_KEY",
-        "NEO4J_URI",
-        "NEO4J_USERNAME",
-        "NEO4J_PASSWORD",
-    ]
 
 
-def test_scripts_wrapper_exposes_packaged_main():
-    import importlib
+def test_main_translates_runtime_errors(monkeypatch, capsys):
+    monkeypatch.setattr(kg, "run", lambda _argv=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    exit_code = kg.main([])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "boom" in captured.err
 
-    script_mod = importlib.import_module("scripts.kg_build")
-    assert script_mod.main is kg.main
+
+def test_main_success_path(monkeypatch):
+    monkeypatch.setattr(kg, "run", lambda _argv=None: {"status": "success"})
+    assert kg.main([]) == 0

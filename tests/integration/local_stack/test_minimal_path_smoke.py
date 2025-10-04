@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from fancyrag.utils.env import ensure_env
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = PROJECT_ROOT / "docker-compose.neo4j-qdrant.yml"
 CHECK_SCRIPT = PROJECT_ROOT / "scripts" / "check_local_stack.sh"
@@ -24,6 +26,7 @@ REQUIRED_SCRIPTS = [
 
 
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
+STACK_SERVICE_NAMES = ("neo4j-graphrag", "qdrant-graphrag")
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -60,8 +63,30 @@ def run_command(*args: str, env: dict[str, str], check: bool = True) -> subproce
     return result
 
 
-SKIP_FOR_DOCKER = shutil.which("docker") is None and not _is_truthy(
-    os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK")
+def _docker_containers_running(names: tuple[str, ...]) -> bool:
+    """Return True when all named containers appear in `docker ps`."""
+
+    docker_path = shutil.which("docker")
+    if docker_path is None:
+        return False
+    result = subprocess.run(
+        [docker_path, "ps", "--format", "{{.Names}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    running = set(line.strip() for line in result.stdout.splitlines() if line.strip())
+    return all(name in running for name in names)
+
+
+STACK_ALREADY_RUNNING = _docker_containers_running(STACK_SERVICE_NAMES)
+
+SKIP_FOR_DOCKER = (
+    shutil.which("docker") is None
+    and not _is_truthy(os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK"))
+    and not STACK_ALREADY_RUNNING
 )
 
 
@@ -119,8 +144,9 @@ def test_minimal_path_smoke() -> None:
     env["QDRANT_URL"] = os.environ.get("QDRANT_URL", f"http://{qdrant_host}:{qdrant_http_port}")
     env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    try:
+        api_key = ensure_env("OPENAI_API_KEY")
+    except SystemExit:
         pytest.skip("OPENAI_API_KEY environment variable is required for minimal path smoke test")
     env["OPENAI_API_KEY"] = api_key
 
@@ -129,6 +155,8 @@ def test_minimal_path_smoke() -> None:
         (PROJECT_ROOT / relative).mkdir(parents=True, exist_ok=True)
 
     skip_docker_ops = _is_truthy(os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK"))
+    if not skip_docker_ops and _docker_containers_running(STACK_SERVICE_NAMES):
+        skip_docker_ops = True
 
     if not skip_docker_ops:
         run_command(str(CHECK_SCRIPT), "--config", env=env)

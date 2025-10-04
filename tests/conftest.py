@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from fancyrag.utils.env import load_project_dotenv
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
@@ -17,6 +19,7 @@ def _ensure_path(path: Path) -> None:
 
 
 _ensure_path(SRC_DIR)
+load_project_dotenv()
 
 
 def _load_pandas_stub() -> ModuleType:
@@ -32,4 +35,3 @@ def _load_pandas_stub() -> ModuleType:
 
 if "pandas" not in sys.modules:
     sys.modules["pandas"] = _load_pandas_stub()
-

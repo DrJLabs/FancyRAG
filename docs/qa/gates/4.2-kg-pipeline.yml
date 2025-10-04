@@ -1,0 +1,27 @@
+schema: 1
+gate: CONCERNS
+status_reason: "Pipeline extraction verified while semantic/QA toggle characterization tests and performance benchmark remain open follow-ups."
+reviewer: Quinn (QA)
+updated: 2025-10-03
+top_issues:
+  - id: TEST-001
+    severity: high
+    title: "Pipeline extraction misses semantic/QA toggles"
+    description: "Maintain characterization tests for semantic + QA toggles as additional modules extract."
+  - id: ARCH-002
+    severity: medium
+    title: "Import boundaries lack automated enforcement"
+    description: "Document and lint CLI → pipeline import direction to prevent circular dependencies."
+tests_reviewed:
+  - tests/unit/fancyrag/kg/test_pipeline.py
+  - tests/unit/fancyrag/cli/test_kg_build_main.py
+  - tests/integration/local_stack/test_minimal_path_smoke.py
+risks_identified:
+  - TEST-001 (score 6)
+  - ARCH-002 (score 4)
+  - DOC-001 (score 3)
+  - REL-001 (score 2)
+trace:
+  requirements: docs/stories/4.2.kg-pipeline.md
+  design: docs/architecture/projects/fancyrag-kg-build-refactor.md
+  tests: docs/qa/assessments/4.2-test-design-20251003.md

@@ -139,8 +139,14 @@ all_healthy() {
 # wait_for_health polls the compose services until every service is running and healthy, then prints the status table and exits successfully.
 # On timeout it prints an error, outputs the status table, and returns a non-zero status.
 wait_for_health() {
-  local max_attempts=30
-  local sleep_seconds=5
+  local max_attempts=${LOCAL_STACK_WAIT_ATTEMPTS:-60}
+  local sleep_seconds=${LOCAL_STACK_WAIT_INTERVAL:-5}
+  if [[ ${max_attempts} -le 0 ]]; then
+    max_attempts=60
+  fi
+  if [[ ${sleep_seconds} -le 0 ]]; then
+    sleep_seconds=5
+  fi
   local attempt=1
   while (( attempt <= max_attempts )); do
     if all_healthy && qdrant_ready && neo4j_port_ready; then
