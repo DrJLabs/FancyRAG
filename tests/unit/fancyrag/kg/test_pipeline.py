@@ -160,31 +160,9 @@ def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):
 
     class DummyEvaluator:
         def __init__(self, **kwargs):
-            """
-            Initialize the evaluator with optional threshold configuration.
-            
-            Parameters:
-                thresholds (optional): Threshold settings (e.g., dict or namespace) used to configure evaluation criteria; stored on the instance as `self.thresholds`.
-            """
             self.thresholds = kwargs.get("thresholds")
 
         def evaluate(self):
-            """
-            Return a fixed evaluation result representing a successful QA evaluation.
-            
-            Returns:
-                types.SimpleNamespace: An object with evaluation fields:
-                    - passed: `True`.
-                    - status: `"pass"`.
-                    - summary: empty dict.
-                    - version: `"v1"`.
-                    - report_json: `"{}"`.
-                    - report_markdown: `"# report"`.
-                    - thresholds: the evaluator's configured thresholds.
-                    - metrics: dict containing `"graph_counts": {}`.
-                    - anomalies: empty list.
-                    - duration_ms: `0`.
-            """
             return types.SimpleNamespace(
                 passed=True,
                 status="pass",
@@ -202,26 +180,10 @@ def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):
 
     class RecordingSplitter(CachingFixedSizeSplitter):
         def __init__(self, *args, **kwargs):
-            """
-            Initialize the splitter and prepare a counter for tracking run invocations per input key.
-            
-            Forwards all positional and keyword arguments to the base class initializer and creates
-            self.run_calls, a dict that maps input keys (strings) to the number of times `run` has been invoked for that key.
-            """
             super().__init__(*args, **kwargs)
             self.run_calls: dict[str, int] = {}
 
         async def run(self, text, config=None) -> pipeline.TextChunks:  # type: ignore[override]
-            """
-            Record and run the splitter for the given text, tracking how many times each input key is invoked.
-            
-            Parameters:
-                text (str | Sequence[str]): Input text or sequence of texts to split; used as the key for invocation counting.
-                config (optional): Optional splitter configuration passed through to the base run method.
-            
-            Returns:
-                pipeline.TextChunks: The chunks produced by the splitter for the given input.
-            """
             key = text if isinstance(text, str) else tuple(text)
             self.run_calls[key] = self.run_calls.get(key, 0) + 1
             return await super().run(text, config)
@@ -229,43 +191,14 @@ def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):
     splitter_holder: dict[str, RecordingSplitter] = {}
 
     def fake_build(config):
-        """
-        Create and return a RecordingSplitter configured from the provided config and save it into splitter_holder.
-        
-        Parameters:
-            config: An object with `chunk_size` and `chunk_overlap` attributes used to configure the splitter.
-        
-        Returns:
-            splitter: The created RecordingSplitter instance.
-        
-        Notes:
-            The created instance is stored in splitter_holder["instance"] as a side effect.
-        """
         splitter = RecordingSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
         splitter_holder["instance"] = splitter
         return splitter
 
     async def _warm_cache(splitter: RecordingSplitter, text: str):
-        """
-        Prime the splitter's cache by running it on the provided text.
-        
-        Parameters:
-            splitter (RecordingSplitter): Splitter instance whose cache should be populated for the given text.
-            text (str): Input text to process and store in the splitter's cache.
-        """
         await splitter.run(text)
 
     def fake_execute_pipeline(**kwargs):
-        """
-        Populate the provided splitter's cache using the given source text and return a fixed run identifier.
-        
-        Parameters:
-            splitter: The splitter instance whose cache will be warmed.
-            source_text (str): Text to process and populate the splitter's cache.
-        
-        Returns:
-            run_id (str): The fixed identifier "run-id".
-        """
         splitter = kwargs["splitter"]
         text = kwargs["source_text"]
         asyncio.run(_warm_cache(splitter, text))
@@ -322,3 +255,212 @@ def test_build_chunk_metadata_rejects_duplicate_uids():
             relative_path="sample.txt",
             git_commit="abc123",
         )
+
+
+def test_build_chunk_metadata_with_valid_chunks():
+    """Test _build_chunk_metadata with valid chunk objects."""
+    chunk_a = types.SimpleNamespace(text="first text", index=0, uid="uid-1", metadata=None)
+
+    chunk_b = types.SimpleNamespace(text="second text", index=1, uid="uid-2", metadata=None)
+    chunk_c = types.SimpleNamespace(text="third text", index=2, uid="uid-3", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk_a, chunk_b, chunk_c],
+        relative_path="docs/example.md",
+        git_commit="abc123def",
+    )
+
+    assert len(result) == 3
+    assert result[0].uid == "uid-1"
+    assert result[0].sequence == 1
+    assert result[0].index == 0
+    assert result[0].relative_path == "docs/example.md"
+    assert result[0].git_commit == "abc123def"
+    assert result[0].checksum  # Should be computed
+
+    assert result[1].sequence == 2
+    assert result[2].sequence == 3
+
+
+def test_build_chunk_metadata_with_none_git_commit():
+    """Test _build_chunk_metadata handles None git_commit correctly."""
+    chunk = types.SimpleNamespace(text="content", index=0, uid="uid-1", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk],
+        relative_path="file.txt",
+        git_commit=None,
+    )
+
+    assert len(result) == 1
+    assert result[0].git_commit is None
+
+
+def test_build_chunk_metadata_missing_uid_raises_error():
+    """Test that missing uid attribute raises ValueError."""
+    chunk_no_uid = types.SimpleNamespace(text="content", index=0, metadata=None)
+
+    with pytest.raises(ValueError, match="chunk object missing uid"):
+        pipeline._build_chunk_metadata(  # noqa: SLF001
+            [chunk_no_uid],
+            relative_path="file.txt",
+            git_commit="abc",
+        )
+
+
+def test_build_chunk_metadata_none_uid_raises_error():
+    """Test that None uid value raises ValueError."""
+    chunk_none_uid = types.SimpleNamespace(text="content", index=0, uid=None, metadata=None)
+
+    with pytest.raises(ValueError, match="chunk object missing uid"):
+        pipeline._build_chunk_metadata(  # noqa: SLF001
+            [chunk_none_uid],
+            relative_path="file.txt",
+            git_commit="abc",
+        )
+
+
+def test_build_chunk_metadata_empty_chunks_list():
+    """Test _build_chunk_metadata with empty chunks list."""
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [],
+        relative_path="empty.txt",
+        git_commit="abc",
+    )
+
+    assert result == []
+
+
+def test_build_chunk_metadata_handles_empty_text():
+    """Test _build_chunk_metadata handles chunks with empty text."""
+    chunk_empty = types.SimpleNamespace(text="", index=0, uid="uid-empty", metadata=None)
+    chunk_none = types.SimpleNamespace(text=None, index=1, uid="uid-none", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk_empty, chunk_none],
+        relative_path="sparse.txt",
+        git_commit="def",
+    )
+
+    assert len(result) == 2
+    assert result[0].checksum  # Empty text should still have checksum
+    assert result[1].checksum  # None text treated as empty
+
+
+def test_build_chunk_metadata_checksum_differs_for_different_text():
+    """Test that different text produces different checksums."""
+    chunk_a = types.SimpleNamespace(text="alpha", index=0, uid="uid-a", metadata=None)
+
+    chunk_b = types.SimpleNamespace(text="beta", index=1, uid="uid-b", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk_a, chunk_b],
+        relative_path="test.txt",
+        git_commit="abc",
+    )
+
+    assert result[0].checksum != result[1].checksum
+
+
+def test_build_chunk_metadata_duplicate_uid_in_middle():
+    """Test duplicate UID detection when duplicate is not at start."""
+    chunks = [
+        types.SimpleNamespace(text="one", index=0, uid="unique-1", metadata=None),
+        types.SimpleNamespace(text="two", index=1, uid="unique-2", metadata=None),
+        types.SimpleNamespace(text="three", index=2, uid="unique-1", metadata=None),  # Duplicate
+    ]
+
+    with pytest.raises(ValueError, match="duplicate chunk uid"):
+        pipeline._build_chunk_metadata(  # noqa: SLF001
+            chunks,
+            relative_path="dup.txt",
+            git_commit="abc",
+        )
+
+
+def test_build_chunk_metadata_sequence_starts_at_one():
+    """Test that sequence numbers start at 1, not 0."""
+    chunk = types.SimpleNamespace(text="content", index=0, uid="uid-1", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk],
+        relative_path="file.txt",
+        git_commit="abc",
+    )
+
+    assert result[0].sequence == 1
+
+
+def test_build_chunk_metadata_uses_fallback_index():
+    """Test that missing index falls back to sequence-1."""
+    chunk_no_index = types.SimpleNamespace(text="content", uid="uid-1", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk_no_index],
+        relative_path="file.txt",
+        git_commit="abc",
+    )
+
+    # When index is missing, should use sequence-1 (which is 1-1=0)
+    assert result[0].index == 0
+
+
+def test_build_chunk_metadata_preserves_provided_index():
+    """Test that provided index is preserved even if it differs from sequence."""
+    chunk = types.SimpleNamespace(text="content", index=42, uid="uid-1", metadata=None)
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk],
+        relative_path="file.txt",
+        git_commit="abc",
+    )
+
+    assert result[0].index == 42
+    assert result[0].sequence == 1  # Sequence still starts at 1
+
+
+def test_build_chunk_metadata_with_special_characters_in_path():
+    """Test _build_chunk_metadata with special characters in relative_path."""
+    chunk = types.SimpleNamespace(text="content", index=0, uid="uid-1", metadata=None)
+    special_path = "docs/项目/file with spaces & symbols\\!.md"
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk],
+        relative_path=special_path,
+        git_commit="abc",
+    )
+
+    assert result[0].relative_path == special_path
+
+
+def test_build_chunk_metadata_with_long_git_commit():
+    """Test _build_chunk_metadata with full SHA git commit."""
+    chunk = types.SimpleNamespace(text="content", index=0, uid="uid-1", metadata=None)
+    long_commit = "a" * 40  # Full SHA-1 hash length
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        [chunk],
+        relative_path="file.txt",
+        git_commit=long_commit,
+    )
+
+    assert result[0].git_commit == long_commit
+
+
+def test_build_chunk_metadata_with_many_chunks():
+    """Test _build_chunk_metadata scales with many chunks."""
+    chunks = [
+        types.SimpleNamespace(text=f"chunk {i}", index=i, uid=f"uid-{i}", metadata=None)
+        for i in range(100)
+    ]
+
+    result = pipeline._build_chunk_metadata(  # noqa: SLF001
+        chunks,
+        relative_path="large.txt",
+        git_commit="abc",
+    )
+
+    assert len(result) == 100
+    assert result[0].sequence == 1
+    assert result[99].sequence == 100
+    assert all(r.uid == f"uid-{i}" for i, r in enumerate(result))
