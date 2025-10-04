@@ -1,0 +1,69 @@
+schema: 1
+story: "4.4"
+story_title: "QA Evaluator Module"
+gate: "PASS"
+status_reason: "Evaluator extraction preserves gating semantics, report generation, and documentation parity; unit, pipeline, and local-stack smoke suites all pass."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-04T00:29:50-04:00"
+quality_score: 100
+expires: "2025-10-18T00:29:50-04:00"
+waiver: { active: false }
+top_issues: []
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/qa/test_evaluator.py"
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/kg/test_pipeline.py"
+    - "PYTHONPATH=src pytest tests/integration/local_stack/test_minimal_path_smoke.py"
+  risks_identified:
+    - "TECH-001"
+    - "DATA-001"
+    - "OPS-001"
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+    notes: docs/stories/4.4.qa-evaluator.md
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new external interfaces; evaluator keeps existing sanitisation via scrub_object."
+  performance:
+    status: PASS
+    notes: "Extraction reuses prior queries and batching logic; no additional database calls introduced."
+  reliability:
+    status: PASS
+    notes: "Rollback wiring unchanged and verified via pipeline unit suite."
+  maintainability:
+    status: PASS
+    notes: "Module boundaries clarified with shared dataclasses and documented contracts."
+recommendations:
+  immediate: []
+  future: []
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 1
+    low: 1
+  highest:
+    id: TECH-001
+    score: 6
+    title: "QA gating drift"
+  recommendations:
+    must_fix:
+      - "Maintain evaluator and pipeline regression coverage plus smoke validation"
+    monitor:
+      - "Coordinate with report consumers before future schema changes"
+test_design:
+  scenarios_total: 8
+  by_level:
+    unit: 5
+    integration: 2
+    e2e: 1
+  by_priority:
+    p0: 4
+    p1: 3
+    p2: 1
+    p3: 0
+  coverage_gaps: []
+references:
+  story: docs/stories/4.4.qa-evaluator.md

@@ -1,0 +1,476 @@
+"""Ingestion QA evaluation helpers extracted from the KG pipeline."""
+
+from __future__ import annotations
+
+import json
+import math
+import statistics
+import time
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping, Protocol, Sequence
+
+from neo4j.exceptions import Neo4jError
+
+from _compat.structlog import get_logger
+from cli.sanitizer import scrub_object
+from fancyrag.utils.paths import ensure_directory, relative_to_repo
+
+logger = get_logger(__name__)
+
+
+class SemanticSummary(Protocol):
+    """Protocol describing the semantic QA summary required by the evaluator."""
+
+    enabled: bool
+    chunks_processed: int
+    chunk_failures: int
+    nodes_written: int
+    relationships_written: int
+    source_tag: str
+
+
+@dataclass
+class QaChunkRecord:
+    """Minimal chunk data required for QA evaluation."""
+
+    uid: str
+    checksum: str
+    text: str
+
+
+@dataclass
+class QaSourceRecord:
+    """Aggregated ingestion artifact metadata for a single source."""
+
+    path: str
+    relative_path: str
+    document_checksum: str
+    git_commit: str | None
+    chunks: list[QaChunkRecord]
+    ingest_run_key: str | None = None
+
+
+@dataclass
+class QaThresholds:
+    """Threshold configuration controlling QA gating."""
+
+    max_missing_embeddings: int = 0
+    max_orphan_chunks: int = 0
+    max_checksum_mismatches: int = 0
+    max_semantic_failures: int = 0
+    max_semantic_orphans: int = 0
+
+
+@dataclass
+class QaResult:
+    """Result payload produced by the ingestion QA evaluator."""
+
+    status: str
+    summary: str
+    metrics: dict[str, Any]
+    anomalies: list[str]
+    thresholds: QaThresholds
+    report_json: str
+    report_markdown: str
+    timestamp: datetime
+    version: str
+    duration_ms: int
+
+    @property
+    def passed(self) -> bool:
+        """Return True when the QA evaluation passed."""
+
+        return self.status == "pass"
+
+
+def collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
+    """Return counts of Documents, Chunks, and HAS_CHUNK relationships from Neo4j."""
+
+    queries = {
+        "documents": "MATCH (:Document) RETURN count(*) AS value",
+        "chunks": "MATCH (:Chunk) RETURN count(*) AS value",
+        "relationships": "MATCH (:Document)-[:HAS_CHUNK]->(:Chunk) RETURN count(*) AS value",
+    }
+    counts: dict[str, int] = {}
+    for key, query in queries.items():
+        try:
+            result = driver.execute_query(query, database_=database)
+            records = result
+            if isinstance(result, tuple):
+                records = result[0]
+            else:
+                records = getattr(result, "records", result)
+            if not records:
+                continue
+            record = records[0]
+            if isinstance(record, Mapping):
+                value = record.get("value")
+            elif hasattr(record, "value"):
+                value = getattr(record, "value")
+            else:
+                try:
+                    value = record[0]  # type: ignore[index]
+                except Exception:  # pragma: no cover - defensive guard
+                    value = None
+            counts[key] = int(value or 0)
+        except Neo4jError:
+            logger.warning("kg_build.count_failed", query=key)
+    return counts
+
+
+class IngestionQaEvaluator:
+    """Compute ingestion quality metrics and enforce gating thresholds."""
+
+    TOKEN_BINS = (64, 128, 256, 512, 1024, 2048)
+
+    def __init__(
+        self,
+        *,
+        driver,
+        database: str | None,
+        sources: Sequence[QaSourceRecord],
+        thresholds: QaThresholds,
+        report_root: Path,
+        report_version: str,
+        semantic_summary: SemanticSummary | None = None,
+    ) -> None:
+        self._driver = driver
+        self._database = database
+        self._sources = list(sources)
+        self._thresholds = thresholds
+        self._report_root = report_root
+        self._report_version = report_version
+        self._semantic_summary = semantic_summary
+
+    def evaluate(self) -> QaResult:
+        """Evaluate ingestion QA metrics and emit reports."""
+
+        eval_start = time.perf_counter()
+        timestamp = datetime.now(timezone.utc)
+        metrics: dict[str, Any] = {}
+        anomalies: list[str] = []
+
+        chunk_uids = [chunk.uid for record in self._sources for chunk in record.chunks]
+
+        counts = collect_counts(self._driver, database=self._database)
+        metrics["graph_counts"] = counts
+
+        if chunk_uids:
+            missing_embeddings = self._query_value(
+                """
+                UNWIND $uids AS uid
+                MATCH (c:Chunk {uid: uid})
+                WHERE c.embedding IS NULL OR size(c.embedding) = 0
+                RETURN count(*) AS value
+                """,
+                {"uids": chunk_uids},
+            )
+            orphan_chunks = self._query_value(
+                """
+                UNWIND $uids AS uid
+                MATCH (c:Chunk {uid: uid})
+                WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) )
+                RETURN count(*) AS value
+                """,
+                {"uids": chunk_uids},
+            )
+        else:
+            missing_embeddings = 0
+            orphan_chunks = 0
+
+        chunk_rows = [
+            {"uid": chunk.uid, "checksum": chunk.checksum}
+            for record in self._sources
+            for chunk in record.chunks
+        ]
+        if chunk_rows:
+            checksum_mismatches = self._query_value(
+                """
+                UNWIND $rows AS row
+                MATCH (c:Chunk {uid: row.uid})
+                WHERE c.checksum <> row.checksum
+                RETURN count(*) AS value
+                """,
+                {"rows": chunk_rows},
+            )
+        else:
+            checksum_mismatches = 0
+
+        metrics["missing_embeddings"] = missing_embeddings
+        metrics["orphan_chunks"] = orphan_chunks
+        metrics["checksum_mismatches"] = checksum_mismatches
+
+        totals = self._compute_totals()
+        metrics.update(totals)
+
+        if self._semantic_summary and self._semantic_summary.enabled:
+            semantic_metrics: dict[str, Any] = {
+                "chunks_processed": self._semantic_summary.chunks_processed,
+                "chunk_failures": self._semantic_summary.chunk_failures,
+                "nodes_written": self._semantic_summary.nodes_written,
+                "relationships_written": self._semantic_summary.relationships_written,
+            }
+            semantic_metrics.update(self._collect_semantic_counts())
+            metrics["semantic"] = semantic_metrics
+            if (
+                semantic_metrics.get("chunk_failures", 0)
+                > self._thresholds.max_semantic_failures
+            ):
+                anomalies.append(
+                    "semantic_chunk_failures="
+                    f"{semantic_metrics.get('chunk_failures', 0)} exceeds max"
+                    f" {self._thresholds.max_semantic_failures}"
+                )
+            if (
+                semantic_metrics.get("orphan_entities", 0)
+                > self._thresholds.max_semantic_orphans
+            ):
+                anomalies.append(
+                    "semantic_orphan_entities="
+                    f"{semantic_metrics.get('orphan_entities', 0)} exceeds max"
+                    f" {self._thresholds.max_semantic_orphans}"
+                )
+
+        per_file = [
+            {
+                "relative_path": record.relative_path,
+                "git_commit": record.git_commit,
+                "document_checksum": record.document_checksum,
+                "chunks": len(record.chunks),
+            }
+            for record in self._sources
+        ]
+        metrics["files"] = per_file
+
+        if missing_embeddings > self._thresholds.max_missing_embeddings:
+            anomalies.append(
+                f"missing_embeddings={missing_embeddings} exceeds max {self._thresholds.max_missing_embeddings}"
+            )
+        if orphan_chunks > self._thresholds.max_orphan_chunks:
+            anomalies.append(
+                f"orphan_chunks={orphan_chunks} exceeds max {self._thresholds.max_orphan_chunks}"
+            )
+        if checksum_mismatches > self._thresholds.max_checksum_mismatches:
+            anomalies.append(
+                f"checksum_mismatches={checksum_mismatches} exceeds max {self._thresholds.max_checksum_mismatches}"
+            )
+
+        status = "pass" if not anomalies else "fail"
+        summary = (
+            f"QA {status.upper()}: missing_embeddings={missing_embeddings}, "
+            f"orphan_chunks={orphan_chunks}, checksum_mismatches={checksum_mismatches}"
+        )
+
+        report_dir = self._report_root / timestamp.strftime("%Y%m%dT%H%M%S")
+        json_path = report_dir / "quality_report.json"
+        md_path = report_dir / "quality_report.md"
+        ensure_directory(json_path)
+
+        payload = {
+            "version": self._report_version,
+            "generated_at": timestamp.isoformat(),
+            "status": status,
+            "summary": summary,
+            "metrics": metrics,
+            "thresholds": asdict(self._thresholds),
+            "anomalies": anomalies,
+        }
+        eval_duration_ms = int((time.perf_counter() - eval_start) * 1000)
+        metrics["qa_evaluation_ms"] = eval_duration_ms
+
+        sanitized_payload = scrub_object(payload)
+        json_path.write_text(json.dumps(sanitized_payload, indent=2), encoding="utf-8")
+        md_path.write_text(self._render_markdown(sanitized_payload), encoding="utf-8")
+
+        report_json_rel = relative_to_repo(json_path)
+        report_md_rel = relative_to_repo(md_path)
+
+        return QaResult(
+            status=status,
+            summary=summary,
+            metrics=metrics,
+            anomalies=anomalies,
+            thresholds=self._thresholds,
+            report_json=report_json_rel,
+            report_markdown=report_md_rel,
+            timestamp=timestamp,
+            version=self._report_version,
+            duration_ms=eval_duration_ms,
+        )
+
+    def _collect_semantic_counts(self) -> dict[str, int]:
+        """Collect semantic enrichment counts from Neo4j when enrichment is enabled."""
+
+        if not self._semantic_summary or not self._semantic_summary.enabled:
+            return {}
+        tag = self._semantic_summary.source_tag
+        node_count = self._query_value(
+            "MATCH (n) WHERE n.semantic_source = $source RETURN count(*) AS value",
+            {"source": tag},
+        )
+        relationship_count = self._query_value(
+            (
+                "MATCH ()-[r]->() WHERE r.semantic_source = $source "
+                "RETURN count(*) AS value"
+            ),
+            {"source": tag},
+        )
+        orphan_count = self._query_value(
+            (
+                "MATCH (n) WHERE n.semantic_source = $source AND NOT (n)--() "
+                "RETURN count(*) AS value"
+            ),
+            {"source": tag},
+        )
+        return {
+            "nodes_in_db": node_count,
+            "relationships_in_db": relationship_count,
+            "orphan_entities": orphan_count,
+        }
+
+    def _compute_totals(self) -> dict[str, Any]:
+        """Compute aggregate counts and summary statistics for all provided QA sources."""
+
+        chunk_texts = [chunk.text for record in self._sources for chunk in record.chunks]
+        chunk_lengths = [len(text) for text in chunk_texts]
+        token_estimates = [self._estimate_tokens(text) for text in chunk_texts]
+
+        histogram = self._token_histogram(token_estimates)
+
+        return {
+            "files_processed": len(self._sources),
+            "chunks_processed": len(chunk_texts),
+            "token_estimate": {
+                "total": sum(token_estimates),
+                "max": max(token_estimates) if token_estimates else 0,
+                "mean": statistics.fmean(token_estimates) if token_estimates else 0.0,
+                "histogram": histogram,
+            },
+            "char_lengths": {
+                "total": sum(chunk_lengths),
+                "max": max(chunk_lengths) if chunk_lengths else 0,
+                "mean": statistics.fmean(chunk_lengths) if chunk_lengths else 0.0,
+            },
+        }
+
+    def _token_histogram(self, token_counts: Sequence[int]) -> dict[str, int]:
+        """Create a histogram of token counts grouped into predefined bins."""
+
+        buckets = {self._bucket_label(None, upper): 0 for upper in self.TOKEN_BINS}
+        buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] = 0
+        for count in token_counts:
+            placed = False
+            for upper in self.TOKEN_BINS:
+                if count <= upper:
+                    buckets[self._bucket_label(None, upper)] += 1
+                    placed = True
+                    break
+            if not placed:
+                buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] += 1
+        return buckets
+
+    @staticmethod
+    def _bucket_label(lower: int | None, upper: int | None) -> str:
+        """Format a human-readable label for a histogram bucket."""
+
+        if lower is None and upper is not None:
+            return f"<= {upper}"
+        if lower is not None and upper is None:
+            return f"> {lower}"
+        if lower is None and upper is None:
+            return "unknown"
+        return f"{lower + 1}-{upper}"
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Estimate token count using a simple character ratio heuristic."""
+
+        if not text:
+            return 0
+        return max(1, math.ceil(len(text) / 4))
+
+    def _query_value(self, query: str, parameters: Mapping[str, Any]) -> int:
+        """Execute `query` and extract an integer `value` result."""
+
+        if not self._sources:
+            return 0
+        result = self._driver.execute_query(query, parameters, database_=self._database)
+        records = result[0] if isinstance(result, tuple) else result
+        if not records:
+            return 0
+        record = records[0]
+        if isinstance(record, Mapping):
+            value = record.get("value")
+        elif hasattr(record, "value"):
+            value = getattr(record, "value")
+        else:
+            try:
+                value = record[0]  # type: ignore[index]
+            except (IndexError, TypeError):
+                value = None
+        return int(value or 0)
+
+    def _render_markdown(self, payload: Mapping[str, Any]) -> str:
+        """Render an ingestion QA payload as a Markdown-formatted report."""
+
+        lines: list[str] = []
+        lines.append(f"# Ingestion QA Report ({payload['version']})")
+        lines.append("")
+        lines.append(f"- Generated: {payload['generated_at']}")
+        lines.append(f"- Status: {payload['status'].upper()}")
+        lines.append(f"- Summary: {payload['summary']}")
+        lines.append("")
+        metrics_obj = payload.get("metrics", {})
+        metrics = metrics_obj if isinstance(metrics_obj, Mapping) else {}
+        lines.append("## Metrics")
+        lines.append("")
+        token_stats_obj = metrics.get("token_estimate", {})
+        token_stats = token_stats_obj if isinstance(token_stats_obj, Mapping) else {}
+        lines.append(f"- Files processed: {metrics.get('files_processed', 0)}")
+        lines.append(f"- Chunks processed: {metrics.get('chunks_processed', 0)}")
+        lines.append(f"- Token estimate total: {token_stats.get('total', 0)}")
+        lines.append(f"- Token estimate mean: {round(token_stats.get('mean', 0.0), 2)}")
+        lines.append(f"- Missing embeddings: {metrics.get('missing_embeddings', 0)}")
+        lines.append(f"- Orphan chunks: {metrics.get('orphan_chunks', 0)}")
+        lines.append(f"- Checksum mismatches: {metrics.get('checksum_mismatches', 0)}")
+        lines.append("")
+        histogram = token_stats.get("histogram", {})
+        if isinstance(histogram, Mapping) and histogram:
+            lines.append("### Token Histogram")
+            lines.append("")
+            lines.append("| Bucket | Count |")
+            lines.append("| --- | ---: |")
+            for bucket, count in histogram.items():
+                lines.append(f"| {bucket} | {count} |")
+            lines.append("")
+        anomalies = payload.get("anomalies", [])
+        lines.append("## Findings")
+        lines.append("")
+        if anomalies:
+            for item in anomalies:
+                lines.append(f"- ❌ {item}")
+        else:
+            lines.append("- ✅ All thresholds satisfied")
+        lines.append("")
+        thresholds = payload.get("thresholds", {})
+        if isinstance(thresholds, Mapping) and thresholds:
+            lines.append("## Thresholds")
+            lines.append("")
+            for key, value in thresholds.items():
+                lines.append(f"- {key}: {value}")
+            lines.append("")
+        files = metrics.get("files", [])
+        if isinstance(files, Sequence) and not isinstance(files, (str, bytes)) and files:
+            lines.append("## Files")
+            lines.append("")
+            lines.append("| Relative Path | Chunks | Checksum | Git Commit |")
+            lines.append("| --- | ---: | --- | --- |")
+            for entry in files:
+                if isinstance(entry, Mapping):
+                    lines.append(
+                        f"| {entry.get('relative_path', '***')} | {entry.get('chunks', '***')} | {entry.get('document_checksum', '***')} | {entry.get('git_commit') or '-'} |"
+                    )
+            lines.append("")
+        return "\n".join(lines)

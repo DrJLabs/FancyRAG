@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import hashlib
 import importlib.util
 import json
-import math
 import os
 import re
 import shutil
-import statistics
 import subprocess
 import time
 from collections.abc import Iterable, Mapping, Sequence
@@ -30,28 +27,20 @@ from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
+from fancyrag.qa import (
+    IngestionQaEvaluator,
+    QaChunkRecord,
+    QaSourceRecord,
+    QaThresholds,
+    collect_counts as _collect_counts,
+)
 from fancyrag.splitters import CachingSplitterConfig, build_caching_splitter
-from fancyrag.utils.env import ensure_env
-
-
-@functools.lru_cache(maxsize=1)
-def _resolve_repo_root() -> Path | None:
-    """Return the repository root directory if git metadata is available."""
-
-    git_executable = shutil.which("git")
-    if git_executable is None:
-        return None
-    try:
-        result = subprocess.run(
-            [git_executable, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return None
-    root = result.stdout.strip()
-    return Path(root) if root else None
+from fancyrag.utils import (
+    ensure_directory as _ensure_directory,
+    ensure_env,
+    relative_to_repo as _relative_to_repo,
+    resolve_repo_root as _resolve_repo_root,
+)
 
 _PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
 
@@ -365,15 +354,6 @@ class ChunkMetadata:
 
 
 @dataclass
-class QaChunkRecord:
-    """Minimal chunk data required for QA evaluation."""
-
-    uid: str
-    checksum: str
-    text: str
-
-
-@dataclass
 class SemanticEnrichmentStats:
     """Aggregated metrics describing semantic enrichment output."""
 
@@ -395,506 +375,7 @@ class SemanticQaSummary:
     source_tag: str = SEMANTIC_SOURCE
 
 
-@dataclass
-class QaSourceRecord:
-    """Aggregated ingestion artifact metadata for a single source."""
 
-    path: str
-    relative_path: str
-    document_checksum: str
-    git_commit: str | None
-    chunks: list[QaChunkRecord]
-    ingest_run_key: str | None = None
-
-
-@dataclass
-class QaThresholds:
-    """Threshold configuration controlling QA gating."""
-
-    max_missing_embeddings: int = 0
-    max_orphan_chunks: int = 0
-    max_checksum_mismatches: int = 0
-    max_semantic_failures: int = 0
-    max_semantic_orphans: int = 0
-
-
-@dataclass
-class QaResult:
-    """Result payload produced by the ingestion QA evaluator."""
-
-    status: str
-    summary: str
-    metrics: dict[str, Any]
-    anomalies: list[str]
-    thresholds: QaThresholds
-    report_json: str
-    report_markdown: str
-    timestamp: datetime
-    version: str
-    duration_ms: int
-
-    @property
-    def passed(self) -> bool:
-        """
-        Indicates whether the QA evaluation passed.
-        
-        @returns:
-            `true` if `status` equals "pass", `false` otherwise.
-        """
-        return self.status == "pass"
-
-
-class IngestionQaEvaluator:
-    """Compute ingestion quality metrics and enforce gating thresholds."""
-
-    TOKEN_BINS = (64, 128, 256, 512, 1024, 2048)
-
-    def __init__(
-        self,
-        *,
-        driver,
-        database: str | None,
-        sources: Sequence[QaSourceRecord],
-        thresholds: QaThresholds,
-        report_root: Path,
-        report_version: str,
-        semantic_summary: SemanticQaSummary | None = None,
-    ) -> None:
-        """
-        Initialize the evaluator with the Neo4j driver, QA sources, thresholds, and report output settings.
-
-        Parameters:
-            database (str | None): Optional Neo4j database name to query for QA metrics; use the default database when None.
-            sources (Sequence[QaSourceRecord]): Sequence of QA source records describing ingested documents and their chunks to evaluate.
-            thresholds (QaThresholds): QA gating thresholds to apply when evaluating anomalies.
-            report_root (Path): Filesystem directory where JSON and Markdown QA reports will be written.
-            report_version (str): Version string to embed in generated QA reports.
-            semantic_summary (SemanticQaSummary | None): Optional semantic enrichment metrics collected during ingestion.
-
-        """
-        self._driver = driver
-        self._database = database
-        self._sources = list(sources)
-        self._thresholds = thresholds
-        self._report_root = report_root
-        self._report_version = report_version
-        self._semantic_summary = semantic_summary
-
-    def evaluate(self) -> QaResult:
-        """
-        Perform the ingestion QA evaluation across the provided sources and produce a QA result and report files.
-        
-        Queries the graph for chunk/document counts and specific anomaly counts (missing embeddings, orphan chunks, checksum mismatches), computes aggregate metrics per-source and totals, compares results against the configured thresholds, writes a sanitized JSON and Markdown QA report to the configured report directory, and records evaluation duration.
-        
-        Returns:
-            QaResult: Aggregated QA evaluation result containing status ("pass" or "fail"), human-readable summary, metrics dictionary, list of detected anomalies, used thresholds, paths to the generated JSON and Markdown reports (relative to the repository when possible), timestamp, report version, and evaluation duration in milliseconds.
-        """
-        eval_start = time.perf_counter()
-        timestamp = datetime.now(timezone.utc)
-        metrics: dict[str, Any] = {}
-        anomalies: list[str] = []
-
-        chunk_uids = [chunk.uid for record in self._sources for chunk in record.chunks]
-
-        counts = _collect_counts(self._driver, database=self._database)
-        metrics["graph_counts"] = counts
-
-        if chunk_uids:
-            missing_embeddings = self._query_value(
-                """
-                UNWIND $uids AS uid
-                MATCH (c:Chunk {uid: uid})
-                WHERE c.embedding IS NULL OR size(c.embedding) = 0
-                RETURN count(*) AS value
-                """,
-                {"uids": chunk_uids},
-            )
-            orphan_chunks = self._query_value(
-                """
-                UNWIND $uids AS uid
-                MATCH (c:Chunk {uid: uid})
-                WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) )
-                RETURN count(*) AS value
-                """,
-                {"uids": chunk_uids},
-            )
-        else:
-            missing_embeddings = 0
-            orphan_chunks = 0
-
-        chunk_rows = [
-            {"uid": chunk.uid, "checksum": chunk.checksum}
-            for record in self._sources
-            for chunk in record.chunks
-        ]
-        if chunk_rows:
-            checksum_mismatches = self._query_value(
-                """
-                UNWIND $chunks AS row
-                MATCH (c:Chunk {uid: row.uid})
-                WHERE coalesce(c.checksum, "") <> row.checksum
-                RETURN count(*) AS value
-                """,
-                {"chunks": chunk_rows},
-            )
-        else:
-            checksum_mismatches = 0
-
-        metrics["missing_embeddings"] = missing_embeddings
-        metrics["orphan_chunks"] = orphan_chunks
-        metrics["checksum_mismatches"] = checksum_mismatches
-
-        totals = self._compute_totals()
-        metrics.update(totals)
-
-        if self._semantic_summary and self._semantic_summary.enabled:
-            semantic_metrics: dict[str, Any] = {
-                "chunks_processed": self._semantic_summary.chunks_processed,
-                "chunk_failures": self._semantic_summary.chunk_failures,
-                "nodes_written": self._semantic_summary.nodes_written,
-                "relationships_written": self._semantic_summary.relationships_written,
-            }
-            semantic_metrics.update(self._collect_semantic_counts())
-            metrics["semantic"] = semantic_metrics
-            if (
-                semantic_metrics.get("chunk_failures", 0)
-                > self._thresholds.max_semantic_failures
-            ):
-                anomalies.append(
-                    "semantic_chunk_failures="
-                    f"{semantic_metrics.get('chunk_failures', 0)} exceeds max"
-                    f" {self._thresholds.max_semantic_failures}"
-                )
-            if (
-                semantic_metrics.get("orphan_entities", 0)
-                > self._thresholds.max_semantic_orphans
-            ):
-                anomalies.append(
-                    "semantic_orphan_entities="
-                    f"{semantic_metrics.get('orphan_entities', 0)} exceeds max"
-                    f" {self._thresholds.max_semantic_orphans}"
-                )
-
-        per_file = [
-            {
-                "relative_path": record.relative_path,
-                "git_commit": record.git_commit,
-                "document_checksum": record.document_checksum,
-                "chunks": len(record.chunks),
-            }
-            for record in self._sources
-        ]
-        metrics["files"] = per_file
-
-        if missing_embeddings > self._thresholds.max_missing_embeddings:
-            anomalies.append(
-                f"missing_embeddings={missing_embeddings} exceeds max {self._thresholds.max_missing_embeddings}"
-            )
-        if orphan_chunks > self._thresholds.max_orphan_chunks:
-            anomalies.append(
-                f"orphan_chunks={orphan_chunks} exceeds max {self._thresholds.max_orphan_chunks}"
-            )
-        if checksum_mismatches > self._thresholds.max_checksum_mismatches:
-            anomalies.append(
-                f"checksum_mismatches={checksum_mismatches} exceeds max {self._thresholds.max_checksum_mismatches}"
-            )
-
-        status = "pass" if not anomalies else "fail"
-        summary = (
-            f"QA {status.upper()}: missing_embeddings={missing_embeddings}, "
-            f"orphan_chunks={orphan_chunks}, checksum_mismatches={checksum_mismatches}"
-        )
-
-        report_dir = self._report_root / timestamp.strftime("%Y%m%dT%H%M%S")
-        json_path = report_dir / "quality_report.json"
-        md_path = report_dir / "quality_report.md"
-        _ensure_directory(json_path)
-
-        payload = {
-            "version": self._report_version,
-            "generated_at": timestamp.isoformat(),
-            "status": status,
-            "summary": summary,
-            "metrics": metrics,
-            "thresholds": asdict(self._thresholds),
-            "anomalies": anomalies,
-        }
-        eval_duration_ms = int((time.perf_counter() - eval_start) * 1000)
-        metrics["qa_evaluation_ms"] = eval_duration_ms
-
-        sanitized_payload = scrub_object(payload)
-        json_path.write_text(json.dumps(sanitized_payload, indent=2), encoding="utf-8")
-        md_path.write_text(self._render_markdown(sanitized_payload), encoding="utf-8")
-
-        report_json_rel = _relative_to_repo(json_path)
-        report_md_rel = _relative_to_repo(md_path)
-
-        return QaResult(
-            status=status,
-            summary=summary,
-            metrics=metrics,
-            anomalies=anomalies,
-            thresholds=self._thresholds,
-            report_json=report_json_rel,
-            report_markdown=report_md_rel,
-            timestamp=timestamp,
-            version=self._report_version,
-            duration_ms=eval_duration_ms,
-        )
-
-    def _collect_semantic_counts(self) -> dict[str, int]:
-        """Collect semantic enrichment counts from Neo4j when enrichment is enabled."""
-
-        if not self._semantic_summary or not self._semantic_summary.enabled:
-            return {}
-        tag = self._semantic_summary.source_tag
-        node_count = self._query_value(
-            "MATCH (n) WHERE n.semantic_source = $source RETURN count(*) AS value",
-            {"source": tag},
-        )
-        relationship_count = self._query_value(
-            (
-                "MATCH ()-[r]->() WHERE r.semantic_source = $source "
-                "RETURN count(*) AS value"
-            ),
-            {"source": tag},
-        )
-        orphan_count = self._query_value(
-            (
-                "MATCH (n) WHERE n.semantic_source = $source AND NOT (n)--() "
-                "RETURN count(*) AS value"
-            ),
-            {"source": tag},
-        )
-        return {
-            "nodes_in_db": node_count,
-            "relationships_in_db": relationship_count,
-            "orphan_entities": orphan_count,
-        }
-
-    def _compute_totals(self) -> dict[str, Any]:
-        """
-        Compute aggregate counts and summary statistics for all provided QA sources.
-        
-        Returns:
-            totals (dict[str, Any]): Aggregate metrics including:
-                - files_processed (int): number of source records processed.
-                - chunks_processed (int): total number of chunks across all sources.
-                - token_estimate (dict): token-based statistics with keys:
-                    - total (int): sum of estimated tokens for all chunks.
-                    - max (int): largest token estimate for a single chunk.
-                    - mean (float): mean token estimate across chunks.
-                    - histogram (list[tuple[int, int]]): token histogram buckets as produced by `_token_histogram`.
-                - char_lengths (dict): character-length statistics with keys:
-                    - total (int): sum of character lengths for all chunks.
-                    - max (int): largest character length for a single chunk.
-                    - mean (float): mean character length across chunks.
-        """
-        chunk_texts = [chunk.text for record in self._sources for chunk in record.chunks]
-        chunk_lengths = [len(text) for text in chunk_texts]
-        token_estimates = [self._estimate_tokens(text) for text in chunk_texts]
-
-        histogram = self._token_histogram(token_estimates)
-
-        return {
-            "files_processed": len(self._sources),
-            "chunks_processed": len(chunk_texts),
-            "token_estimate": {
-                "total": sum(token_estimates),
-                "max": max(token_estimates) if token_estimates else 0,
-                "mean": statistics.fmean(token_estimates) if token_estimates else 0.0,
-                "histogram": histogram,
-            },
-            "char_lengths": {
-                "total": sum(chunk_lengths),
-                "max": max(chunk_lengths) if chunk_lengths else 0,
-                "mean": statistics.fmean(chunk_lengths) if chunk_lengths else 0.0,
-            },
-        }
-
-    def _token_histogram(self, token_counts: Sequence[int]) -> dict[str, int]:
-        """
-        Create a histogram of token counts grouped into the evaluator's predefined bins.
-        
-        Parameters:
-            token_counts (Sequence[int]): Sequence of token counts to bin.
-        
-        Returns:
-            dict[str, int]: Mapping from bucket label to the number of counts in that bucket.
-                Bucket labels represent inclusive upper-bound ranges for each configured bin
-                and a final open-ended bucket for counts greater than the highest bin.
-        """
-        buckets = {self._bucket_label(None, upper): 0 for upper in self.TOKEN_BINS}
-        buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] = 0
-        for count in token_counts:
-            placed = False
-            for upper in self.TOKEN_BINS:
-                if count <= upper:
-                    buckets[self._bucket_label(None, upper)] += 1
-                    placed = True
-                    break
-            if not placed:
-                buckets[self._bucket_label(self.TOKEN_BINS[-1], None)] += 1
-        return buckets
-
-    @staticmethod
-    def _bucket_label(lower: int | None, upper: int | None) -> str:
-        """
-        Format a human-readable label for an integer bucket defined by optional lower and upper bounds.
-        
-        Parameters:
-            lower (int | None): Lower bound of the bucket (None means unbounded below).
-            upper (int | None): Upper bound of the bucket (None means unbounded above).
-        
-        Returns:
-            str: A label describing the bucket:
-                - "`<= {upper}`" if only `upper` is provided,
-                - "`> {lower}`" if only `lower` is provided,
-                - `"unknown"` if both bounds are `None`,
-                - "`{lower+1}-{upper}`" when both bounds are provided.
-        """
-        if lower is None and upper is not None:
-            return f"<= {upper}"
-        if lower is not None and upper is None:
-            return f"> {lower}"
-        if lower is None and upper is None:
-            return "unknown"
-        return f"{lower + 1}-{upper}"
-
-    @staticmethod
-    def _estimate_tokens(text: str) -> int:
-        """
-        Estimate token count for a text using a simple character-to-token heuristic.
-        
-        Uses an approximate ratio of 4 characters per token and ensures non-empty text maps to at least 1 token.
-        
-        Returns:
-            Estimated number of tokens as an integer; `0` for empty input.
-        """
-        if not text:
-            return 0
-        # Rough heuristic assuming ~4 characters per token for mixed-language corpora.
-        return max(1, math.ceil(len(text) / 4))
-
-    def _query_value(self, query: str, parameters: Mapping[str, Any]) -> int:
-        """
-        Execute the given query against the evaluator's driver and return the first numeric result as an integer.
-        
-        Parameters:
-            query (str): Query string to execute.
-            parameters (Mapping[str, Any]): Parameters to pass to the query.
-        
-        Returns:
-            int: The integer value of the first result row's `"value"` field, or the first column if unnamed; returns 0 when there are no configured sources, no rows, or when the retrieved value is missing or not coercible to an integer.
-        """
-        if not self._sources:
-            return 0
-        result = self._driver.execute_query(query, parameters, database_=self._database)
-        records = result[0] if isinstance(result, tuple) else result
-        if not records:
-            return 0
-        record = records[0]
-        if isinstance(record, Mapping):
-            value = record.get("value")
-        elif hasattr(record, "value"):
-            value = getattr(record, "value")
-        else:
-            try:
-                value = record[0]  # type: ignore[index]
-            except (IndexError, TypeError):
-                value = None
-        return int(value or 0)
-
-    def _render_markdown(self, payload: Mapping[str, Any]) -> str:
-        """
-        Render an ingestion QA payload as a Markdown-formatted report.
-        
-        Parameters:
-            payload (Mapping[str, Any]): QA report payload containing keys such as
-                `version`, `generated_at`, `status`, `summary`, `metrics`, `anomalies`,
-                and `thresholds`. `metrics` may include `token_estimate`, `files_processed`,
-                `chunks_processed`, `missing_embeddings`, `orphan_chunks`, `checksum_mismatches`,
-                and a `files` sequence with per-file entries (`relative_path`, `chunks`,
-                `document_checksum`, `git_commit`).
-        
-        Returns:
-            str: A Markdown string summarizing the QA report, including top-line status,
-            metrics, an optional token histogram, findings (anomalies), thresholds, and a
-            per-file table when available.
-        """
-        lines: list[str] = []
-        lines.append(f"# Ingestion QA Report ({payload['version']})")
-        lines.append("")
-        lines.append(f"- Generated: {payload['generated_at']}")
-        lines.append(f"- Status: {payload['status'].upper()}")
-        lines.append(f"- Summary: {payload['summary']}")
-        lines.append("")
-        metrics_obj = payload.get("metrics", {})
-        metrics = metrics_obj if isinstance(metrics_obj, Mapping) else {}
-        lines.append("## Metrics")
-        lines.append("")
-        token_stats_obj = metrics.get("token_estimate", {})
-        token_stats = token_stats_obj if isinstance(token_stats_obj, Mapping) else {}
-        lines.append(
-            f"- Files processed: {metrics.get('files_processed', 0)}"
-        )
-        lines.append(
-            f"- Chunks processed: {metrics.get('chunks_processed', 0)}"
-        )
-        lines.append(
-            f"- Token estimate total: {token_stats.get('total', 0)}"
-        )
-        lines.append(
-            f"- Token estimate mean: {round(token_stats.get('mean', 0.0), 2)}"
-        )
-        lines.append(
-            f"- Missing embeddings: {metrics.get('missing_embeddings', 0)}"
-        )
-        lines.append(
-            f"- Orphan chunks: {metrics.get('orphan_chunks', 0)}"
-        )
-        lines.append(
-            f"- Checksum mismatches: {metrics.get('checksum_mismatches', 0)}"
-        )
-        lines.append("")
-        histogram = token_stats.get("histogram", {})
-        if isinstance(histogram, Mapping) and histogram:
-            lines.append("### Token Histogram")
-            lines.append("")
-            lines.append("| Bucket | Count |")
-            lines.append("| --- | ---: |")
-            for bucket, count in histogram.items():
-                lines.append(f"| {bucket} | {count} |")
-            lines.append("")
-        anomalies = payload.get("anomalies", [])
-        lines.append("## Findings")
-        lines.append("")
-        if anomalies:
-            for item in anomalies:
-                lines.append(f"- ❌ {item}")
-        else:
-            lines.append("- ✅ All thresholds satisfied")
-        lines.append("")
-        thresholds = payload.get("thresholds", {})
-        if isinstance(thresholds, Mapping) and thresholds:
-            lines.append("## Thresholds")
-            lines.append("")
-            for key, value in thresholds.items():
-                lines.append(f"- {key}: {value}")
-            lines.append("")
-        files = metrics.get("files", [])
-        if isinstance(files, Sequence) and not isinstance(files, (str, bytes)) and files:
-            lines.append("## Files")
-            lines.append("")
-            lines.append("| Relative Path | Chunks | Checksum | Git Commit |")
-            lines.append("| --- | ---: | --- | --- |")
-            for entry in files:
-                if isinstance(entry, Mapping):
-                    lines.append(
-                        f"| {entry.get('relative_path', '***')} | {entry.get('chunks', '***')} | {entry.get('document_checksum', '***')} | {entry.get('git_commit') or '-'} |"
-                    )
-            lines.append("")
-        return "\n".join(lines)
 def _load_default_schema(path: Path = DEFAULT_SCHEMA_PATH) -> GraphSchema:
     """
     Load and return the validated default GraphSchema from disk.
@@ -947,22 +428,6 @@ def _resolve_git_commit() -> str | None:
     commit = result.stdout.strip()
     return commit or None
 
-
-def _relative_to_repo(path: Path, *, base: Path | None = None) -> str:
-    """Return a stable relative path for the provided file."""
-
-    resolved = path.resolve()
-    for candidate in (base.resolve() if base else None, _resolve_repo_root(), Path.cwd()):
-        if candidate is None:
-            continue
-        try:
-            return str(resolved.relative_to(candidate))
-        except ValueError:
-            continue
-    try:
-        return str(resolved.relative_to(resolved.anchor))
-    except ValueError:  # pragma: no cover - defensive fallback
-        return resolved.as_posix()
 
 
 def _discover_source_files(directory: Path, patterns: Iterable[str]) -> list[Path]:
@@ -1387,17 +852,6 @@ def _ensure_non_negative(value: int, *, name: str) -> int:
         raise ValueError(f"{name} must be zero or positive")
     return validated
 
-
-def _ensure_directory(path: Path) -> None:
-    """
-    Ensure the parent directory of the given path exists by creating it if necessary.
-    
-    Parameters:
-    	path (Path): The filesystem path whose parent directory will be created.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-
 def _coerce_text(value: Any) -> str | None:
     """Best-effort conversion of heterogeneous content payloads to text."""
 
@@ -1662,50 +1116,6 @@ class SharedOpenAILLM(LLMInterface):
             system_instruction,
         )
 
-
-def _collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
-    """
-    Return counts of Document nodes, Chunk nodes, and HAS_CHUNK relationships from the Neo4j database.
-    
-    Queries three counts ("documents", "chunks", "relationships") against the provided driver and returns a mapping from those keys to integer counts. Keys are included only for queries that returned a usable result; a failed query will be skipped (logged) and not appear in the result.
-    
-    Parameters:
-        database (str | None): Optional database name to run the queries against. Use None for the driver's default database.
-    
-    Returns:
-        Mapping[str, int]: A mapping with any of the keys `"documents"`, `"chunks"`, and `"relationships"` mapped to their respective integer counts.
-    """
-
-    queries = {
-        "documents": "MATCH (:Document) RETURN count(*) AS value",
-        "chunks": "MATCH (:Chunk) RETURN count(*) AS value",
-        "relationships": "MATCH (:Document)-[:HAS_CHUNK]->(:Chunk) RETURN count(*) AS value",
-    }
-    counts: dict[str, int] = {}
-    for key, query in queries.items():
-        try:
-            result = driver.execute_query(query, database_=database)
-            records = result
-            if isinstance(result, tuple):
-                records = result[0]
-            else:
-                records = getattr(result, "records", result)
-            if not records:
-                continue
-            record = records[0]
-            if isinstance(record, Mapping):
-                value = record.get("value")
-            elif hasattr(record, "value"):
-                value = getattr(record, "value")
-            else:
-                try:
-                    value = record[0]  # type: ignore[index]
-                except Exception:  # pragma: no cover - defensive guard
-                    value = None
-            counts[key] = int(value or 0)
-        except Neo4jError:
-            logger.warning("kg_build.count_failed", query=key)
-    return counts
 
 
 def _reset_database(driver, *, database: str | None) -> None:
