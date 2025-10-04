@@ -12,13 +12,13 @@ from typing import Any, Mapping, Protocol, Sequence
 
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object
-from neo4j.exceptions import Neo4jError
 from fancyrag.db.neo4j_queries import (
     collect_counts,
     collect_semantic_counts,
     count_checksum_mismatches,
     count_missing_embeddings,
     count_orphan_chunks,
+    Neo4jError,
 )
 from fancyrag.qa.report import render_markdown, write_ingestion_report
 

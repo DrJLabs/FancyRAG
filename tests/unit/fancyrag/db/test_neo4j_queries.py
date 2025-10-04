@@ -3,7 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from neo4j.exceptions import Neo4jError
+
+try:  # pragma: no cover - exercised when neo4j optional dependency installed
+    from neo4j.exceptions import Neo4jError
+except ImportError:  # pragma: no cover - fallback to local definition
+    from fancyrag.db.neo4j_queries import Neo4jError
 
 from fancyrag.db.neo4j_queries import (
     collect_counts,
@@ -129,7 +133,20 @@ def test_collect_counts_handles_driver_errors():
     counts = collect_counts(driver, database="neo4j")
     # documents count succeeds, chunks fails (ignored), relationships succeeds
     assert counts["documents"] == 0
+    assert counts["chunks"] == 0
     assert counts["relationships"] == 0
+
+
+def test_collect_counts_returns_zero_for_empty_results():
+    driver = RecordingDriver(responses=[[], [], []])
+    counts = collect_counts(driver, database=None)
+    assert counts == {"documents": 0, "chunks": 0, "relationships": 0}
+
+
+def test_collect_counts_treats_none_as_zero():
+    driver = RecordingDriver(responses=[([{"value": None}],), ([{"value": None}],), ([{"value": None}],)])
+    counts = collect_counts(driver, database="neo4j")
+    assert counts == {"documents": 0, "chunks": 0, "relationships": 0}
 
 
 def test_count_helpers_return_zero_for_empty_inputs():

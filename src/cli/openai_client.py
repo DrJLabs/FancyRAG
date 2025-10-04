@@ -42,8 +42,9 @@ except ImportError:  # pragma: no cover - handled in tests without openai instal
     class RateLimitError(APIStatusError):
         """Fallback rate limit error."""
 
-        def __init__(self, message: str, *, response: Any = None) -> None:
+        def __init__(self, message: str, *, response: Any = None, body: Any = None) -> None:
             super().__init__(message, status_code=429, response=response)
+            self.body = body
 
     class OpenAI:  # type: ignore[no-redef]
         """Fallback OpenAI client raising ImportError on use."""

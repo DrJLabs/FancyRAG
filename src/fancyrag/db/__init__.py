@@ -2,6 +2,7 @@
 
 from .neo4j_queries import (
     ChunkMetadataLike,
+    Neo4jError,
     QaChunkRecordLike,
     QaSourceRecordLike,
     collect_counts,
@@ -16,6 +17,7 @@ from .neo4j_queries import (
 
 __all__ = [
     "ChunkMetadataLike",
+    "Neo4jError",
     "QaChunkRecordLike",
     "QaSourceRecordLike",
     "collect_counts",

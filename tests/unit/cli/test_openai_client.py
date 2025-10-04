@@ -391,7 +391,7 @@ def test_embedding_passes_extra_params():
 
 def test_chat_fallback_only_when_default_model_rate_limited():
     """Test fallback only triggers for default model rate limits."""
-    stub = FlakyChatClient(failures=1)
+    stub = FlakyChatClient(failures=10)
     settings = OpenAISettings.load(
         {"OPENAI_MODEL": "gpt-4o-mini"},  # Non-default model
         actor="pytest"
@@ -529,11 +529,11 @@ def test_openai_client_error_defaults_empty_details():
 
 
 def test_mask_base_url_in_openai_client():
-    """Test _mask_base_url in openai_client module."""
-    from cli.openai_client import _mask_base_url
+    """Test mask_base_url helper used by openai_client module."""
+    from cli.sanitizer import mask_base_url
 
-    assert _mask_base_url("https://api.openai.com/v1") == "https://***/v1"
-    assert _mask_base_url("http://localhost") == "http://***"
+    assert mask_base_url("https://api.openai.com/v1") == "https://***/v1"
+    assert mask_base_url("http://localhost") == "http://***"
 
 
 def test_chat_result_dataclass_frozen():

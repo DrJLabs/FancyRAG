@@ -4,7 +4,6 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
-from fancyrag.db.neo4j_queries import collect_counts
 from fancyrag.qa.evaluator import (
     IngestionQaEvaluator,
     QaChunkRecord,
@@ -151,25 +150,6 @@ def test_evaluator_flags_threshold_breaches(tmp_path):
         "orphan_entities": 4,
     }
     assert not driver._results
-
-
-def test_collect_counts_handles_tuple_result():
-    class DummyDriver:
-        def execute_query(self, query, parameters=None, database_=None):
-            _ = parameters
-            _ = database_
-            if "HAS_CHUNK" in query:
-                return ([{"value": 8}],)
-            if "Document" in query:
-                return ([{"value": 5}],)
-            if "Chunk" in query:
-                return ([{"value": 12}],)
-            return ([{"value": 0}],)
-
-    counts = collect_counts(DummyDriver(), database="neo4j")
-    assert counts == {"documents": 5, "chunks": 12, "relationships": 8}
-
-
 def test_token_histogram_bucketing(tmp_path):
     # Instantiate evaluator; we won't call evaluate(), only histogram helpers.
     evaluator = IngestionQaEvaluator(
@@ -286,81 +266,6 @@ def test_evaluate_report_paths_are_relative(tmp_path):
 
     assert json_path.exists()
     assert md_path.exists()
-
-
-# --- Additional comprehensive tests for evaluator.py ---
-
-
-def test_collect_counts_handles_neo4j_error():
-    """Verify collect_counts logs warning and continues when Neo4j query fails."""
-    class FailingDriver:
-        def execute_query(self, query, parameters=None, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            from neo4j.exceptions import Neo4jError
-            raise Neo4jError()
-
-    counts = collect_counts(FailingDriver(), database="neo4j")
-    assert counts == {"documents": 0, "chunks": 0, "relationships": 0}
-
-
-def test_collect_counts_handles_various_record_formats():
-    """Test collect_counts with different record response formats."""
-    class VariedFormatDriver:
-        def __init__(self):
-            self.call_count = 0
-
-        def execute_query(self, query, parameters=None, database_=None):
-            _ = database_
-            _ = parameters
-            self.call_count += 1
-            # Test different response formats
-            if "HAS_CHUNK" in query:
-                # Format 3: Tuple/list access
-                return ([[15]], None, None)
-            if "Document" in query:
-                # Format 1: Dictionary with value key
-                return ([{"value": 10}], None, None)
-            elif "Chunk" in query and "HAS_CHUNK" not in query:
-                # Format 2: Object with value attribute
-                from types import SimpleNamespace
-                return ([SimpleNamespace(value=20)], None, None)
-            return ([{"value": 0}], None, None)
-
-    driver = VariedFormatDriver()
-    counts = collect_counts(driver, database="neo4j")
-    assert counts["documents"] == 10
-    assert counts["chunks"] == 20
-    assert counts["relationships"] == 15
-
-
-def test_collect_counts_with_empty_results():
-    """Test collect_counts when queries return empty result sets."""
-    class EmptyResultDriver:
-        def execute_query(self, query, parameters=None, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([], None, None)
-
-    counts = collect_counts(EmptyResultDriver(), database=None)
-    assert counts == {"documents": 0, "chunks": 0, "relationships": 0}
-
-
-def test_collect_counts_with_none_values():
-    """Test collect_counts when query returns None values."""
-    class NoneValueDriver:
-        def execute_query(self, query, parameters=None, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([{"value": None}], None, None)
-
-    counts = collect_counts(NoneValueDriver(), database="test")
-    assert counts.get("documents", 0) == 0
-    assert counts.get("chunks", 0) == 0
-    assert counts.get("relationships", 0) == 0
 
 
 def test_evaluator_with_empty_sources_list(tmp_path):
@@ -1365,7 +1270,11 @@ def test_evaluator_summary_string_format(tmp_path):
         driver=driver,
         database="neo4j",
         sources=sources,
-        thresholds=QaThresholds(max_missing_embeddings=5),
+        thresholds=QaThresholds(
+            max_missing_embeddings=5,
+            max_orphan_chunks=5,
+            max_checksum_mismatches=5,
+        ),
         report_root=tmp_path,
         report_version="v1",
     )

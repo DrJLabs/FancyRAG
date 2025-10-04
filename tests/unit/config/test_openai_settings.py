@@ -267,15 +267,23 @@ def test_settings_enable_fallback_rejects_invalid():
         OpenAISettings.load(env, actor="pytest")
 
 
-def test_settings_insecure_flag_case_sensitive():
-    """Test OPENAI_ALLOW_INSECURE_BASE_URL is case-sensitive to true/false."""
-    # Only "true" and "false" (lowercase) should be accepted
-    env = {
-        "OPENAI_BASE_URL": "http://localhost:8000",
-        "OPENAI_ALLOW_INSECURE_BASE_URL": "TRUE"
-    }
-    with pytest.raises(ValueError, match="Use true/false"):
-        OpenAISettings.load(env, actor="pytest")
+def test_settings_insecure_flag_accepts_variants():
+    """Test OPENAI_ALLOW_INSECURE_BASE_URL accepts standard true/false variants."""
+    for true_val in ["true", "TRUE", "1", "yes", "YES", "on", "ON"]:
+        env = {
+            "OPENAI_BASE_URL": "http://localhost:8000",
+            "OPENAI_ALLOW_INSECURE_BASE_URL": true_val,
+        }
+        settings = OpenAISettings.load(env, actor="pytest")
+        assert settings.allow_insecure_base_url is True
+
+    for false_val in ["false", "FALSE", "0", "no", "NO", "off", "OFF"]:
+        env = {
+            "OPENAI_BASE_URL": "https://gateway.example.com",
+            "OPENAI_ALLOW_INSECURE_BASE_URL": false_val,
+        }
+        settings = OpenAISettings.load(env, actor="pytest")
+        assert settings.allow_insecure_base_url is False
 
 
 def test_settings_base_url_without_netloc_rejected():
@@ -362,13 +370,13 @@ def test_settings_backoff_fractional_seconds():
     assert settings.backoff_seconds == pytest.approx(0.123)
 
 
-def test_mask_base_url_in_settings_module():
-    """Test _mask_base_url function in settings module."""
-    from config.settings import _mask_base_url
+def test_mask_base_url_utility():
+    """Test shared mask_base_url helper redacts host information."""
+    from cli.sanitizer import mask_base_url
 
-    assert _mask_base_url("https://api.example.com/v1") == "https://***/v1"
-    assert _mask_base_url("http://localhost:8080") == "http://***"
-    assert _mask_base_url("invalid url") == "***"
+    assert mask_base_url("https://api.example.com/v1") == "https://***/v1"
+    assert mask_base_url("http://localhost:8080") == "http://***"
+    assert mask_base_url("invalid url") == "***"
 
 
 def test_settings_logging_on_successful_load():

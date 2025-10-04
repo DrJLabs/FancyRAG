@@ -74,6 +74,9 @@ def mask_base_url(value: str | None) -> str | None:
     except ValueError:
         return "***"
 
+    if not parsed.netloc:
+        return "***"
+
     scheme = parsed.scheme or "https"
     suffix = parsed.path.rstrip("/") if parsed.path else ""
     masked = f"{scheme}://***"

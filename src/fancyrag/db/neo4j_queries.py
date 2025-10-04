@@ -6,7 +6,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from neo4j.exceptions import Neo4jError
+try:  # pragma: no cover - exercised when neo4j optional dependency installed
+    from neo4j.exceptions import Neo4jError
+except ImportError:  # pragma: no cover - fallback for environments without neo4j
+    class Neo4jError(Exception):
+        """Fallback Neo4j error used when the driver is unavailable."""
+
 
 from _compat.structlog import get_logger
 
@@ -335,6 +340,7 @@ def _normalise_records(result: ValueResult) -> Sequence[Mapping[str, Any]]:
 
 
 __all__ = [
+    "Neo4jError",
     "ChunkMetadataLike",
     "QaChunkRecordLike",
     "QaSourceRecordLike",
