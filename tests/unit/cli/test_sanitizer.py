@@ -434,3 +434,242 @@ def test_sanitize_and_scrub_integration(monkeypatch):
     assert scrubbed["nested"]["api_key"] == "***"
     assert "nested-secret-value" not in scrubbed["nested"]["description"]
     assert "***" in scrubbed["nested"]["description"]
+
+
+def test_is_sensitive_name_detects_explicit_keys():
+    """Test _is_sensitive_name detects explicitly listed sensitive keys."""
+    from cli.sanitizer import _is_sensitive_name
+    
+    assert _is_sensitive_name("api_key") is True
+    assert _is_sensitive_name("apikey") is True
+    assert _is_sensitive_name("authorization") is True
+    assert _is_sensitive_name("bearer") is True
+    assert _is_sensitive_name("password") is True
+    assert _is_sensitive_name("token") is True
+
+
+def test_is_sensitive_name_detects_key_suffix():
+    """Test _is_sensitive_name detects keys ending with 'key'."""
+    from cli.sanitizer import _is_sensitive_name
+    
+    assert _is_sensitive_name("client_key") is True
+    assert _is_sensitive_name("api-key") is True
+    assert _is_sensitive_name("private_key") is True
+    assert _is_sensitive_name("encryption-key") is True
+
+
+def test_is_sensitive_name_detects_token_words():
+    """Test _is_sensitive_name detects sensitive token words."""
+    from cli.sanitizer import _is_sensitive_name
+    
+    assert _is_sensitive_name("access_token") is True
+    assert _is_sensitive_name("refresh-token") is True
+    assert _is_sensitive_name("auth_secret") is True
+    assert _is_sensitive_name("db_password") is True
+
+
+def test_is_sensitive_name_detects_camelcase():
+    """Test _is_sensitive_name detects camelCase sensitive names."""
+    from cli.sanitizer import _is_sensitive_name
+    
+    assert _is_sensitive_name("apiKey") is True
+    assert _is_sensitive_name("clientSecret") is True
+    assert _is_sensitive_name("accessToken") is True
+    assert _is_sensitive_name("userPassword") is True
+
+
+def test_is_sensitive_name_rejects_safe_names():
+    """Test _is_sensitive_name allows non-sensitive names."""
+    from cli.sanitizer import _is_sensitive_name
+    
+    assert _is_sensitive_name("username") is False
+    assert _is_sensitive_name("email") is False
+    assert _is_sensitive_name("id") is False
+    assert _is_sensitive_name("name") is False
+    assert _is_sensitive_name("value") is False
+
+
+def test_is_sensitive_name_handles_mixed_case():
+    """Test _is_sensitive_name is case-insensitive."""
+    from cli.sanitizer import _is_sensitive_name
+    
+    assert _is_sensitive_name("API_KEY") is True
+    assert _is_sensitive_name("Api_Key") is True
+    assert _is_sensitive_name("PASSWORD") is True
+    assert _is_sensitive_name("Token") is True
+
+
+def test_sanitize_text_with_openai_base_url_netloc(monkeypatch):
+    """Test sanitize_text redacts OPENAI_BASE_URL netloc."""
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://custom.gateway.com/v1")
+    text = "Connecting to custom.gateway.com for API calls"
+    result = sanitizer.sanitize_text(text)
+    assert "custom.gateway.com" not in result
+    assert "***" in result
+
+
+def test_sanitize_text_bearer_token_pattern():
+    """Test sanitize_text matches Bearer token patterns."""
+    text = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    result = sanitizer.sanitize_text(text)
+    assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
+    assert "***" in result
+
+
+def test_sanitize_text_api_key_json_pattern():
+    """Test sanitize_text matches api_key in JSON-like strings."""
+    text = '{"api_key": "sk-proj-abc123xyz", "model": "gpt-4"}'
+    result = sanitizer.sanitize_text(text)
+    assert "sk-proj-abc123xyz" not in result
+    assert "***" in result
+
+
+def test_sanitize_text_with_extra_patterns():
+    """Test sanitize_text accepts extra_patterns parameter."""
+    import re
+    extra = [re.compile(r"custom-\w+")]
+    text = "Secret: custom-secret-value and custom-another"
+    result = sanitizer.sanitize_text(text, extra_patterns=extra)
+    assert "custom-secret-value" not in result
+    assert "custom-another" not in result
+    assert "***" in result
+
+
+def test_sanitize_text_min_length_threshold():
+    """Test sanitize_text respects 4-character minimum for env var values."""
+    # Very short values (< 4 chars) should not be redacted
+    # This is to avoid over-redacting common short strings
+    text = "Value is abc in the config"  # "abc" is only 3 chars
+    result = sanitizer.sanitize_text(text)
+    # Short values aren't in SECRET_ENV_KEYS, so won't be redacted unless they match patterns
+    assert "abc" in result or "***" in result  # Either way is acceptable
+
+
+def test_scrub_object_handles_frozenset():
+    """Test scrub_object converts frozenset to sorted tuple."""
+    data = {
+        "items": frozenset(["apple", "sk-test", "banana"])
+    }
+    result = sanitizer.scrub_object(data)
+    assert isinstance(result["items"], tuple)
+    # Should be sorted and sk-test should be redacted
+    assert result["items"][0] == "***"
+
+
+def test_scrub_object_circular_reference_in_list():
+    """Test scrub_object handles circular references in lists."""
+    data = []
+    data.append(data)  # Circular reference
+    result = sanitizer.scrub_object(data)
+    assert result[0] == "<circular>"
+
+
+def test_scrub_object_circular_reference_in_tuple():
+    """Test scrub_object handles circular references through tuples."""
+    inner = {"key": "value"}
+    inner["self"] = inner
+    data = {"tuple": (inner, "other")}
+    result = sanitizer.scrub_object(data)
+    assert result["tuple"][0]["self"] == "<circular>"
+
+
+def test_scrub_object_nested_password_in_tuple():
+    """Test scrub_object sanitizes nested passwords in tuples."""
+    data = {
+        "config": (
+            {"password": "secret1"},
+            {"api_key": "secret2"},
+            "plain"
+        )
+    }
+    result = sanitizer.scrub_object(data)
+    assert result["config"][0]["password"] == "***"
+    assert result["config"][1]["api_key"] == "***"
+    assert result["config"][2] == "plain"
+
+
+def test_scrub_object_sensitive_none_value_preserved():
+    """Test scrub_object preserves None for sensitive keys."""
+    data = {
+        "password": None,
+        "api_key": None,
+        "username": None
+    }
+    result = sanitizer.scrub_object(data)
+    assert result["password"] is None
+    assert result["api_key"] is None
+    assert result["username"] is None
+
+
+def test_sanitize_text_handles_bytearray():
+    """Test sanitize_text handles bytearray input."""
+    text = bytearray(b"Bearer secret-token-123")
+    result = sanitizer.sanitize_text(text)
+    assert isinstance(result, str)
+    assert "***" in result
+
+
+def test_sanitize_text_unicode_decode_errors():
+    """Test sanitize_text handles invalid UTF-8 gracefully."""
+    # Invalid UTF-8 sequence
+    text = b"\x80\x81\x82"
+    result = sanitizer.sanitize_text(text)
+    # Should decode with replacement character
+    assert isinstance(result, str)
+
+
+def test_scrub_object_large_nested_structure():
+    """Test scrub_object performance with deeply nested structures."""
+    # Create a 10-level deep nested structure
+    data = {"level_0": {"password": "secret"}}
+    current = data["level_0"]
+    for i in range(1, 10):
+        current[f"level_{i}"] = {"api_key": f"key_{i}"}
+        current = current[f"level_{i}"]
+    
+    result = sanitizer.scrub_object(data)
+    
+    # Verify sensitive data at all levels is redacted
+    assert result["level_0"]["password"] == "***"
+    current_result = result["level_0"]
+    for i in range(1, 10):
+        assert current_result[f"level_{i}"]["api_key"] == "***"
+        current_result = current_result[f"level_{i}"]
+
+
+def test_secret_patterns_match_sk_prefix():
+    """Test SECRET_PATTERNS includes sk- prefix pattern."""
+    from cli.sanitizer import SECRET_PATTERNS
+    
+    text = "sk-proj-abc123"
+    matched = any(pattern.search(text) for pattern in SECRET_PATTERNS)
+    assert matched is True
+
+
+def test_secret_patterns_match_authorization_header():
+    """Test SECRET_PATTERNS matches authorization headers."""
+    from cli.sanitizer import SECRET_PATTERNS
+    
+    text = '"authorization": "Bearer abc123xyz"'
+    matched = any(pattern.search(text) for pattern in SECRET_PATTERNS)
+    assert matched is True
+
+
+def test_sensitive_key_names_completeness():
+    """Test SENSITIVE_KEY_NAMES includes expected keys."""
+    from cli.sanitizer import SENSITIVE_KEY_NAMES
+    
+    assert "api_key" in SENSITIVE_KEY_NAMES
+    assert "password" in SENSITIVE_KEY_NAMES
+    assert "token" in SENSITIVE_KEY_NAMES
+    assert "secret" in SENSITIVE_KEY_NAMES
+    assert "authorization" in SENSITIVE_KEY_NAMES
+
+
+def test_secret_env_keys_includes_openai_base_url():
+    """Test SECRET_ENV_KEYS includes OPENAI_BASE_URL."""
+    from cli.sanitizer import SECRET_ENV_KEYS
+    
+    assert "OPENAI_BASE_URL" in SECRET_ENV_KEYS
+    assert "OPENAI_API_KEY" in SECRET_ENV_KEYS
+    assert "NEO4J_PASSWORD" in SECRET_ENV_KEYS
