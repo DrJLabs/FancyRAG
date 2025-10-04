@@ -12,6 +12,16 @@ from unittest import mock
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
+
+pytest.importorskip(
+    "qdrant_client",
+    reason="qdrant-client is required to exercise Qdrant export integration",
+)
+pytest.importorskip(
+    "qdrant_client.models",
+    reason="qdrant-client models module is required to exercise Qdrant export integration",
+)
+
 from neo4j.exceptions import Neo4jError
 import qdrant_client.models as qmodels
 

@@ -1,3 +1,10 @@
+import pytest
+
+pytest.importorskip(
+    "prometheus_client",
+    reason="prometheus_client is required to exercise telemetry metrics",
+)
+
 from prometheus_client import CollectorRegistry
 from _compat.structlog import capture_logs
 
