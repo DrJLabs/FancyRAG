@@ -190,7 +190,7 @@ class IngestionQaEvaluator:
                 """
                 UNWIND $rows AS row
                 MATCH (c:Chunk {uid: row.uid})
-                WHERE c.checksum <> row.checksum
+                WHERE coalesce(c.checksum, "") <> row.checksum
                 RETURN count(*) AS value
                 """,
                 {"rows": chunk_rows},
