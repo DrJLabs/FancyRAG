@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import functools
 import hashlib
 import importlib.util
@@ -16,7 +15,6 @@ import statistics
 import subprocess
 import time
 from collections.abc import Iterable, Mapping, Sequence
-from contextlib import contextmanager
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -32,6 +30,7 @@ from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
+from fancyrag.splitters import CachingSplitterConfig, build_caching_splitter
 from fancyrag.utils.env import ensure_env
 
 
@@ -351,87 +350,6 @@ class SourceSpec:
     relative_path: str
     text: str
     checksum: str
-
-
-class CachingFixedSizeSplitter(FixedSizeSplitter):
-    """Fixed-size splitter that caches results while yielding fresh chunk UIDs."""
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._blueprints: dict[str | tuple[str, ...], list[dict[str, Any]]] = {}
-        self._last_outputs: dict[str | tuple[str, ...], TextChunks] = {}
-        self._scope_stack: list[str | None] = []
-
-    @contextmanager
-    def scoped(self, scope: str | Path | None):
-        """Scope cache lookups to a specific source identifier."""
-
-        scope_id = str(scope) if scope is not None else None
-        self._scope_stack.append(scope_id)
-        try:
-            yield self
-        finally:
-            self._scope_stack.pop()
-
-    def _current_scope(self) -> str | None:
-        if not self._scope_stack:
-            return None
-        return self._scope_stack[-1]
-
-    def _cache_key(self, text: str | Sequence[str]) -> str | tuple[str, ...]:
-        if isinstance(text, str):
-            base_key: str | tuple[str, ...] = text
-        else:
-            base_key = tuple(text)
-        scope = self._current_scope()
-        if scope is None:
-            return base_key
-        if isinstance(base_key, tuple):
-            return (scope, *base_key)
-        return (scope, base_key)
-
-    async def run(
-        self, text: str | Sequence[str], config: Any | None = None
-    ) -> TextChunks:  # type: ignore[override]
-        if config is not None:
-            try:
-                return await super().run(text, config)
-            except (TypeError, ValidationError):  # pragma: no cover - fallback
-                return await super().run(text)
-
-        key = self._cache_key(text)
-        blueprint = self._blueprints.get(key)
-        if blueprint is None:
-            result = await super().run(text)
-            self._blueprints[key] = [
-                {
-                    "text": chunk.text,
-                    "index": chunk.index,
-                    "metadata": copy.deepcopy(getattr(chunk, "metadata", None)),
-                }
-                for chunk in result.chunks
-            ]
-            self._last_outputs[key] = result
-            return result
-
-        chunks: list[TextChunk] = []
-        for template in blueprint:
-            chunks.append(
-                TextChunk(
-                    text=template["text"],
-                    index=template["index"],
-                    metadata=copy.deepcopy(template["metadata"]),
-                    uid=str(uuid4()),
-                )
-            )
-        text_chunks = TextChunks(chunks=chunks)
-        self._last_outputs[key] = text_chunks
-        return text_chunks
-
-    def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
-        """Return the cached chunk result for ``text`` if available."""
-
-        return self._last_outputs.get(self._cache_key(text))
 
 
 @dataclass
@@ -1082,13 +1000,35 @@ def _build_chunk_metadata(
     relative_path: str,
     git_commit: str | None,
 ) -> list[ChunkMetadata]:
+    """
+    Builds per-chunk provenance metadata from a sequence of chunk-like objects.
+    
+    Each chunk object must have a `uid` attribute; `text` and `index` are read if present. The function computes a checksum from the chunk text and returns a list of ChunkMetadata with sequence order, index, uid, checksum, relative path, and git commit.
+    
+    Parameters:
+        chunks: An ordered sequence of objects representing chunks. Each object must expose a `uid` attribute; `text` and `index` attributes are optional.
+        relative_path: File path (relative to the repository or input base) to associate with each chunk's provenance.
+        git_commit: Git commit SHA to associate with each chunk's provenance, or `None` if unavailable.
+    
+    Returns:
+        A list of ChunkMetadata records, one per input chunk, preserving the input sequence.
+    
+    Raises:
+        ValueError: If any chunk lacks a `uid`, or if duplicate `uid` values are encountered.
+    """
     metadata: list[ChunkMetadata] = []
+    seen_uids: set[str] = set()
     for sequence, chunk in enumerate(chunks, start=1):
         text = getattr(chunk, "text", "") or ""
         index = getattr(chunk, "index", sequence - 1)
         uid = getattr(chunk, "uid", None)
         if uid is None:
             raise ValueError("chunk object missing uid; cannot attribute metadata")
+        if uid in seen_uids:
+            raise ValueError(
+                f"duplicate chunk uid detected while building metadata for ingestion: {uid}"
+            )
+        seen_uids.add(uid)
         metadata.append(
             ChunkMetadata(
                 uid=uid,
@@ -1975,7 +1915,23 @@ def _rollback_ingest(
 
 
 def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
-    """Build a knowledge graph using the supplied pipeline options."""
+    """
+    Orchestrates a knowledge-graph ingestion run using the provided pipeline options.
+    
+    Run the full pipeline for one or more source files: discover or read sources, chunk text,
+    call OpenAI services for embeddings and optional semantic extraction, write chunk and
+    semantic entities to Neo4j, perform ingestion QA, and produce a run log and QA reports.
+    
+    Parameters:
+        options (PipelineOptions): Configuration for the ingestion run (sources, chunking,
+            database and connection settings, QA thresholds, semantic enrichment options,
+            logging and output paths).
+    
+    Returns:
+        dict[str, Any]: A sanitized run log containing timestamps, status, duration, input
+        sizes, chunking settings, OpenAI and database metadata, counts, run identifiers,
+        per-file and per-chunk summaries, and optional semantic and QA sections.
+    """
 
     profile = options.profile or DEFAULT_PROFILE
     preset = PROFILE_PRESETS.get(profile, PROFILE_PRESETS[DEFAULT_PROFILE])
@@ -2044,7 +2000,8 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     shared_client = SharedOpenAIClient(settings)
     embedder = SharedOpenAIEmbedder(shared_client, settings)
     llm = SharedOpenAILLM(shared_client, settings)
-    splitter = CachingFixedSizeSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    splitter_config = CachingSplitterConfig(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    splitter = build_caching_splitter(splitter_config)
 
     uri = os.environ["NEO4J_URI"]
     auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])

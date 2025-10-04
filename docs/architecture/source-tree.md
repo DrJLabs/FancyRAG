@@ -71,7 +71,7 @@ neo4j-graphrag/
 The FancyRAG `kg_build.py` refactor is gradually introducing a structured package under `src/fancyrag/`:
 - ✅ `cli/kg_build_main.py` — CLI wiring for arguments and entrypoint (`scripts/kg_build.py` now delegates here).
 - ✅ `kg/pipeline.py` — Orchestration entrypoint exposing `PipelineOptions` and `run_pipeline()` for reuse.
-- `splitters/caching_fixed_size.py` — Standalone splitter implementation.
+- ✅ `splitters/caching_fixed_size.py` — Standalone splitter implementation exposing caching factories.
 - `qa/evaluator.py` and `qa/report.py` — QA metrics, thresholds, and reporting helpers.
 - `db/neo4j_queries.py` — Cypher query catalog and wrappers.
 - `config/schema.py` plus `utils/env.py` — Schema loading and environment utilities.
