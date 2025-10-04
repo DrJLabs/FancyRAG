@@ -19,9 +19,9 @@ from config.settings import (
 )
 from cli.telemetry import OpenAIMetrics, get_metrics
 from cli.utils import ensure_embedding_dimensions
+from cli.sanitizer import mask_base_url
 
 logger = get_logger(__name__)
-
 try:  # pragma: no cover - exercised in integration tests
     from openai import APIConnectionError, APIError, APIStatusError, OpenAI, RateLimitError
 except ImportError:  # pragma: no cover - handled in tests without openai installed
@@ -42,8 +42,9 @@ except ImportError:  # pragma: no cover - handled in tests without openai instal
     class RateLimitError(APIStatusError):
         """Fallback rate limit error."""
 
-        def __init__(self, message: str, *, response: Any = None) -> None:
+        def __init__(self, message: str, *, response: Any = None, body: Any = None) -> None:
             super().__init__(message, status_code=429, response=response)
+            self.body = body
 
     class OpenAI:  # type: ignore[no-redef]
         """Fallback OpenAI client raising ImportError on use."""
@@ -104,7 +105,15 @@ class SharedOpenAIClient:
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self._settings = settings
-        self._client = client or OpenAI()
+        client_kwargs: Dict[str, Any] = {}
+        if settings.api_base_url:
+            client_kwargs["base_url"] = settings.api_base_url
+            logger.info(
+                "openai.client.base_url_override",
+                actor=settings.actor,
+                base_url=mask_base_url(settings.api_base_url),
+            )
+        self._client = client or OpenAI(**client_kwargs)
         self._metrics = metrics or get_metrics()
         self._sleep_fn = sleep_fn
         self._clock = clock

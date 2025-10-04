@@ -1,12 +1,12 @@
 """QA utilities for FancyRAG."""
 
+from fancyrag.db.neo4j_queries import collect_counts
 from .evaluator import (
     IngestionQaEvaluator,
     QaChunkRecord,
     QaResult,
     QaSourceRecord,
     QaThresholds,
-    collect_counts,
 )
 from .report import (
     REPORT_JSON_FILENAME,

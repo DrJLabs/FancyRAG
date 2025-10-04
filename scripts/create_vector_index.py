@@ -21,11 +21,26 @@ from typing import Any, Mapping, Sequence
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError, Neo4jError
-from neo4j_graphrag.indexes import (
-    Neo4jIndexError,
-    create_vector_index,
-    retrieve_vector_index_info,
-)
+try:  # pragma: no branch - optional dependency guard
+    from neo4j_graphrag.indexes import (
+        Neo4jIndexError,
+        create_vector_index,
+        retrieve_vector_index_info,
+    )
+except Exception as exc:  # pragma: no cover - dependency missing in minimal environments
+    Neo4jIndexError = RuntimeError  # type: ignore[assignment]
+    _GRAPHRAG_IMPORT_ERROR = exc
+
+    def _require_graphrag(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError(
+            "neo4j_graphrag is required for vector index operations; install the neo4j-graphrag extra"
+        ) from _GRAPHRAG_IMPORT_ERROR
+
+    def create_vector_index(*args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        return _require_graphrag(*args, **kwargs)
+
+    def retrieve_vector_index_info(*args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        return _require_graphrag(*args, **kwargs)
 
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object

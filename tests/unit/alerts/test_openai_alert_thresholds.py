@@ -3,6 +3,13 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip(
+    "yaml",
+    reason="PyYAML is required to validate the OpenAI telemetry playbook",
+)
+
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]

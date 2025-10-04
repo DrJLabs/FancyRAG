@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from fancyrag.utils.env import load_project_dotenv
+from fancyrag.utils.paths import resolve_repo_root
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -35,3 +38,12 @@ def _load_pandas_stub() -> ModuleType:
 
 if "pandas" not in sys.modules:
     sys.modules["pandas"] = _load_pandas_stub()
+
+
+@pytest.fixture(autouse=True)
+def _clear_resolve_repo_root_cache():
+    """Ensure resolve_repo_root cache does not leak between tests."""
+
+    resolve_repo_root.cache_clear()
+    yield
+    resolve_repo_root.cache_clear()

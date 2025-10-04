@@ -29,7 +29,7 @@ Break the `scripts/kg_build.py` monolith into composable modules under `src/fanc
 3. ☐ **Story 4.3:** Relocate the caching splitter into `src/fancyrag/splitters/caching_fixed_size.py` with reusable configuration hooks (`docs/stories/4.3.caching-fixed-size-splitter.md`).
 4. ☐ **Story 4.4:** Separate QA evaluation logic into `src/fancyrag/qa/evaluator.py` and establish thresholds/totals utilities (`docs/stories/4.4.qa-evaluator.md`).
 5. ☑ **Story 4.5:** Create `src/fancyrag/qa/report.py` for JSON/Markdown reporting and wire it into the pipeline (`docs/stories/4.5.qa-report.md`).
-6. ☐ **Story 4.6:** Extract Neo4j query helpers into `src/fancyrag/db/neo4j_queries.py` and update call sites (`docs/stories/4.6.neo4j-queries.md`).
+6. ⏸ **Story 4.6 (On Hold):** Extract Neo4j query helpers into `src/fancyrag/db/neo4j_queries.py` and update call sites (`docs/stories/4.6.neo4j-queries.md`).
 7. ☐ **Story 4.7:** Stand up schema utilities under `src/fancyrag/config/schema.py` plus shared environment helpers in `src/fancyrag/utils/env.py` (`docs/stories/4.7.schema-and-env.md`).
 8. ☐ **Story 4.8:** Author module-level unit tests and an end-to-end CLI smoke validating parity with the legacy script (`docs/stories/4.8.tests-and-smoke.md`).
 

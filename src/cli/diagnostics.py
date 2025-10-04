@@ -23,7 +23,7 @@ from cli.openai_client import (
     OpenAIClientError,
     SharedOpenAIClient,
 )
-from cli.sanitizer import sanitize_text, scrub_object
+from cli.sanitizer import mask_base_url, sanitize_text, scrub_object
 from cli.telemetry import create_metrics
 from config.settings import (
     DEFAULT_BACKOFF_SECONDS,
@@ -223,8 +223,6 @@ def write_report(report: Dict[str, object], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     sanitized = scrub_object(report)
     path.write_text(json.dumps(sanitized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def run_workspace(root: Path, *, write: bool, output: Optional[Path]) -> int:
     """
     Run workspace dependency diagnostics, print findings, and optionally write a JSON report.
@@ -327,6 +325,10 @@ def run_openai_probe(
                 "max_attempts": None,
                 "backoff_seconds": None,
                 "fallback_enabled": None,
+                "base_url_override": None,
+                "base_url": None,
+                "base_url_masked": None,
+                "allow_insecure_base_url": None,
             }
         return {
             "chat_model": settings.chat_model,
@@ -336,6 +338,10 @@ def run_openai_probe(
             "max_attempts": settings.max_attempts,
             "backoff_seconds": settings.backoff_seconds,
             "fallback_enabled": settings.enable_fallback,
+            "base_url_override": settings.api_base_url is not None,
+            "base_url": settings.api_base_url,
+            "base_url_masked": mask_base_url(settings.api_base_url),
+            "allow_insecure_base_url": settings.allow_insecure_base_url,
         }
 
     artifacts_root = artifacts_dir or (root / DEFAULT_PROBE_REPORT_PATH.parent)

@@ -176,6 +176,31 @@ def test_openai_probe_cli_generates_artifacts(tmp_path):
     assert all("artifacts/" not in line for line in git_status.splitlines())
 
 
+def test_openai_probe_cli_requires_https_override(tmp_path):
+    repo = _initialise_repo(tmp_path)
+    extra_env = {"OPENAI_BASE_URL": "http://override.example.com"}
+    result = _run_probe(repo, extra_env=extra_env, arguments=["--skip-live"])
+
+    assert result.returncode == 1
+    report_path = repo / "artifacts" / "openai" / "probe.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "failed"
+    assert "OPENAI_BASE_URL must use https" in report["error"]["details"]["message"]
+
+
+def test_openai_probe_cli_reports_base_url_override(tmp_path):
+    repo = _initialise_repo(tmp_path)
+    extra_env = {"OPENAI_BASE_URL": "https://gateway.example.com/v1"}
+    result = _run_probe(repo, extra_env=extra_env, arguments=["--skip-live"])
+
+    assert result.returncode == 0, result.stderr
+    report_path = repo / "artifacts" / "openai" / "probe.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["settings"]["base_url_override"] is True
+    assert report["settings"]["base_url_masked"] == "https://***/v1"
+    assert "gateway.example.com" not in json.dumps(report)
+
+
 def _assert_matches_fixture(report_path: Path, metrics_path: Path) -> None:
     """
     Compare the generated probe JSON report and Prometheus metrics file to the corresponding fixtures after applying normalization.

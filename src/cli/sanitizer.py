@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlparse
 
 __all__ = [
     "SECRET_ENV_KEYS",
     "SECRET_PATTERNS",
     "SENSITIVE_KEY_NAMES",
+    "mask_base_url",
     "sanitize_text",
     "scrub_object",
 ]
@@ -22,6 +24,7 @@ SECRET_ENV_KEYS: frozenset[str] = frozenset(
         "NEO4J_PASSWORD",
         "NEO4J_BOLT_PASSWORD",
         "NEO4J_AUTH",
+        "OPENAI_BASE_URL",
     }
 )
 
@@ -59,6 +62,28 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
         "openai-organization",
     }
 )
+
+def mask_base_url(value: str | None) -> str | None:
+    """Return a redacted representation of a base URL for logging and telemetry."""
+
+    if not value:
+        return None
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return "***"
+
+    if not parsed.netloc:
+        return "***"
+
+    scheme = parsed.scheme or "https"
+    suffix = parsed.path.rstrip("/") if parsed.path else ""
+    masked = f"{scheme}://***"
+    if suffix:
+        masked = f"{masked}{suffix}"
+    return masked
+
 
 def _is_sensitive_name(name: str) -> bool:
     """Return True if a mapping or environment key name should be considered sensitive."""
@@ -111,6 +136,10 @@ def sanitize_text(text: Any, *, extra_patterns: Iterable[re.Pattern[str]] | None
             continue
         if _is_sensitive_name(key):
             values_to_mask.add(value)
+        if key == "OPENAI_BASE_URL":
+            parsed = urlparse(value)
+            if parsed.netloc:
+                values_to_mask.add(parsed.netloc)
 
     for value in sorted(values_to_mask, key=len, reverse=True):
         sanitized = sanitized.replace(value, "***")

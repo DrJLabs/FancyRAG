@@ -4,6 +4,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+pytest.importorskip(
+    "yaml",
+    reason="PyYAML is required to inspect the local stack compose definition",
+)
+
 import yaml
 
 COMPOSE_FILE = Path(__file__).resolve().parents[3] / "docker-compose.neo4j-qdrant.yml"
