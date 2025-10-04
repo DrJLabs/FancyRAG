@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fancyrag.utils.env import ensure_env
+from fancyrag.utils.env import ensure_env, load_project_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = PROJECT_ROOT / "docker-compose.neo4j-qdrant.yml"
@@ -108,6 +108,9 @@ def test_minimal_path_smoke() -> None:
         pytest.skip(
             "Minimal-path scripts not available (Story 2.5): " + ", ".join(sorted(missing_scripts))
         )
+
+    # Load .env values before copying `os.environ` so stack credentials are available.
+    load_project_dotenv()
 
     env = os.environ.copy()
     env["COMPOSE_FILE"] = str(COMPOSE_FILE)
