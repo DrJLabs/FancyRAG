@@ -1000,6 +1000,22 @@ def _build_chunk_metadata(
     relative_path: str,
     git_commit: str | None,
 ) -> list[ChunkMetadata]:
+    """
+    Builds per-chunk provenance metadata from a sequence of chunk-like objects.
+    
+    Each chunk object must have a `uid` attribute; `text` and `index` are read if present. The function computes a checksum from the chunk text and returns a list of ChunkMetadata with sequence order, index, uid, checksum, relative path, and git commit.
+    
+    Parameters:
+        chunks: An ordered sequence of objects representing chunks. Each object must expose a `uid` attribute; `text` and `index` attributes are optional.
+        relative_path: File path (relative to the repository or input base) to associate with each chunk's provenance.
+        git_commit: Git commit SHA to associate with each chunk's provenance, or `None` if unavailable.
+    
+    Returns:
+        A list of ChunkMetadata records, one per input chunk, preserving the input sequence.
+    
+    Raises:
+        ValueError: If any chunk lacks a `uid`, or if duplicate `uid` values are encountered.
+    """
     metadata: list[ChunkMetadata] = []
     seen_uids: set[str] = set()
     for sequence, chunk in enumerate(chunks, start=1):
@@ -1899,7 +1915,23 @@ def _rollback_ingest(
 
 
 def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
-    """Build a knowledge graph using the supplied pipeline options."""
+    """
+    Orchestrates a knowledge-graph ingestion run using the provided pipeline options.
+    
+    Run the full pipeline for one or more source files: discover or read sources, chunk text,
+    call OpenAI services for embeddings and optional semantic extraction, write chunk and
+    semantic entities to Neo4j, perform ingestion QA, and produce a run log and QA reports.
+    
+    Parameters:
+        options (PipelineOptions): Configuration for the ingestion run (sources, chunking,
+            database and connection settings, QA thresholds, semantic enrichment options,
+            logging and output paths).
+    
+    Returns:
+        dict[str, Any]: A sanitized run log containing timestamps, status, duration, input
+        sizes, chunking settings, OpenAI and database metadata, counts, run identifiers,
+        per-file and per-chunk summaries, and optional semantic and QA sections.
+    """
 
     profile = options.profile or DEFAULT_PROFILE
     preset = PROFILE_PRESETS.get(profile, PROFILE_PRESETS[DEFAULT_PROFILE])

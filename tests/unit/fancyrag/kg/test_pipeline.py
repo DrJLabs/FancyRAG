@@ -160,9 +160,31 @@ def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):
 
     class DummyEvaluator:
         def __init__(self, **kwargs):
+            """
+            Initialize the evaluator with optional threshold configuration.
+            
+            Parameters:
+                thresholds (optional): Threshold settings (e.g., dict or namespace) used to configure evaluation criteria; stored on the instance as `self.thresholds`.
+            """
             self.thresholds = kwargs.get("thresholds")
 
         def evaluate(self):
+            """
+            Return a fixed evaluation result representing a successful QA evaluation.
+            
+            Returns:
+                types.SimpleNamespace: An object with evaluation fields:
+                    - passed: `True`.
+                    - status: `"pass"`.
+                    - summary: empty dict.
+                    - version: `"v1"`.
+                    - report_json: `"{}"`.
+                    - report_markdown: `"# report"`.
+                    - thresholds: the evaluator's configured thresholds.
+                    - metrics: dict containing `"graph_counts": {}`.
+                    - anomalies: empty list.
+                    - duration_ms: `0`.
+            """
             return types.SimpleNamespace(
                 passed=True,
                 status="pass",
@@ -180,10 +202,26 @@ def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):
 
     class RecordingSplitter(CachingFixedSizeSplitter):
         def __init__(self, *args, **kwargs):
+            """
+            Initialize the splitter and prepare a counter for tracking run invocations per input key.
+            
+            Forwards all positional and keyword arguments to the base class initializer and creates
+            self.run_calls, a dict that maps input keys (strings) to the number of times `run` has been invoked for that key.
+            """
             super().__init__(*args, **kwargs)
             self.run_calls: dict[str, int] = {}
 
         async def run(self, text, config=None) -> pipeline.TextChunks:  # type: ignore[override]
+            """
+            Record and run the splitter for the given text, tracking how many times each input key is invoked.
+            
+            Parameters:
+                text (str | Sequence[str]): Input text or sequence of texts to split; used as the key for invocation counting.
+                config (optional): Optional splitter configuration passed through to the base run method.
+            
+            Returns:
+                pipeline.TextChunks: The chunks produced by the splitter for the given input.
+            """
             key = text if isinstance(text, str) else tuple(text)
             self.run_calls[key] = self.run_calls.get(key, 0) + 1
             return await super().run(text, config)
@@ -191,14 +229,43 @@ def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):
     splitter_holder: dict[str, RecordingSplitter] = {}
 
     def fake_build(config):
+        """
+        Create and return a RecordingSplitter configured from the provided config and save it into splitter_holder.
+        
+        Parameters:
+            config: An object with `chunk_size` and `chunk_overlap` attributes used to configure the splitter.
+        
+        Returns:
+            splitter: The created RecordingSplitter instance.
+        
+        Notes:
+            The created instance is stored in splitter_holder["instance"] as a side effect.
+        """
         splitter = RecordingSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
         splitter_holder["instance"] = splitter
         return splitter
 
     async def _warm_cache(splitter: RecordingSplitter, text: str):
+        """
+        Prime the splitter's cache by running it on the provided text.
+        
+        Parameters:
+            splitter (RecordingSplitter): Splitter instance whose cache should be populated for the given text.
+            text (str): Input text to process and store in the splitter's cache.
+        """
         await splitter.run(text)
 
     def fake_execute_pipeline(**kwargs):
+        """
+        Populate the provided splitter's cache using the given source text and return a fixed run identifier.
+        
+        Parameters:
+            splitter: The splitter instance whose cache will be warmed.
+            source_text (str): Text to process and populate the splitter's cache.
+        
+        Returns:
+            run_id (str): The fixed identifier "run-id".
+        """
         splitter = kwargs["splitter"]
         text = kwargs["source_text"]
         asyncio.run(_warm_cache(splitter, text))

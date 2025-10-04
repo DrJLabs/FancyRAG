@@ -22,6 +22,14 @@ def test_get_cached_returns_none_before_run() -> None:
 
 
 def test_run_refreshes_chunk_uids_on_reuse() -> None:
+    """
+    Ensure re-running the splitter in the same named scope returns a distinct Result object with identical chunk texts but newly generated chunk UIDs.
+    
+    This test:
+    - Warms the scope cache by running the splitter once.
+    - Retrieves the cached entry and runs the splitter again within the same scope.
+    - Asserts the two Result objects are different, the sequence of chunk texts is identical, and the sets of chunk UIDs are disjoint.
+    """
     splitter = CachingFixedSizeSplitter(chunk_size=200, chunk_overlap=0)
     text = "cached text"
 
