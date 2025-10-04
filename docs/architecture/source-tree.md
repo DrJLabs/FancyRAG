@@ -73,7 +73,7 @@ The FancyRAG `kg_build.py` refactor is gradually introducing a structured packag
 - ✅ `kg/pipeline.py` — Orchestration entrypoint exposing `PipelineOptions` and `run_pipeline()` for reuse.
 - ✅ `splitters/caching_fixed_size.py` — Standalone splitter implementation exposing caching factories.
 - ✅ `qa/evaluator.py` — QA thresholds, metrics aggregation, and report generation helpers extracted from the pipeline.
-- `qa/report.py` — Markdown/JSON formatting helpers (pending).
+- ✅ `qa/report.py` — Markdown/JSON formatting helpers shared by evaluator and pipeline.
 - ✅ `utils/paths.py` — Shared repository path helpers consumed by pipeline and QA modules.
 - `db/neo4j_queries.py` — Cypher query catalog and wrappers.
 - `config/schema.py` plus `utils/env.py` — Schema loading and environment utilities.

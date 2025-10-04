@@ -1,0 +1,73 @@
+schema: 1
+story: "4.5"
+story_title: "QA Report Module"
+gate: "PASS"
+status_reason: "Cache reset fixture and external qa_report_dir regression test resolve previous QA concerns; all ACs now have automated coverage."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-04T03:04:06-04:00"
+quality_score: 100
+expires: "2025-10-18T03:04:06-04:00"
+waiver: { active: false }
+top_issues: []
+
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/utils/test_paths.py tests/unit/scripts/test_kg_build.py::test_run_with_external_qa_report_dir"
+  risks_identified: []
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+    notes: docs/qa/assessments/4.5-test-design-20251004.md
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 0
+    low: 0
+  highest:
+    id: null
+    score: 0
+    title: ""
+  recommendations:
+    must_fix: []
+    monitor: []
+
+test_design:
+  scenarios_total: 6
+  by_level:
+    unit: 4
+    integration: 2
+    e2e: 0
+  by_priority:
+    p0: 5
+    p1: 1
+    p2: 0
+    p3: 0
+  coverage_gaps:
+    - "AC5 documentation updates validated via existing docs lint; no automated test coverage required"
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Sanitisation keeps QA artefacts free of sensitive paths."
+  performance:
+    status: PASS
+    notes: "Helper changes remain lightweight file operations."
+  reliability:
+    status: PASS
+    notes: "Collision-safe suffixing and regression coverage protect artefacts during reruns."
+  maintainability:
+    status: PASS
+    notes: "Cache reset fixture and regression test keep suite stable and documented."
+
+recommendations:
+  immediate: []
+  future: []
+
+references:
+  risk_profile: docs/qa/assessments/4.5-risk-20251004.md
+  test_design: docs/qa/assessments/4.5-test-design-20251004.md
+  story: docs/stories/4.5.qa-report.md
+  trace: docs/qa/assessments/4.5-trace-20251004.md
+  nfr_assessment: docs/qa/assessments/4.5-nfr-20251004.md

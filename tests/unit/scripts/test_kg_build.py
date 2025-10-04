@@ -783,7 +783,7 @@ def test_parse_args_overrides(tmp_path: pathlib.Path) -> None:
 def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
     """
     Verify directory ingestion includes specified text file types, excludes binary files, and records chunking and QA results.
-    
+
     Creates a temporary repository containing a Markdown file, a Python file, and a binary file, runs ingestion with include patterns for `**/*.md` and `**/*.py`, and asserts that the run completes with `source_mode` set to "directory", only the text files are ingested (binary skipped) with at least one chunk per file, pipeline instances and a Neo4j driver were created, the on-disk log matches the in-memory log structure, and the QA section reports `"status": "pass"`.
     """
     repo_dir = tmp_path / "repo"
@@ -880,6 +880,72 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
     assert "qa" in log
     qa_section = log["qa"]
     assert qa_section["status"] == "pass"
+
+
+def test_run_with_external_qa_report_dir(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001 - env fixture ensures auth vars
+    """Ensure qa_report_dir outside the repo produces absolute, on-disk report paths."""
+
+    source = tmp_path / "input.txt"
+    source.write_text("Example content", encoding="utf-8")
+    qa_dir = tmp_path / "qa-outside"
+    log_path = tmp_path / "log.json"
+
+    fake_client = FakeSharedClient()
+    pipelines: list[FakePipeline] = []
+    created_drivers: list[FakeDriver] = []
+
+    settings = kg_pipeline.OpenAISettings(
+        chat_model="gpt-4.1-mini",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=5,
+        embedding_dimensions_override=None,
+        actor="kg_build",
+        max_attempts=3,
+        backoff_seconds=0.5,
+        enable_fallback=True,
+    )
+
+    monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
+
+    def make_pipeline(**kwargs):
+        pipeline = FakePipeline(**kwargs)
+        pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", make_pipeline)
+
+    def driver_factory(*_args, **_kwargs):
+        driver = FakeDriver()
+        created_drivers.append(driver)
+        return driver
+
+    _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
+    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    log = kg.run(
+        [
+            "--source",
+            str(source),
+            "--qa-report-dir",
+            str(qa_dir),
+            "--log-path",
+            str(log_path),
+        ]
+    )
+
+    qa_section = log["qa"]
+    json_path = pathlib.Path(qa_section["report_json"])
+    markdown_path = pathlib.Path(qa_section["report_markdown"])
+
+    assert qa_section["status"] == "pass"
+    assert json_path.is_absolute()
+    assert markdown_path.is_absolute()
+    assert json_path.exists()
+    assert markdown_path.exists()
+    assert json_path.is_relative_to(qa_dir)
+    assert markdown_path.is_relative_to(qa_dir)
+    assert pipelines, "Expected pipeline to run"
+    assert created_drivers, "Expected driver factory to be used"
 
 
 def test_sanitize_property_value_handles_only_none() -> None:
