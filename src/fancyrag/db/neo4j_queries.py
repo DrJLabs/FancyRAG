@@ -318,7 +318,7 @@ def _extract_value(result: ValueResult) -> int:
     else:
         try:
             value = record[0]  # type: ignore[index]
-        except Exception:  # pragma: no cover - defensive guard
+        except (IndexError, TypeError):  # pragma: no cover - defensive guard
             value = None
     return int(value or 0)
 
@@ -327,7 +327,10 @@ def _normalise_records(result: ValueResult) -> Sequence[Mapping[str, Any]]:
     if isinstance(result, tuple):
         result = result[0]
     if hasattr(result, "records"):
-        return getattr(result, "records")
+        records = result.records  # type: ignore[attr-defined]
+        if callable(records):
+            return records()
+        return records
     return result
 
 

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
-from urllib.parse import urlparse
 
 from _compat.structlog import get_logger
 
@@ -20,21 +19,9 @@ from config.settings import (
 )
 from cli.telemetry import OpenAIMetrics, get_metrics
 from cli.utils import ensure_embedding_dimensions
+from cli.sanitizer import mask_base_url
 
 logger = get_logger(__name__)
-
-
-def _mask_base_url(value: str) -> str:
-    """Return a redacted representation of a base URL for logging."""
-
-    try:
-        parsed = urlparse(value)
-    except ValueError:
-        return "***"
-    scheme = parsed.scheme or "https"
-    suffix = parsed.path.rstrip("/") if parsed.path else ""
-    return f"{scheme}://***{suffix}" if suffix else f"{scheme}://***"
-
 try:  # pragma: no cover - exercised in integration tests
     from openai import APIConnectionError, APIError, APIStatusError, OpenAI, RateLimitError
 except ImportError:  # pragma: no cover - handled in tests without openai installed
@@ -123,7 +110,7 @@ class SharedOpenAIClient:
             logger.info(
                 "openai.client.base_url_override",
                 actor=settings.actor,
-                base_url=_mask_base_url(settings.api_base_url),
+                base_url=mask_base_url(settings.api_base_url),
             )
         self._client = client or OpenAI(**client_kwargs)
         self._metrics = metrics or get_metrics()

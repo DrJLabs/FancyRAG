@@ -11,6 +11,7 @@ __all__ = [
     "SECRET_ENV_KEYS",
     "SECRET_PATTERNS",
     "SENSITIVE_KEY_NAMES",
+    "mask_base_url",
     "sanitize_text",
     "scrub_object",
 ]
@@ -61,6 +62,25 @@ SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
         "openai-organization",
     }
 )
+
+def mask_base_url(value: str | None) -> str | None:
+    """Return a redacted representation of a base URL for logging and telemetry."""
+
+    if not value:
+        return None
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return "***"
+
+    scheme = parsed.scheme or "https"
+    suffix = parsed.path.rstrip("/") if parsed.path else ""
+    masked = f"{scheme}://***"
+    if suffix:
+        masked = f"{masked}{suffix}"
+    return masked
+
 
 def _is_sensitive_name(name: str) -> bool:
     """Return True if a mapping or environment key name should be considered sensitive."""

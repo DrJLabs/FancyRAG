@@ -16,7 +16,7 @@ def test_sanitize_text_redacts_openai_base_url(monkeypatch):
     sanitized = sanitizer.sanitize_text(text)
     assert "gateway.example.com" not in sanitized
     assert "https://gateway.example.com/v1" not in sanitized
-    assert sanitized.count("***") >= 2
+    assert sanitized.count("***") == 2
 
 
 def test_scrub_object_scrubs_sensitive_keys(monkeypatch):

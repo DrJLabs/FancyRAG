@@ -9,6 +9,7 @@ from typing import Mapping, Optional
 from urllib.parse import urlparse
 
 from _compat.structlog import get_logger
+from cli.sanitizer import mask_base_url
 
 logger = get_logger(__name__)
 
@@ -33,18 +34,18 @@ _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
 
 _VALID_BASE_SCHEMES = frozenset({"http", "https"})
+_TRUE_BOOL_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_BOOL_VALUES = frozenset({"0", "false", "no", "off"})
 
 
-def _mask_base_url(value: str) -> str:
-    """Return a redacted representation of a custom OpenAI base URL for logging."""
-
-    try:
-        parsed = urlparse(value)
-    except ValueError:
-        return "***"
-    scheme = parsed.scheme or "https"
-    suffix = parsed.path.rstrip("/") if parsed.path else ""
-    return f"{scheme}://***{suffix}" if suffix else f"{scheme}://***"
+def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_event: str) -> bool:
+    normalized = raw_value.lower()
+    if normalized in _TRUE_BOOL_VALUES:
+        return True
+    if normalized in _FALSE_BOOL_VALUES:
+        return False
+    logger.error(error_event, actor=actor_name, supplied=raw_value)
+    raise ValueError(f"Invalid {env_key} value '{raw_value}'. Use true/false.")
 
 
 @dataclass(frozen=True)
@@ -228,22 +229,15 @@ class OpenAISettings:
                 default_seconds=DEFAULT_BACKOFF_SECONDS,
             )
 
-        fallback_raw = (source.get(_ENV_OPENAI_ENABLE_FALLBACK) or "").strip().lower()
+        fallback_raw = (source.get(_ENV_OPENAI_ENABLE_FALLBACK) or "").strip()
         enable_fallback = DEFAULT_FALLBACK_ENABLED
         if fallback_raw:
-            if fallback_raw in {"1", "true", "yes", "on"}:
-                enable_fallback = True
-            elif fallback_raw in {"0", "false", "no", "off"}:
-                enable_fallback = False
-            else:
-                logger.error(
-                    "openai.settings.invalid_fallback",
-                    actor=actor_name,
-                    supplied=fallback_raw,
-                )
-                raise ValueError(
-                    f"Invalid {_ENV_OPENAI_ENABLE_FALLBACK} value '{fallback_raw}'. Use true/false."
-                )
+            enable_fallback = _parse_boolean_flag(
+                raw_value=fallback_raw,
+                env_key=_ENV_OPENAI_ENABLE_FALLBACK,
+                actor_name=actor_name,
+                error_event="openai.settings.invalid_fallback",
+            )
             logger.info(
                 "openai.settings.fallback_toggle",
                 actor=actor_name,
@@ -263,17 +257,12 @@ class OpenAISettings:
         allow_insecure_raw = (source.get(_ENV_OPENAI_ALLOW_INSECURE_BASE_URL) or "").strip()
         allow_insecure = False
         if allow_insecure_raw:
-            normalized = allow_insecure_raw.lower()
-            if normalized not in {"true", "false"}:
-                logger.error(
-                    "openai.settings.invalid_insecure_flag",
-                    actor=actor_name,
-                    supplied=allow_insecure_raw,
-                )
-                raise ValueError(
-                    f"Invalid {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL} value '{allow_insecure_raw}'. Use true/false."
-                )
-            allow_insecure = normalized == "true"
+            allow_insecure = _parse_boolean_flag(
+                raw_value=allow_insecure_raw,
+                env_key=_ENV_OPENAI_ALLOW_INSECURE_BASE_URL,
+                actor_name=actor_name,
+                error_event="openai.settings.invalid_insecure_flag",
+            )
             if allow_insecure:
                 logger.warning(
                     "openai.settings.insecure_flag_enabled",
@@ -293,7 +282,7 @@ class OpenAISettings:
                 logger.error(
                     "openai.settings.invalid_base_url",
                     actor=actor_name,
-                    supplied=_mask_base_url(base_url_raw),
+                    supplied=mask_base_url(base_url_raw),
                 )
                 raise ValueError(
                     f"Invalid {_ENV_OPENAI_BASE_URL} value '{base_url_raw}'. Provide an absolute http(s) URL."
@@ -303,7 +292,7 @@ class OpenAISettings:
                     logger.error(
                         "openai.settings.insecure_base_url",
                         actor=actor_name,
-                        supplied=_mask_base_url(base_url_raw),
+                        supplied=mask_base_url(base_url_raw),
                     )
                     raise ValueError(
                         f"{_ENV_OPENAI_BASE_URL} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
@@ -311,13 +300,13 @@ class OpenAISettings:
                 logger.warning(
                     "openai.settings.insecure_base_url_override",
                     actor=actor_name,
-                    base_url=_mask_base_url(base_url_raw),
+                    base_url=mask_base_url(base_url_raw),
                 )
             api_base_url = base_url_raw
             logger.info(
                 "openai.settings.base_url_override",
                 actor=actor_name,
-                base_url=_mask_base_url(api_base_url),
+                base_url=mask_base_url(api_base_url),
             )
 
         return cls(

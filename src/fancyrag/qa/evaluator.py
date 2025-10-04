@@ -12,6 +12,7 @@ from typing import Any, Mapping, Protocol, Sequence
 
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object
+from neo4j.exceptions import Neo4jError
 from fancyrag.db.neo4j_queries import (
     collect_counts,
     collect_semantic_counts,
@@ -121,20 +122,32 @@ class IngestionQaEvaluator:
 
         chunk_uids = [chunk.uid for record in self._sources for chunk in record.chunks]
 
-        counts = collect_counts(self._driver, database=self._database)
+        try:
+            counts = collect_counts(self._driver, database=self._database)
+        except Neo4jError as exc:
+            logger.warning("qa.metrics.counts_failed", error=str(exc))
+            counts = {"documents": 0, "chunks": 0, "relationships": 0}
         metrics["graph_counts"] = counts
 
         if chunk_uids:
-            missing_embeddings = count_missing_embeddings(
-                self._driver,
-                database=self._database,
-                chunk_uids=chunk_uids,
-            )
-            orphan_chunks = count_orphan_chunks(
-                self._driver,
-                database=self._database,
-                chunk_uids=chunk_uids,
-            )
+            try:
+                missing_embeddings = count_missing_embeddings(
+                    self._driver,
+                    database=self._database,
+                    chunk_uids=chunk_uids,
+                )
+            except Neo4jError as exc:
+                logger.warning("qa.metrics.missing_embeddings_failed", error=str(exc))
+                missing_embeddings = 0
+            try:
+                orphan_chunks = count_orphan_chunks(
+                    self._driver,
+                    database=self._database,
+                    chunk_uids=chunk_uids,
+                )
+            except Neo4jError as exc:
+                logger.warning("qa.metrics.orphan_chunks_failed", error=str(exc))
+                orphan_chunks = 0
         else:
             missing_embeddings = 0
             orphan_chunks = 0
@@ -145,11 +158,15 @@ class IngestionQaEvaluator:
             for chunk in record.chunks
         ]
         if chunk_rows:
-            checksum_mismatches = count_checksum_mismatches(
-                self._driver,
-                database=self._database,
-                chunk_rows=chunk_rows,
-            )
+            try:
+                checksum_mismatches = count_checksum_mismatches(
+                    self._driver,
+                    database=self._database,
+                    chunk_rows=chunk_rows,
+                )
+            except Neo4jError as exc:
+                logger.warning("qa.metrics.checksum_mismatches_failed", error=str(exc))
+                checksum_mismatches = 0
         else:
             checksum_mismatches = 0
 
@@ -261,9 +278,23 @@ class IngestionQaEvaluator:
         if not self._semantic_summary or not self._semantic_summary.enabled:
             return {}
         tag = self._semantic_summary.source_tag
-        return collect_semantic_counts(
-            self._driver, database=self._database, source_tag=tag
-        )
+        try:
+            return dict(
+                collect_semantic_counts(
+                    self._driver, database=self._database, source_tag=tag
+                )
+            )
+        except Neo4jError as exc:
+            logger.warning(
+                "qa.metrics.semantic_counts_failed",
+                error=str(exc),
+                source_tag=tag,
+            )
+            return {
+                "nodes_in_db": 0,
+                "relationships_in_db": 0,
+                "orphan_entities": 0,
+            }
 
     def _compute_totals(self) -> dict[str, Any]:
         """Compute aggregate counts and summary statistics for all provided QA sources."""

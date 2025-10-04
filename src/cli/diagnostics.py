@@ -16,7 +16,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
-from urllib.parse import urlparse
 
 from cli.openai_client import (
     ChatResult,
@@ -24,7 +23,7 @@ from cli.openai_client import (
     OpenAIClientError,
     SharedOpenAIClient,
 )
-from cli.sanitizer import sanitize_text, scrub_object
+from cli.sanitizer import mask_base_url, sanitize_text, scrub_object
 from cli.telemetry import create_metrics
 from config.settings import (
     DEFAULT_BACKOFF_SECONDS,
@@ -224,20 +223,6 @@ def write_report(report: Dict[str, object], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     sanitized = scrub_object(report)
     path.write_text(json.dumps(sanitized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _mask_base_url(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    try:
-        parsed = urlparse(value)
-    except ValueError:
-        return "***"
-    scheme = parsed.scheme or "https"
-    suffix = parsed.path.rstrip("/") if parsed.path else ""
-    return f"{scheme}://***{suffix}" if suffix else f"{scheme}://***"
-
-
 def run_workspace(root: Path, *, write: bool, output: Optional[Path]) -> int:
     """
     Run workspace dependency diagnostics, print findings, and optionally write a JSON report.
@@ -355,7 +340,7 @@ def run_openai_probe(
             "fallback_enabled": settings.enable_fallback,
             "base_url_override": settings.api_base_url is not None,
             "base_url": settings.api_base_url,
-            "base_url_masked": _mask_base_url(settings.api_base_url),
+            "base_url_masked": mask_base_url(settings.api_base_url),
             "allow_insecure_base_url": settings.allow_insecure_base_url,
         }
 

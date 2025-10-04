@@ -24,7 +24,7 @@ class RecordingDriver:
         self._responses = list(responses or [])
         self.calls: list[tuple[str, dict[str, object], str | None]] = []
 
-    def execute_query(self, query, parameters=None, database_=None):  # noqa: D401 - mirrors driver API
+    def execute_query(self, query, parameters=None, database_=None):
         params = dict(parameters or {})
         self.calls.append((" ".join(str(query).split()), params, database_))
         if self._responses:
