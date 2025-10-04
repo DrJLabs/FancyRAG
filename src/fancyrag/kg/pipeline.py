@@ -47,6 +47,14 @@ else:
     _NEO4J_IMPORT_ERROR = None
 
 
+def _noop_validate_call(func=None, **_kwargs):
+    """Return the wrapped function unchanged when validation is unavailable."""
+
+    if func is None:
+        return lambda wrapped: wrapped
+    return func
+
+
 def _neo4j_import_unavailable_message() -> str:
     """Return a helpful hint when the Neo4j driver cannot load optional dependencies."""
 
@@ -91,12 +99,7 @@ else:  # pragma: no cover - exercised only in minimal CI environments
         """Fallback validation error when pydantic is unavailable."""
 
 
-    def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
-        """Simplified validate_call decorator that returns the function unchanged."""
-
-        if func is None:
-            return lambda wrapped: wrapped
-        return func
+    validate_call = _noop_validate_call  # type: ignore[assignment]
 
 def _module_available(name: str) -> bool:
     try:
@@ -258,13 +261,7 @@ else:  # pragma: no cover - exercised only in minimal CI environments
             return len(self.chunks)
 
     if _PYDANTIC_AVAILABLE:
-
-        def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
-            """Fallback validate_call when neo4j_graphrag dependencies are unavailable."""
-
-            if func is None:
-                return lambda wrapped: wrapped
-            return func
+        validate_call = _noop_validate_call  # type: ignore[assignment]
 
 
     @dataclass
