@@ -1,0 +1,83 @@
+schema: 1
+story: '2.6'
+story_title: OpenAI Custom API Endpoint Support
+gate: PASS
+status_reason: Custom OpenAI base URL support verified across settings, shared client,
+  diagnostics probe, and docs with unit coverage; HTTPS enforcement blocks insecure
+  overrides.
+reviewer: Quinn (Test Architect)
+updated: '2025-10-04T17:05:00Z'
+waiver:
+  active: false
+top_issues:
+- 'Technical: Keep diagnostics probe smoke in CI to catch override path drift across adapters (see QA-ENV-20251004 backlog follow-up).'
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 1
+    low: 0
+  highest:
+    id: TECH-001
+    score: 4
+    title: Base URL path drift across adapters
+  recommendations:
+    must_fix: []
+    monitor:
+    - Keep diagnostics probe smoke coverage to detect base URL path drift across adapters.
+test_design:
+  scenarios_total: 27
+  by_level:
+    unit: 27
+    integration: 0
+    e2e: 0
+  by_priority:
+    p0: 4
+    p1: 23
+    p2: 0
+    p3: 0
+  coverage_gaps: []
+trace:
+  totals:
+    requirements: 4
+    full: 4
+    partial: 0
+    none: 0
+  planning_ref: docs/stories/2.6.openai-custom-endpoint.md#Testing
+  uncovered: []
+  notes: docs/qa/assessments/2.6-trace-20251004.md
+nfr_validation:
+  _assessed:
+  - security
+  - performance
+  - reliability
+  - maintainability
+  security:
+    status: PASS
+    notes: HTTPS-only enforcement blocks insecure overrides unless flag explicitly set.
+  performance:
+    status: PASS
+    notes: Override reuses existing retry/backoff logic; no new latency risk.
+  reliability:
+    status: PASS
+    notes: FancyRAG pipeline regression runs successfully with neo4j/pandas stubs and diagnostics probe smoke coverage.
+  maintainability:
+    status: PASS
+    notes: Configuration knob documented, unit-tested, and telemetry-masked.
+evidence:
+  tests_reviewed: 27
+  risks_identified: 1
+  trace:
+    ac_covered:
+    - 1
+    - 2
+    - 3
+    - 4
+    ac_gaps: []
+quality_score: 95
+expires: '2025-10-18T00:00:00Z'
+references:
+  review: docs/stories/2.6.openai-custom-endpoint.md#qa-results
+  tests: tests/unit/config/test_openai_settings.py
+  sanitizer: tests/unit/cli/test_sanitizer.py
+  pipeline_test: tests/unit/fancyrag/kg/test_pipeline.py::test_shared_client_base_url

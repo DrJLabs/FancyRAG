@@ -6,6 +6,7 @@ import getpass
 import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
+from urllib.parse import urlparse
 
 from _compat.structlog import get_logger
 
@@ -28,6 +29,22 @@ _ENV_ACTOR_HINT = "GRAPH_RAG_ACTOR"
 _ENV_OPENAI_MAX_ATTEMPTS = "OPENAI_MAX_ATTEMPTS"
 _ENV_OPENAI_BACKOFF_SECONDS = "OPENAI_BACKOFF_SECONDS"
 _ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
+_ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
+_ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
+
+_VALID_BASE_SCHEMES = frozenset({"http", "https"})
+
+
+def _mask_base_url(value: str) -> str:
+    """Return a redacted representation of a custom OpenAI base URL for logging."""
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return "***"
+    scheme = parsed.scheme or "https"
+    suffix = parsed.path.rstrip("/") if parsed.path else ""
+    return f"{scheme}://***{suffix}" if suffix else f"{scheme}://***"
 
 
 @dataclass(frozen=True)
@@ -42,6 +59,8 @@ class OpenAISettings:
     max_attempts: int
     backoff_seconds: float
     enable_fallback: bool
+    api_base_url: Optional[str] = None
+    allow_insecure_base_url: bool = False
 
     @property
     def is_chat_override(self) -> bool:
@@ -79,11 +98,12 @@ class OpenAISettings:
         
         Description:
             Reads OPENAI_MODEL, OPENAI_EMBEDDING_MODEL, OPENAI_EMBEDDING_DIMENSIONS,
-            OPENAI_MAX_ATTEMPTS, OPENAI_BACKOFF_SECONDS, and
-            OPENAI_ENABLE_FALLBACK (plus GRAPH_RAG_ACTOR for actor hint). Validates
+            OPENAI_MAX_ATTEMPTS, OPENAI_BACKOFF_SECONDS, OPENAI_ENABLE_FALLBACK,
+            OPENAI_ALLOW_INSECURE_BASE_URL, and OPENAI_BASE_URL (plus GRAPH_RAG_ACTOR
+            for actor hint). Validates
             chat-model allowlists, embedding override dimensions, retry/backoff
-            ranges, and fallback toggles. Records informational logs for overrides
-            and error logs for invalid values.
+            ranges, fallback toggles, and base URL overrides. Records informational
+            logs for overrides and error logs for invalid values.
         
         Returns:
             OpenAISettings: An instance populated with the resolved chat model, embedding model, default embedding dimensions, any embedding-dimensions override, and the resolved actor name.
@@ -240,6 +260,66 @@ class OpenAISettings:
                 f"{_ENV_OPENAI_ENABLE_FALLBACK} is disabled; {requested_chat_model} cannot be used as it is reserved for fallback scenarios."
             )
 
+        allow_insecure_raw = (source.get(_ENV_OPENAI_ALLOW_INSECURE_BASE_URL) or "").strip()
+        allow_insecure = False
+        if allow_insecure_raw:
+            normalized = allow_insecure_raw.lower()
+            if normalized not in {"true", "false"}:
+                logger.error(
+                    "openai.settings.invalid_insecure_flag",
+                    actor=actor_name,
+                    supplied=allow_insecure_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL} value '{allow_insecure_raw}'. Use true/false."
+                )
+            allow_insecure = normalized == "true"
+            if allow_insecure:
+                logger.warning(
+                    "openai.settings.insecure_flag_enabled",
+                    actor=actor_name,
+                )
+            else:
+                logger.info(
+                    "openai.settings.insecure_flag_disabled",
+                    actor=actor_name,
+                )
+
+        base_url_raw = (source.get(_ENV_OPENAI_BASE_URL) or "").strip()
+        api_base_url: Optional[str] = None
+        if base_url_raw:
+            parsed = urlparse(base_url_raw)
+            if parsed.scheme not in _VALID_BASE_SCHEMES or not parsed.netloc:
+                logger.error(
+                    "openai.settings.invalid_base_url",
+                    actor=actor_name,
+                    supplied=_mask_base_url(base_url_raw),
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_BASE_URL} value '{base_url_raw}'. Provide an absolute http(s) URL."
+                )
+            if parsed.scheme != "https":
+                if not allow_insecure:
+                    logger.error(
+                        "openai.settings.insecure_base_url",
+                        actor=actor_name,
+                        supplied=_mask_base_url(base_url_raw),
+                    )
+                    raise ValueError(
+                        f"{_ENV_OPENAI_BASE_URL} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
+                    )
+                logger.warning(
+                    "openai.settings.insecure_base_url_override",
+                    actor=actor_name,
+                    base_url=_mask_base_url(base_url_raw),
+                )
+            api_base_url = base_url_raw
+            logger.info(
+                "openai.settings.base_url_override",
+                actor=actor_name,
+                base_url=_mask_base_url(api_base_url),
+            )
+
         return cls(
             chat_model=requested_chat_model,
             embedding_model=embedding_model,
@@ -249,6 +329,8 @@ class OpenAISettings:
             max_attempts=max_attempts,
             backoff_seconds=backoff_seconds,
             enable_fallback=enable_fallback,
+            api_base_url=api_base_url,
+            allow_insecure_base_url=allow_insecure,
         )
 
     def expected_embedding_dimensions(self) -> int:

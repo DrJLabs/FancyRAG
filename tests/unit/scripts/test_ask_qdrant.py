@@ -222,6 +222,47 @@ def _configure_identity_scrubber(monkeypatch):
     monkeypatch.setattr(ask, "scrub_object", lambda payload: payload)
 
 
+def test_embedding_cli_base_url(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example.com/v1")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ask_qdrant.py",
+            "--question",
+            "How?",
+            "--top-k",
+            "2",
+        ],
+    )
+
+    _configure_identity_scrubber(monkeypatch)
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "score": 0.9, "text": "chunk"}],
+        capture=capture,
+    )
+
+    class FakeClient:
+        def __init__(self, settings):
+            capture["base_url"] = settings.api_base_url
+
+        def embedding(self, *, input_text: str):  # noqa: ARG002 - parity with real client
+            return SimpleNamespace(vector=[0.1, 0.2, 0.3])
+
+    monkeypatch.setattr(ask, "SharedOpenAIClient", lambda settings: FakeClient(settings))
+
+    ask.main()
+
+    assert capture["base_url"] == "https://gateway.example.com/v1"
+    artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
+    assert artifact_path.exists()
+    capsys.readouterr()
+
+
 def test_main_success_creates_artifact(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "How?", "--top-k", "2"])

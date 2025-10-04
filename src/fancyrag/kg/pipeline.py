@@ -16,13 +16,48 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
-from neo4j import GraphDatabase
-from neo4j.exceptions import ClientError, Neo4jError
-
 from _compat.structlog import get_logger
+
+logger = get_logger(__name__)
+
+try:  # pragma: no cover - exercised when optional deps (like pandas) are missing
+    from neo4j import GraphDatabase
+    from neo4j.exceptions import ClientError, Neo4jError
+except Exception as exc:  # noqa: BLE001 - ValueError raised by pandas binary mismatch must be caught
+    GraphDatabase = None  # type: ignore[assignment]
+
+    class Neo4jError(RuntimeError):
+        """Fallback Neo4j error when official driver dependencies are unavailable."""
+
+
+    class ClientError(Neo4jError):
+        """Fallback client error matching neo4j.exceptions.ClientError signature."""
+
+
+    _NEO4J_IMPORT_ERROR: Optional[Exception] = exc
+    logger.warning(
+        "neo4j.import.fallback",
+        reason="neo4j optional dependency import failed",
+        error=str(exc),
+    )
+else:
+    _NEO4J_IMPORT_ERROR = None
+
+
+def _neo4j_import_unavailable_message() -> str:
+    """Return a helpful hint when the Neo4j driver cannot load optional dependencies."""
+
+    base = (
+        "Neo4j driver optional dependencies are unavailable. Install compatible wheels ("
+        "e.g. `pip install \"neo4j[pandas]\"`) or align pandas/numpy versions so the driver can load."
+    )
+    if _NEO4J_IMPORT_ERROR is None:
+        return base
+    return f"{base} Original import failure: {_NEO4J_IMPORT_ERROR}."
+
 from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
@@ -162,6 +197,15 @@ else:  # pragma: no cover - exercised only in minimal CI environments
                 "neo4j_graphrag is required for semantic enrichment support"
             )
 
+if _PYDANTIC_AVAILABLE and not _GRAPHRAG_AVAILABLE:
+
+    def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
+        """Fallback validate_call when neo4j_graphrag dependencies are unavailable."""
+
+        if func is None:
+            return lambda wrapped: wrapped
+        return func
+
 
     @dataclass
     class KGWriterModel:  # type: ignore[no-redef]
@@ -258,8 +302,6 @@ try:  # pragma: no cover - optional dependency in some environments
     from openai.types.chat import ChatCompletion as OpenAIChatCompletion
 except Exception:  # pragma: no cover - fall back when OpenAI SDK is absent
     OpenAIChatCompletion = None  # type: ignore[assignment]
-
-logger = get_logger(__name__)
 
 DEFAULT_SOURCE = Path("docs/samples/pilot.txt")
 DEFAULT_LOG_PATH = Path("artifacts/local_stack/kg_build.json")
@@ -1147,6 +1189,9 @@ def _execute_pipeline(
         run_id (str | None): The pipeline run identifier if produced, `None` otherwise.
     """
 
+    if GraphDatabase is None:
+        raise RuntimeError(_neo4j_import_unavailable_message())
+
     with GraphDatabase.driver(uri, auth=auth) as driver:
         if reset_database:
             _reset_database(driver, database=database)
@@ -1265,6 +1310,9 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
 
     uri = os.environ["NEO4J_URI"]
     auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
+
+    if GraphDatabase is None:
+        raise RuntimeError(_neo4j_import_unavailable_message())
 
     start = time.perf_counter()
     run_ids: list[str | None] = []

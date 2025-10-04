@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlparse
 
 __all__ = [
     "SECRET_ENV_KEYS",
@@ -22,6 +23,7 @@ SECRET_ENV_KEYS: frozenset[str] = frozenset(
         "NEO4J_PASSWORD",
         "NEO4J_BOLT_PASSWORD",
         "NEO4J_AUTH",
+        "OPENAI_BASE_URL",
     }
 )
 
@@ -111,6 +113,10 @@ def sanitize_text(text: Any, *, extra_patterns: Iterable[re.Pattern[str]] | None
             continue
         if _is_sensitive_name(key):
             values_to_mask.add(value)
+        if key == "OPENAI_BASE_URL":
+            parsed = urlparse(value)
+            if parsed.netloc:
+                values_to_mask.add(parsed.netloc)
 
     for value in sorted(values_to_mask, key=len, reverse=True):
         sanitized = sanitized.replace(value, "***")

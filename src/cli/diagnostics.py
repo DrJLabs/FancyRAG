@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
+from urllib.parse import urlparse
 
 from cli.openai_client import (
     ChatResult,
@@ -225,6 +226,18 @@ def write_report(report: Dict[str, object], path: Path) -> None:
     path.write_text(json.dumps(sanitized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _mask_base_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return "***"
+    scheme = parsed.scheme or "https"
+    suffix = parsed.path.rstrip("/") if parsed.path else ""
+    return f"{scheme}://***{suffix}" if suffix else f"{scheme}://***"
+
+
 def run_workspace(root: Path, *, write: bool, output: Optional[Path]) -> int:
     """
     Run workspace dependency diagnostics, print findings, and optionally write a JSON report.
@@ -327,6 +340,10 @@ def run_openai_probe(
                 "max_attempts": None,
                 "backoff_seconds": None,
                 "fallback_enabled": None,
+                "base_url_override": None,
+                "base_url": None,
+                "base_url_masked": None,
+                "allow_insecure_base_url": None,
             }
         return {
             "chat_model": settings.chat_model,
@@ -336,6 +353,10 @@ def run_openai_probe(
             "max_attempts": settings.max_attempts,
             "backoff_seconds": settings.backoff_seconds,
             "fallback_enabled": settings.enable_fallback,
+            "base_url_override": settings.api_base_url is not None,
+            "base_url": settings.api_base_url,
+            "base_url_masked": _mask_base_url(settings.api_base_url),
+            "allow_insecure_base_url": settings.allow_insecure_base_url,
         }
 
     artifacts_root = artifacts_dir or (root / DEFAULT_PROBE_REPORT_PATH.parent)

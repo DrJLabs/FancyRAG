@@ -126,6 +126,73 @@ def test_openai_probe_identifies_fallback(tmp_path, monkeypatch):
     assert report["chat"]["fallback_used"] is True
 
 
+def test_openai_probe_records_base_url_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRAPH_RAG_ACTOR", "probe-actor")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example.com/v1")
+
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    exit_code = diagnostics.run_openai_probe(
+        root,
+        artifacts_dir=root / "artifacts" / "openai",
+        skip_live=True,
+        max_attempts=1,
+        base_delay=0.1,
+    )
+
+    assert exit_code == 0
+    report = _read_json(root / "artifacts" / "openai" / "probe.json")
+    settings = report["settings"]
+    assert settings["base_url_override"] is True
+    assert settings["base_url_masked"] == "https://***/v1"
+    # raw value is sanitized in report but should not leak hostname
+    assert "gateway.example.com" not in json.dumps(report)
+
+
+def test_openai_probe_rejects_http_base_url_without_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRAPH_RAG_ACTOR", "probe-actor")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://gateway.example.com/v1")
+
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    exit_code = diagnostics.run_openai_probe(
+        root,
+        artifacts_dir=root / "artifacts" / "openai",
+        skip_live=True,
+        max_attempts=1,
+        base_delay=0.1,
+    )
+
+    assert exit_code == 1
+    report = _read_json(root / "artifacts" / "openai" / "probe.json")
+    assert report["status"] == "failed"
+    assert report["error"]["details"]["message"].startswith("OPENAI_BASE_URL must use https")
+
+
+def test_openai_probe_allows_http_base_url_with_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRAPH_RAG_ACTOR", "probe-actor")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://gateway.example.com/v1")
+    monkeypatch.setenv("OPENAI_ALLOW_INSECURE_BASE_URL", "true")
+
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    exit_code = diagnostics.run_openai_probe(
+        root,
+        artifacts_dir=root / "artifacts" / "openai",
+        skip_live=True,
+        max_attempts=1,
+        base_delay=0.1,
+    )
+
+    assert exit_code == 0
+    report = _read_json(root / "artifacts" / "openai" / "probe.json")
+    assert report["settings"]["base_url_override"] is True
+    assert report["settings"]["allow_insecure_base_url"] is True
+
+
 def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
     """
     Verify that the OpenAI probe retries on rate-limit errors and succeeds after the specified attempts.

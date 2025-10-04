@@ -116,3 +116,55 @@ def test_disable_fallback_keeps_default():
     assert settings.chat_model == DEFAULT_CHAT_MODEL
     assert settings.max_attempts == DEFAULT_MAX_RETRY_ATTEMPTS
     assert settings.backoff_seconds == DEFAULT_BACKOFF_SECONDS
+
+
+def test_base_url_override_logs_and_applies():
+    env = {"OPENAI_BASE_URL": "https://gateway.example.com/v1"}
+    with capture_logs() as logs:
+        settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.api_base_url == "https://gateway.example.com/v1"
+    assert any(
+        entry["event"] == "openai.settings.base_url_override"
+        and entry.get("base_url") == "https://***/v1"
+        for entry in logs
+    )
+
+
+@pytest.mark.parametrize("value", ["ftp://example.com", "https://"])
+def test_invalid_base_url_raises(value):
+    env = {"OPENAI_BASE_URL": value}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.invalid_base_url" for entry in logs)
+
+
+def test_http_base_url_requires_explicit_opt_in():
+    env = {"OPENAI_BASE_URL": "http://gateway.example.com/v1"}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.insecure_base_url" for entry in logs)
+
+
+def test_http_base_url_allowed_with_flag():
+    env = {
+        "OPENAI_BASE_URL": "http://gateway.example.com/v1",
+        "OPENAI_ALLOW_INSECURE_BASE_URL": "true",
+    }
+    with capture_logs() as logs:
+        settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.api_base_url == "http://gateway.example.com/v1"
+    assert settings.allow_insecure_base_url is True
+    assert any(entry["event"] == "openai.settings.insecure_base_url_override" for entry in logs)
+
+
+def test_invalid_insecure_flag_value_logs_and_raises():
+    env = {
+        "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+        "OPENAI_ALLOW_INSECURE_BASE_URL": "maybe",
+    }
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.invalid_insecure_flag" for entry in logs)

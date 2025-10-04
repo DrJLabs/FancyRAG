@@ -1,0 +1,34 @@
+name: OpenAI Probe Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  smoke:
+    name: Diagnostics probe with override
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: https://gateway.example.com/v1
+      OPENAI_ALLOW_INSECURE_BASE_URL: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.lock
+      - name: Run diagnostics probe (skip live)
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m cli.diagnostics openai-probe --skip-live --artifacts artifacts/openai
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openai-probe-report
+          path: artifacts/openai/

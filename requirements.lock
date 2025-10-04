@@ -64,7 +64,7 @@ marshmallow==3.26.1
 matplotlib-inline==0.1.7
 multidict==6.6.4
 mypy_extensions==1.1.0
-neo4j==5.28.2
+neo4j[pandas]==5.28.2
 neo4j-graphrag==1.10.0
 neo4j-viz==0.4.2
 nest-asyncio==1.6.0

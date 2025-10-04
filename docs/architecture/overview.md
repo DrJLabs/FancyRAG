@@ -60,11 +60,13 @@ graph TD
 | 2025-09-28 | 0.5     | Added Docker Compose stack and minimal path scripts | Codex CLI |
 | 2025-10-02 | 0.6     | Documented semantic enrichment flag and QA thresholds | James     |
 | 2025-10-02 | 0.7     | Added refactor alignment pointers and planning references        | Codex CLI |
+| 2025-10-04 | 0.8     | Documented OpenAI base URL override and sanitisation guardrails | James     |
 
 ## Environment Configuration
 - Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-4.1-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), and local stack defaults (`NEO4J_URI=bolt://localhost:7687`, `NEO4J_USERNAME=neo4j`, `NEO4J_PASSWORD=neo4j`, `QDRANT_URL=http://localhost:6333`). `QDRANT_API_KEY` may remain blank for local usage.
 - The CLI automatically loads variables from `.env` at repository root; override the location by setting `FANCYRAG_DOTENV_PATH` when invoking automation from alternate directories.
 - Optional guardrails: `OPENAI_MAX_ATTEMPTS` (default 3) controls retry ceilings, `OPENAI_BACKOFF_SECONDS` adjusts the initial exponential backoff, and `OPENAI_ENABLE_FALLBACK` toggles whether operators may use the documented fallback chat model. Leave unset to accept defaults.
+- To route traffic through a gateway/self-hosted deployment, set `OPENAI_BASE_URL` to an `https://` endpoint. Local-only `http://` testing requires explicitly setting `OPENAI_ALLOW_INSECURE_BASE_URL=true`; production deployments must remain TLS-only. The shared client and sanitizer mask the custom host in logs/telemetry automatically.
 - Create data directories (`mkdir -p ./.data/neo4j/{data,logs,import} ./.data/qdrant/storage`) before starting the stack to ensure Docker bind-mounts use project-scoped storage.
 - Validate configuration with `docker compose -f docker-compose.neo4j-qdrant.yml config` (or `scripts/check_local_stack.sh --config`) to confirm environment substitution before launching services.
 - Start the stack with `scripts/check_local_stack.sh --up` (equivalent to `docker compose -f docker-compose.neo4j-qdrant.yml up -d`); stop it with `scripts/check_local_stack.sh --down` (adds `--volumes` when you want a clean reset).
@@ -81,7 +83,7 @@ graph TD
 ## OpenAI Readiness Probe
 - Run `PYTHONPATH=src python3 -m cli.diagnostics openai-probe` after the workspace diagnostics pass to validate OpenAI chat and embedding integrations end-to-end. The probe now routes through `cli.openai_client.SharedOpenAIClient`, ensuring every script shares the same guardrails, retries, and telemetry primitives.
 - The probe issues a lightweight chat completion and embedding request using the configured defaults from `OpenAISettings`, writes a sanitized report to `artifacts/openai/probe.json`, and exports Prometheus metrics to `artifacts/openai/metrics.prom` with latency buckets spanning 100 ms–5 s.
-- Guardrails include exponential backoff for 429/`RateLimitError` responses with token-budget remediation messaging, reusable sanitization helpers shared with other diagnostics, and structured telemetry that records fallback usage (`gpt-4o-mini`) without leaking prompts or API keys. Golden fixtures protect report/metrics schemas when updating the shared client.
+- Guardrails include exponential backoff for 429/`RateLimitError` responses with token-budget remediation messaging, reusable sanitization helpers shared with other diagnostics, and structured telemetry that records fallback usage (`gpt-4o-mini`) without leaking prompts, API keys, or custom `OPENAI_BASE_URL` hostnames. Golden fixtures protect report/metrics schemas when updating the shared client.
 
 ## Minimal Path Workflow
 1. Bootstrap workspace + `.env` (`scripts/bootstrap.sh`, then copy `.env.example`).

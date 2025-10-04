@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import types
 from pathlib import Path
@@ -83,6 +84,58 @@ def _stub_pipeline_dependencies(monkeypatch):
             )
 
     monkeypatch.setattr(pipeline, "IngestionQaEvaluator", DummyEvaluator)
+
+
+def test_shared_client_base_url(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example.com/v1")
+    _stub_graph_driver(monkeypatch)
+    _stub_pipeline_dependencies(monkeypatch)
+
+    captured: dict[str, object] = {}
+
+    def fake_shared_client(settings, **_kwargs):
+        captured["base_url"] = settings.api_base_url
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(pipeline, "SharedOpenAIClient", fake_shared_client)
+    monkeypatch.setattr(pipeline, "SharedOpenAIEmbedder", lambda *_a, **_k: types.SimpleNamespace())
+    monkeypatch.setattr(pipeline, "SharedOpenAILLM", lambda *_a, **_k: types.SimpleNamespace())
+    class FakeSplitter:
+        def __init__(self) -> None:
+            self._result = types.SimpleNamespace(chunks=[])
+
+        def scoped(self, _scope):
+            return contextlib.nullcontext(self)
+
+        def get_cached(self, _text):
+            return self._result
+
+    monkeypatch.setattr(pipeline, "build_caching_splitter", lambda *_a, **_k: FakeSplitter())
+
+    source_file = tmp_path / "sample.txt"
+    source_file.write_text("hello world", encoding="utf-8")
+
+    options = pipeline.PipelineOptions(
+        source=source_file,
+        source_dir=None,
+        include_patterns=None,
+        profile=None,
+        chunk_size=None,
+        chunk_overlap=None,
+        database="neo4j",
+        log_path=tmp_path / "kg-log.json",
+        qa_report_dir=tmp_path,
+        qa_limits=pipeline.QaLimits(),
+        semantic_enabled=False,
+        semantic_max_concurrency=5,
+        reset_database=False,
+    )
+
+    pipeline.run_pipeline(options)
+
+    assert captured["base_url"] == "https://gateway.example.com/v1"
+    assert options.log_path.exists()
+    assert "success" in capsys.readouterr().out
 
 
 def test_run_pipeline_writes_log(monkeypatch, tmp_path, capsys):

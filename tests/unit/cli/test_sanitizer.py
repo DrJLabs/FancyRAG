@@ -10,6 +10,15 @@ def test_sanitize_text_redacts_env_values(monkeypatch):
     assert "***" in sanitized
 
 
+def test_sanitize_text_redacts_openai_base_url(monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example.com/v1")
+    text = "https://gateway.example.com/v1 uses host gateway.example.com"
+    sanitized = sanitizer.sanitize_text(text)
+    assert "gateway.example.com" not in sanitized
+    assert "https://gateway.example.com/v1" not in sanitized
+    assert sanitized.count("***") >= 2
+
+
 def test_scrub_object_scrubs_sensitive_keys(monkeypatch):
     monkeypatch.setenv("NEO4J_PASSWORD", "secret123")
     payload = {

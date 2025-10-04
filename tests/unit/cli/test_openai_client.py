@@ -1,6 +1,8 @@
 import pytest
 from types import SimpleNamespace
 
+from _compat.structlog import capture_logs
+
 from cli.openai_client import OpenAIClientError, RateLimitError, SharedOpenAIClient
 from cli.telemetry import create_metrics
 from config.settings import OpenAISettings
@@ -134,6 +136,56 @@ def _make_client(env: dict[str, str], *, client) -> SharedOpenAIClient:
         sleep_fn=lambda *_: None,
         clock=FakeClock(),
     )
+
+
+def test_shared_client_initializes_openai_with_base_url(monkeypatch):
+    captured: dict[str, object] = {}
+    stub = StubOpenAIClient()
+
+    def fake_openai(**kwargs):
+        captured.update(kwargs)
+        return stub
+
+    monkeypatch.setattr("cli.openai_client.OpenAI", fake_openai)
+    env = {"OPENAI_BASE_URL": "https://gateway.example.com/v1"}
+    settings = OpenAISettings.load(env, actor="pytest")
+
+    with capture_logs() as logs:
+        client = SharedOpenAIClient(
+            settings,
+            metrics=create_metrics(),
+            sleep_fn=lambda *_: None,
+            clock=FakeClock(),
+        )
+
+    assert captured["base_url"] == "https://gateway.example.com/v1"
+    assert client._client is stub
+    assert any(
+        entry["event"] == "openai.client.base_url_override"
+        and entry.get("base_url") == "https://***/v1"
+        for entry in logs
+    )
+
+
+def test_shared_client_omits_base_url_when_not_configured(monkeypatch):
+    captured: dict[str, object] = {}
+    stub = StubOpenAIClient()
+
+    def fake_openai(**kwargs):
+        captured.update(kwargs)
+        return stub
+
+    monkeypatch.setattr("cli.openai_client.OpenAI", fake_openai)
+    settings = OpenAISettings.load({}, actor="pytest")
+
+    SharedOpenAIClient(
+        settings,
+        metrics=create_metrics(),
+        sleep_fn=lambda *_: None,
+        clock=FakeClock(),
+    )
+
+    assert "base_url" not in captured
 
 
 def test_chat_completion_uses_default_model():
