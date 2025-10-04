@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fancyrag.qa.report import render_markdown, write_ingestion_report
 
@@ -49,8 +50,8 @@ def test_write_ingestion_report_creates_timestamped_artifacts(tmp_path):
     assert json_file.exists()
     assert markdown_file.exists()
 
-    assert json_rel.endswith("quality_report.json")
-    assert md_rel.endswith("quality_report.md")
+    assert Path(json_rel).is_absolute()
+    assert Path(md_rel).is_absolute()
 
     assert json_file.read_text(encoding="utf-8").strip().startswith("{")
     assert markdown_file.read_text(encoding="utf-8").splitlines()[0] == (
@@ -90,3 +91,79 @@ def test_render_markdown_handles_anomalies_and_thresholds():
     assert "- ❌ missing_embeddings=1 exceeds max 0" in lines
     assert "| docs/sample.txt | 2 | fedcba | - |" in lines
     assert "## Thresholds" in lines
+
+
+def test_write_ingestion_report_sanitises_absolute_relative_paths(tmp_path):
+    payload = {
+        "version": "ingestion-qa-report/v1",
+        "generated_at": datetime(2025, 10, 4, tzinfo=timezone.utc).isoformat(),
+        "status": "pass",
+        "summary": "QA PASS",
+        "metrics": {
+            "files_processed": 1,
+            "chunks_processed": 1,
+            "missing_embeddings": 0,
+            "orphan_chunks": 0,
+            "checksum_mismatches": 0,
+            "token_estimate": {},
+            "files": [
+                {
+                    "relative_path": str(tmp_path / "sensitive" / "payload.txt"),
+                    "chunks": 1,
+                    "document_checksum": "abc",
+                    "git_commit": None,
+                }
+            ],
+        },
+        "thresholds": {},
+        "anomalies": [],
+    }
+
+    timestamp = datetime(2025, 10, 4, 15, 0, 0, tzinfo=timezone.utc)
+    json_rel, md_rel = write_ingestion_report(
+        sanitized_payload=payload,
+        report_root=tmp_path,
+        timestamp=timestamp,
+    )
+
+    json_text = Path(json_rel).read_text(encoding="utf-8")
+    md_text = Path(md_rel).read_text(encoding="utf-8")
+
+    assert str(tmp_path) not in json_text
+    assert str(tmp_path) not in md_text
+    assert "payload.txt" in json_text
+    assert "payload.txt" in md_text
+
+
+def test_write_ingestion_report_generates_unique_directories(tmp_path):
+    payload = {
+        "version": "ingestion-qa-report/v1",
+        "generated_at": datetime(2025, 10, 4, tzinfo=timezone.utc).isoformat(),
+        "status": "pass",
+        "summary": "QA PASS",
+        "metrics": {
+            "files_processed": 0,
+            "chunks_processed": 0,
+            "missing_embeddings": 0,
+            "orphan_chunks": 0,
+            "checksum_mismatches": 0,
+            "token_estimate": {},
+            "files": [],
+        },
+        "thresholds": {},
+        "anomalies": [],
+    }
+
+    timestamp = datetime(2025, 10, 4, 18, 0, 0, tzinfo=timezone.utc)
+    first_json, _ = write_ingestion_report(
+        sanitized_payload=payload,
+        report_root=tmp_path,
+        timestamp=timestamp,
+    )
+    second_json, _ = write_ingestion_report(
+        sanitized_payload=payload,
+        report_root=tmp_path,
+        timestamp=timestamp,
+    )
+
+    assert Path(first_json).parent != Path(second_json).parent

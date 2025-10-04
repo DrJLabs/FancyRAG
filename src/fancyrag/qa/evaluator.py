@@ -14,7 +14,7 @@ from neo4j.exceptions import Neo4jError
 
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object
-from fancyrag.qa.report import write_ingestion_report
+from fancyrag.qa.report import render_markdown, write_ingestion_report
 
 logger = get_logger(__name__)
 
@@ -293,6 +293,11 @@ class IngestionQaEvaluator:
             version=self._report_version,
             duration_ms=eval_duration_ms,
         )
+
+    def _render_markdown(self, payload: Mapping[str, Any]) -> str:
+        """Legacy helper retained for existing evaluator tests and tooling."""
+
+        return render_markdown(payload)
 
     def _collect_semantic_counts(self) -> dict[str, int]:
         """Collect semantic enrichment counts from Neo4j when enrichment is enabled."""

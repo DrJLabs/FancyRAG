@@ -9,6 +9,15 @@ from fancyrag.utils.paths import ensure_directory, relative_to_repo, resolve_rep
 import fancyrag.utils.paths as paths_mod
 
 
+@pytest.fixture(autouse=True)
+def _reset_repo_root_cache():
+    """Ensure resolve_repo_root cache does not leak between tests."""
+
+    resolve_repo_root.cache_clear()
+    yield
+    resolve_repo_root.cache_clear()
+
+
 def test_ensure_directory_creates_parents(tmp_path):
     target = tmp_path / "nested" / "deeper" / "file.json"
     parent = target.parent

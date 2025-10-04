@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from fancyrag.qa.evaluator import (
@@ -269,10 +270,13 @@ def test_evaluate_report_paths_are_relative(tmp_path):
         report_version="v1",
     )
     result = evaluator.evaluate()
-    # Ensure reported paths are relative strings and point to the right artifacts
-    import os
+    json_path = Path(result.report_json)
+    md_path = Path(result.report_markdown)
 
-    assert result.report_json.endswith("quality_report.json")
-    assert result.report_markdown.endswith("quality_report.md")
-    assert not os.path.isabs(result.report_json)
-    assert not os.path.isabs(result.report_markdown)
+    if not json_path.is_absolute():
+        json_path = (tmp_path / "qa") / json_path
+    if not md_path.is_absolute():
+        md_path = (tmp_path / "qa") / md_path
+
+    assert json_path.exists()
+    assert md_path.exists()

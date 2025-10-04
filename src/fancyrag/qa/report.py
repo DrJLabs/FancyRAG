@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -37,12 +38,18 @@ def write_ingestion_report(
         generated JSON and Markdown artifacts.
     """
 
-    report_dir = report_root / timestamp.strftime("%Y%m%dT%H%M%S")
+    stamp = timestamp.strftime("%Y%m%dT%H%M%S")
+    report_dir = report_root / stamp
+    suffix = 1
+    while report_dir.exists():
+        report_dir = report_root / f"{stamp}-{suffix:02d}"
+        suffix += 1
     json_path = report_dir / REPORT_JSON_FILENAME
     markdown_path = report_dir / REPORT_MARKDOWN_FILENAME
     ensure_directory(json_path)
 
-    payload_dict = dict(sanitized_payload)
+    payload_dict = copy.deepcopy(sanitized_payload)
+    _scrub_relative_paths(payload_dict)
     json_path.write_text(json.dumps(payload_dict, indent=2), encoding="utf-8")
     markdown_path.write_text(render_markdown(payload_dict), encoding="utf-8")
 
@@ -131,6 +138,26 @@ def _is_sequence(value: Any) -> bool:
     """Return True when `value` is a non-string sequence."""
 
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+
+
+def _scrub_relative_paths(payload: Mapping[str, Any]) -> None:
+    """Remove absolute filesystem paths from the payload's file listings."""
+
+    metrics_obj = payload.get("metrics")
+    if not isinstance(metrics_obj, Mapping):
+        return
+    files = metrics_obj.get("files")
+    if not isinstance(files, Sequence):
+        return
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        relative = entry.get("relative_path")
+        if isinstance(relative, str) and Path(relative).is_absolute():
+            try:
+                entry["relative_path"] = Path(relative).name
+            except ValueError:  # pragma: no cover - defensive fallback
+                entry["relative_path"] = "***"
 
 
 __all__ = [
