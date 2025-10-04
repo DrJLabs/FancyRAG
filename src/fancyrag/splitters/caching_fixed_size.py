@@ -41,9 +41,26 @@ except ModuleNotFoundError:  # pragma: no cover - dependencies unavailable in mi
         """Fallback splitter that yields one chunk per input string."""
 
         def __init__(self, *_args, **_kwargs) -> None:
+            """
+            No-op initializer that accepts and ignores all positional and keyword arguments.
+            
+            This preserves a compatible constructor signature for environments where a full
+            FixedSizeSplitter implementation is not available; the initializer performs no setup.
+            """
             pass
 
         async def run(self, text: str | Sequence[str], *_args, **_kwargs) -> TextChunks:
+            """
+            Split the input into one TextChunk per input item.
+            
+            If `text` is a string it is treated as a single item; if it is a sequence, each element becomes a chunk. Each produced TextChunk contains the original text, an `index` corresponding to the element's position (starting at 0), and `metadata` set to `None`.
+            
+            Parameters:
+                text (str | Sequence[str]): Input text or sequence of text items to split.
+            
+            Returns:
+                TextChunks: A container with one TextChunk per input item; each chunk's `metadata` is `None` and `index` reflects the item's position.
+            """
             if isinstance(text, str):
                 items = [text]
             else:
@@ -62,7 +79,12 @@ class CachingSplitterConfig:
     chunk_overlap: int = 0
 
     def create_splitter(self) -> CachingFixedSizeSplitter:
-        """Instantiate a splitter using this configuration."""
+        """
+        Create a CachingFixedSizeSplitter configured from this CachingSplitterConfig.
+        
+        Returns:
+            CachingFixedSizeSplitter: splitter instance using this config's chunk_size and chunk_overlap.
+        """
 
         return build_caching_splitter(self)
 
@@ -71,6 +93,14 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
     """Fixed-size splitter that caches results while yielding fresh chunk UIDs."""
 
     def __init__(self, *args, **kwargs) -> None:
+        """
+        Initialize the caching splitter and prepare its internal caches and scope stack.
+        
+        Sets up three instance attributes used to store cache blueprints, the most recent outputs per cache key, and the active scope stack:
+        - _blueprints: maps a cache key (string or tuple of strings) to a list of blueprint dicts describing chunks (text, index, metadata).
+        - _last_outputs: maps a cache key to the last produced TextChunks for quick retrieval.
+        - _scope_stack: a list representing nested scope identifiers (string or None) used to isolate cache entries.
+        """
         super().__init__(*args, **kwargs)
         self._blueprints: dict[str | tuple[str, ...], list[dict[str, Any]]] = {}
         self._last_outputs: dict[str | tuple[str, ...], TextChunks] = {}
@@ -78,7 +108,15 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
 
     @contextmanager
     def scoped(self, scope: str | Path | None):
-        """Scope cache lookups to a specific source identifier."""
+        """
+        Temporarily set a scope identifier that isolates cache lookups for the duration of a context.
+        
+        Parameters:
+            scope (str | Path | None): Identifier used to namespace cache keys; if `None`, clears any active scope for the context.
+        
+        Returns:
+            context manager: Yields the splitter instance while the provided scope is active; the previous scope is restored on exit.
+        """
 
         scope_id = str(scope) if scope is not None else None
         self._scope_stack.append(scope_id)
@@ -88,11 +126,26 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
             self._scope_stack.pop()
 
     def _current_scope(self) -> str | None:
+        """
+        Get the active scope used for cache isolation.
+        
+        Returns:
+            str | None: The current scope string from the top of the scope stack, or `None` if no scope is active.
+        """
         if not self._scope_stack:
             return None
         return self._scope_stack[-1]
 
     def _cache_key(self, text: str | Sequence[str]) -> str | tuple[str, ...]:
+        """
+        Builds a cache key for the provided text and prefixes it with the active scope when one is set.
+        
+        Parameters:
+            text (str | Sequence[str]): The input text or sequence of text segments to key. If a single string is provided, the base key is that string; if a sequence is provided, the base key is a tuple of the sequence's items.
+        
+        Returns:
+            str | tuple[str, ...]: The cache key. Returns the base string or tuple for the input; if a scope is active, returns a tuple whose first element is the scope followed by the base key (for a single-string base the scope and string are returned as a two-element tuple).
+        """
         if isinstance(text, str):
             base_key: str | tuple[str, ...] = text
         else:
@@ -107,6 +160,18 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
     async def run(
         self, text: str | Sequence[str], config: Any | None = None
     ) -> TextChunks:  # type: ignore[override]
+        """
+        Run the splitter on the given text, using a cached blueprint when available to rehydrate fresh chunk UIDs.
+        
+        When `config` is provided, delegates to the superclass `run` implementation and returns its result; if that call fails with `TypeError` or `ValidationError`, falls back to the superclass `run` without `config`. When `config` is not provided, computes a cache key for `text`; on a cache miss it invokes the superclass `run`, stores a blueprint (text, index, deep-copied metadata) and the result, and returns that result. On a cache hit it reconstructs a new TextChunks instance from the stored blueprint, assigning new UIDs to each TextChunk, updates the last-output cache, and returns the reconstructed TextChunks.
+        
+        Parameters:
+            text (str | Sequence[str]): The input text or sequence of texts to split.
+            config (Any | None): Optional configuration passed through to the superclass `run`; when present, caching is bypassed.
+        
+        Returns:
+            TextChunks: The resulting chunks for `text`. On cache hits, chunks preserve text/index/metadata but have newly generated `uid` values.
+        """
         if config is not None:
             try:
                 return await super().run(text, config)
@@ -143,7 +208,15 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         return text_chunks
 
     def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
-        """Return the cached chunk result for ``text`` if available."""
+        """
+        Retrieve the cached TextChunks for the given input within the current scope.
+        
+        Parameters:
+            text (str | Sequence[str]): The input string or sequence of strings used as the cache lookup key.
+        
+        Returns:
+            TextChunks | None: `TextChunks` if a cached result exists for the given input and current scope, `None` otherwise.
+        """
 
         return self._last_outputs.get(self._cache_key(text))
 
@@ -154,7 +227,17 @@ def build_caching_splitter(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ) -> CachingFixedSizeSplitter:
-    """Construct a caching splitter using a configuration dataclass or explicit overrides."""
+    """
+    Create a CachingFixedSizeSplitter from either a CachingSplitterConfig or explicit chunk parameters.
+    
+    Parameters:
+        config (CachingSplitterConfig | None): Configuration dataclass to derive chunk_size and chunk_overlap from. Mutually exclusive with explicit overrides.
+        chunk_size (int | None): Chunk size override used when `config` is not provided. Required if `config` is None.
+        chunk_overlap (int | None): Chunk overlap override used when `config` is not provided. Defaults to 0 when omitted.
+    
+    Returns:
+        CachingFixedSizeSplitter: A splitter configured with the resolved `chunk_size` and `chunk_overlap`.
+    """
 
     if config is not None and (chunk_size is not None or chunk_overlap is not None):
         raise ValueError("Provide either a config object or explicit overrides, not both.")
