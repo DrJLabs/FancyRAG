@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from fancyrag.db.neo4j_queries import collect_counts
 from fancyrag.qa.evaluator import (
     IngestionQaEvaluator,
     QaChunkRecord,
     QaSourceRecord,
     QaThresholds,
-    collect_counts,
     QaResult,
 )
 
@@ -154,7 +154,8 @@ def test_evaluator_flags_threshold_breaches(tmp_path):
 
 def test_collect_counts_handles_tuple_result():
     class DummyDriver:
-        def execute_query(self, query, database_=None):
+        def execute_query(self, query, parameters=None, database_=None):
+            _ = parameters
             _ = database_
             if "HAS_CHUNK" in query:
                 return ([{"value": 8}],)
@@ -250,7 +251,8 @@ def test_render_markdown_includes_histogram_and_files(tmp_path):
 def test_evaluate_report_paths_are_relative(tmp_path):
     # Driver stub: return a single [{value: 0}] row for any query
     class NoOpDriver:
-        def execute_query(self, _q, _params=None, database_=None):
+        def execute_query(self, _q, parameters=None, database_=None):
+            _ = parameters
             _ = database_
             return [{"value": 0}]
 
@@ -291,15 +293,15 @@ def test_evaluate_report_paths_are_relative(tmp_path):
 def test_collect_counts_handles_neo4j_error():
     """Verify collect_counts logs warning and continues when Neo4j query fails."""
     class FailingDriver:
-        def execute_query(self, query, database_=None):
+        def execute_query(self, query, parameters=None, database_=None):
             _ = query
+            _ = parameters
             _ = database_
             from neo4j.exceptions import Neo4jError
             raise Neo4jError()
 
     counts = collect_counts(FailingDriver(), database="neo4j")
-    # Should return empty dict, not raise
-    assert counts == {}
+    assert counts == {"documents": 0, "chunks": 0, "relationships": 0}
 
 
 def test_collect_counts_handles_various_record_formats():
@@ -308,10 +310,14 @@ def test_collect_counts_handles_various_record_formats():
         def __init__(self):
             self.call_count = 0
 
-        def execute_query(self, query, database_=None):
+        def execute_query(self, query, parameters=None, database_=None):
             _ = database_
+            _ = parameters
             self.call_count += 1
             # Test different response formats
+            if "HAS_CHUNK" in query:
+                # Format 3: Tuple/list access
+                return ([[15]], None, None)
             if "Document" in query:
                 # Format 1: Dictionary with value key
                 return ([{"value": 10}], None, None)
@@ -319,9 +325,6 @@ def test_collect_counts_handles_various_record_formats():
                 # Format 2: Object with value attribute
                 from types import SimpleNamespace
                 return ([SimpleNamespace(value=20)], None, None)
-            elif "HAS_CHUNK" in query:
-                # Format 3: Tuple/list access
-                return ([[15]], None, None)
             return ([{"value": 0}], None, None)
 
     driver = VariedFormatDriver()
@@ -334,23 +337,22 @@ def test_collect_counts_handles_various_record_formats():
 def test_collect_counts_with_empty_results():
     """Test collect_counts when queries return empty result sets."""
     class EmptyResultDriver:
-        def execute_query(self, query, database_=None):
+        def execute_query(self, query, parameters=None, database_=None):
             _ = query
+            _ = parameters
             _ = database_
             return ([], None, None)
 
     counts = collect_counts(EmptyResultDriver(), database=None)
-    # Should handle empty results gracefully
-    assert "documents" not in counts or counts["documents"] == 0
-    assert "chunks" not in counts or counts["chunks"] == 0
-    assert "relationships" not in counts or counts["relationships"] == 0
+    assert counts == {"documents": 0, "chunks": 0, "relationships": 0}
 
 
 def test_collect_counts_with_none_values():
     """Test collect_counts when query returns None values."""
     class NoneValueDriver:
-        def execute_query(self, query, database_=None):
+        def execute_query(self, query, parameters=None, database_=None):
             _ = query
+            _ = parameters
             _ = database_
             return ([{"value": None}], None, None)
 
@@ -765,131 +767,6 @@ def test_compute_totals_multiple_files_multiple_chunks(tmp_path):
     assert totals["token_estimate"]["max"] > 0
 
 
-def test_query_value_with_mapping_record():
-    """Test _query_value when record is a Mapping."""
-    class TestDriver:
-        def execute_query(self, query, parameters, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([{"value": 42}], None, None)
-
-    evaluator = IngestionQaEvaluator(
-        driver=TestDriver(),
-        database=None,
-        sources=[_chunk_record()],
-        thresholds=QaThresholds(),
-        report_root=Path("."),  # nosec
-        report_version="v1",
-    )
-
-    value = evaluator._query_value("MATCH (n) RETURN count(n)", {})
-    assert value == 42
-
-
-def test_query_value_with_object_attribute():
-    """Test _query_value when record has value attribute."""
-    from types import SimpleNamespace
-
-    class TestDriver:
-        def execute_query(self, query, parameters, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([SimpleNamespace(value=99)], None, None)
-
-    evaluator = IngestionQaEvaluator(
-        driver=TestDriver(),
-        database=None,
-        sources=[_chunk_record()],
-        thresholds=QaThresholds(),
-        report_root=Path("."),  # nosec
-        report_version="v1",
-    )
-
-    value = evaluator._query_value("MATCH (n) RETURN count(n)", {})
-    assert value == 99
-
-
-def test_query_value_with_list_access():
-    """Test _query_value when record requires list index access."""
-    class TestDriver:
-        def execute_query(self, query, parameters, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([[77]], None, None)
-
-    evaluator = IngestionQaEvaluator(
-        driver=TestDriver(),
-        database=None,
-        sources=[_chunk_record()],
-        thresholds=QaThresholds(),
-        report_root=Path("."),  # nosec
-        report_version="v1",
-    )
-
-    value = evaluator._query_value("MATCH (n) RETURN count(n)", {})
-    assert value == 77
-
-
-def test_query_value_with_empty_result():
-    """Test _query_value when query returns no records."""
-    class TestDriver:
-        def execute_query(self, query, parameters, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([], None, None)
-
-    evaluator = IngestionQaEvaluator(
-        driver=TestDriver(),
-        database=None,
-        sources=[_chunk_record()],
-        thresholds=QaThresholds(),
-        report_root=Path("."),  # nosec
-        report_version="v1",
-    )
-
-    value = evaluator._query_value("MATCH (n) RETURN count(n)", {})
-    assert value == 0
-
-
-def test_query_value_with_none_value():
-    """Test _query_value when record value is None."""
-    class TestDriver:
-        def execute_query(self, query, parameters, database_=None):
-            _ = query
-            _ = parameters
-            _ = database_
-            return ([{"value": None}], None, None)
-
-    evaluator = IngestionQaEvaluator(
-        driver=TestDriver(),
-        database=None,
-        sources=[_chunk_record()],
-        thresholds=QaThresholds(),
-        report_root=Path("."),  # nosec
-        report_version="v1",
-    )
-
-    value = evaluator._query_value("MATCH (n) RETURN count(n)", {})
-    assert value == 0
-
-
-def test_query_value_with_no_sources():
-    """Test _query_value returns 0 when no sources provided."""
-    evaluator = IngestionQaEvaluator(
-        driver=object(),
-        database=None,
-        sources=[],  # No sources
-        thresholds=QaThresholds(),
-        report_root=Path("."),  # nosec
-        report_version="v1",
-    )
-
-    value = evaluator._query_value("MATCH (n) RETURN count(n)", {})
-    assert value == 0
 
 
 def test_qa_result_dataclass_attributes():

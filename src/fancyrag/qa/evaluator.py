@@ -10,10 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
-from neo4j.exceptions import Neo4jError
-
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object
+from fancyrag.db.neo4j_queries import (
+    collect_counts,
+    collect_semantic_counts,
+    count_checksum_mismatches,
+    count_missing_embeddings,
+    count_orphan_chunks,
+)
 from fancyrag.qa.report import render_markdown, write_ingestion_report
 
 logger = get_logger(__name__)
@@ -82,43 +87,6 @@ class QaResult:
         """Return True when the QA evaluation passed."""
 
         return self.status == "pass"
-
-
-def collect_counts(driver, *, database: str | None) -> Mapping[str, int]:
-    """Return counts of Documents, Chunks, and HAS_CHUNK relationships from Neo4j."""
-
-    queries = {
-        "documents": "MATCH (:Document) RETURN count(*) AS value",
-        "chunks": "MATCH (:Chunk) RETURN count(*) AS value",
-        "relationships": "MATCH (:Document)-[:HAS_CHUNK]->(:Chunk) RETURN count(*) AS value",
-    }
-    counts: dict[str, int] = {}
-    for key, query in queries.items():
-        try:
-            result = driver.execute_query(query, database_=database)
-            records = result
-            if isinstance(result, tuple):
-                records = result[0]
-            else:
-                records = getattr(result, "records", result)
-            if not records:
-                continue
-            record = records[0]
-            if isinstance(record, Mapping):
-                value = record.get("value")
-            elif hasattr(record, "value"):
-                value = getattr(record, "value")
-            else:
-                try:
-                    value = record[0]  # type: ignore[index]
-                except Exception:  # pragma: no cover - defensive guard
-                    value = None
-            counts[key] = int(value or 0)
-        except Neo4jError:
-            logger.warning("kg_build.count_failed", query=key)
-    return counts
-
-
 class IngestionQaEvaluator:
     """Compute ingestion quality metrics and enforce gating thresholds."""
 
@@ -157,23 +125,15 @@ class IngestionQaEvaluator:
         metrics["graph_counts"] = counts
 
         if chunk_uids:
-            missing_embeddings = self._query_value(
-                """
-                UNWIND $uids AS uid
-                MATCH (c:Chunk {uid: uid})
-                WHERE c.embedding IS NULL OR size(c.embedding) = 0
-                RETURN count(*) AS value
-                """,
-                {"uids": chunk_uids},
+            missing_embeddings = count_missing_embeddings(
+                self._driver,
+                database=self._database,
+                chunk_uids=chunk_uids,
             )
-            orphan_chunks = self._query_value(
-                """
-                UNWIND $uids AS uid
-                MATCH (c:Chunk {uid: uid})
-                WHERE NOT ( (:Document)-[:HAS_CHUNK]->(c) )
-                RETURN count(*) AS value
-                """,
-                {"uids": chunk_uids},
+            orphan_chunks = count_orphan_chunks(
+                self._driver,
+                database=self._database,
+                chunk_uids=chunk_uids,
             )
         else:
             missing_embeddings = 0
@@ -185,14 +145,10 @@ class IngestionQaEvaluator:
             for chunk in record.chunks
         ]
         if chunk_rows:
-            checksum_mismatches = self._query_value(
-                """
-                UNWIND $rows AS row
-                MATCH (c:Chunk {uid: row.uid})
-                WHERE coalesce(c.checksum, "") <> row.checksum
-                RETURN count(*) AS value
-                """,
-                {"rows": chunk_rows},
+            checksum_mismatches = count_checksum_mismatches(
+                self._driver,
+                database=self._database,
+                chunk_rows=chunk_rows,
             )
         else:
             checksum_mismatches = 0
@@ -305,29 +261,9 @@ class IngestionQaEvaluator:
         if not self._semantic_summary or not self._semantic_summary.enabled:
             return {}
         tag = self._semantic_summary.source_tag
-        node_count = self._query_value(
-            "MATCH (n) WHERE n.semantic_source = $source RETURN count(*) AS value",
-            {"source": tag},
+        return collect_semantic_counts(
+            self._driver, database=self._database, source_tag=tag
         )
-        relationship_count = self._query_value(
-            (
-                "MATCH ()-[r]->() WHERE r.semantic_source = $source "
-                "RETURN count(*) AS value"
-            ),
-            {"source": tag},
-        )
-        orphan_count = self._query_value(
-            (
-                "MATCH (n) WHERE n.semantic_source = $source AND NOT (n)--() "
-                "RETURN count(*) AS value"
-            ),
-            {"source": tag},
-        )
-        return {
-            "nodes_in_db": node_count,
-            "relationships_in_db": relationship_count,
-            "orphan_entities": orphan_count,
-        }
 
     def _compute_totals(self) -> dict[str, Any]:
         """Compute aggregate counts and summary statistics for all provided QA sources."""
@@ -389,24 +325,3 @@ class IngestionQaEvaluator:
         if not text:
             return 0
         return max(1, math.ceil(len(text) / 4))
-
-    def _query_value(self, query: str, parameters: Mapping[str, Any]) -> int:
-        """Execute `query` and extract an integer `value` result."""
-
-        if not self._sources:
-            return 0
-        result = self._driver.execute_query(query, parameters, database_=self._database)
-        records = result[0] if isinstance(result, tuple) else result
-        if not records:
-            return 0
-        record = records[0]
-        if isinstance(record, Mapping):
-            value = record.get("value")
-        elif hasattr(record, "value"):
-            value = getattr(record, "value")
-        else:
-            try:
-                value = record[0]  # type: ignore[index]
-            except (IndexError, TypeError):
-                value = None
-        return int(value or 0)

@@ -27,12 +27,17 @@ from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
 from cli.utils import ensure_embedding_dimensions
 from config.settings import OpenAISettings
+from fancyrag.db.neo4j_queries import (
+    collect_counts as _collect_counts,
+    ensure_document_relationships as _ensure_document_relationships,
+    reset_database as _reset_database,
+    rollback_ingest as _rollback_ingest,
+)
 from fancyrag.qa import (
     IngestionQaEvaluator,
     QaChunkRecord,
     QaSourceRecord,
     QaThresholds,
-    collect_counts as _collect_counts,
 )
 from fancyrag.splitters import CachingSplitterConfig, build_caching_splitter
 from fancyrag.utils import (
@@ -1116,14 +1121,6 @@ class SharedOpenAILLM(LLMInterface):
             system_instruction,
         )
 
-
-
-def _reset_database(driver, *, database: str | None) -> None:
-    """Remove previously ingested nodes to guarantee a clean ingest for the run."""
-
-    driver.execute_query("MATCH (n) DETACH DELETE n", database_=database)
-
-
 def _execute_pipeline(
     *,
     uri: str,
@@ -1177,153 +1174,6 @@ def _execute_pipeline(
             return result.run_id
 
         return asyncio.run(_run())
-
-
-def _ensure_document_relationships(
-    driver,
-    *,
-    database: str | None,
-    source_path: Path,
-    relative_path: str,
-    git_commit: str | None,
-    document_checksum: str,
-    chunks_metadata: Sequence[ChunkMetadata],
-) -> None:
-    """
-    Ensure a Document node exists for the given source file and attach the provided Chunk nodes to it with up-to-date provenance.
-    
-    Creates or reuses a Document node identified by the file path, updates document-level provenance (relative path, git commit, checksum), sets per-chunk provenance (source path, relative path, git commit, checksum) for each chunk, preserves existing chunk identifiers when present, and ensures a HAS_CHUNK relationship from the Document to each Chunk.
-    
-    Parameters:
-        driver: Neo4j driver or wrapper used to execute the Cypher query.
-        database (str | None): Optional Neo4j database name to run the query against; pass None to use the default.
-        source_path (Path): Filesystem path of the source document used as the Document.source_path and to derive the document name/title.
-        relative_path (str): Stable repository-relative path to store on the Document and chunks.
-        git_commit (str | None): Git commit SHA to store as provenance on the Document and chunks, or None if unavailable.
-        document_checksum (str): SHA-256 checksum representing the current document content/version.
-        chunks_metadata (Sequence[ChunkMetadata]): Sequence of per-chunk provenance records (uid, sequence, index, relative_path, git_commit, checksum) to associate with the Document.
-    """
-    chunk_payload = [
-        {
-            "uid": meta.uid,
-            "sequence": meta.sequence,
-            "index": meta.index,
-            "relative_path": meta.relative_path,
-            "git_commit": meta.git_commit,
-            "checksum": meta.checksum,
-        }
-        for meta in chunks_metadata
-    ]
-
-    driver.execute_query(
-        """
-        // Create or reuse the Document node representing this source file
-        MERGE (doc:Document {source_path: $source_path})
-          ON CREATE SET doc.name = $document_name,
-                        doc.title = $document_name
-        // Refresh document-level provenance on every ingestion
-        SET doc.relative_path = $relative_path,
-            doc.git_commit = $git_commit,
-            doc.checksum = $document_checksum
-        WITH doc
-        // Process each chunk emitted by the current pipeline execution
-        UNWIND $chunk_payload AS meta
-        // Locate the unique chunk that matches the current payload entry using the uid assigned post-pipeline
-        MATCH (chunk:Chunk {uid: meta.uid})
-        WITH doc, chunk, meta
-        // Update per-chunk provenance while preserving existing identifiers when re-ingesting
-        SET chunk.source_path = $source_path,
-            chunk.relative_path = meta.relative_path,
-            chunk.git_commit = meta.git_commit,
-            chunk.checksum = meta.checksum,
-            chunk.chunk_id = coalesce(chunk.chunk_id, meta.sequence),
-            chunk.index = coalesce(chunk.index, meta.index)
-        // Ensure the Document ↔ Chunk relationship exists for this payload entry
-        MERGE (doc)-[:HAS_CHUNK]->(chunk)
-        """,
-        {
-            "source_path": str(source_path),
-            "document_name": source_path.name,
-            "relative_path": relative_path,
-            "git_commit": git_commit,
-            "document_checksum": document_checksum,
-            "chunk_payload": chunk_payload,
-        },
-        database_=database,
-    )
-
-
-def _rollback_ingest(
-    driver,
-    *,
-    database: str | None,
-    sources: Sequence[QaSourceRecord],
-) -> None:
-    """
-    Delete graph elements produced during the provided ingestion sources.
-
-    Removes Chunk nodes whose `uid` values appear in `sources`, detaches and deletes Documents that become orphaned, and
-    eliminates any additional nodes or relationships tagged with the ingestion run key associated with the sources. The
-    deletions are performed in the specified Neo4j `database` (or the driver's default if `None`).
-
-    Parameters:
-        database (str | None): Target Neo4j database name, or `None` to use the driver's default.
-        sources (Sequence[QaSourceRecord]): Sequence of QA source records describing the ingested artifacts to roll back.
-    """
-
-    run_keys = {
-        record.ingest_run_key for record in sources if record.ingest_run_key
-    }
-    if run_keys:
-        driver.execute_query(
-            """
-            UNWIND $run_keys AS run_key
-            MATCH ()-[rel]-()
-            WHERE rel.ingest_run_key = run_key
-            DELETE rel
-            """,
-            {"run_keys": list(run_keys)},
-            database_=database,
-        )
-        driver.execute_query(
-            """
-            UNWIND $run_keys AS run_key
-            MATCH (node)
-            WHERE node.ingest_run_key = run_key
-              AND NOT node:Document
-              AND NOT node:Chunk
-            DETACH DELETE node
-            """,
-            {"run_keys": list(run_keys)},
-            database_=database,
-        )
-
-    chunk_uids = [chunk.uid for record in sources for chunk in record.chunks]
-    if chunk_uids:
-        driver.execute_query(
-            """
-            UNWIND $uids AS uid
-            MATCH (c:Chunk {uid: uid})
-            DETACH DELETE c
-            """,
-            {"uids": chunk_uids},
-            database_=database,
-        )
-
-    relative_paths = {record.relative_path for record in sources}
-    if relative_paths:
-        driver.execute_query(
-            """
-            UNWIND $paths AS path
-            MATCH (doc:Document {relative_path: path})
-            WHERE NOT (doc)-[:HAS_CHUNK]->(:Chunk)
-            DETACH DELETE doc
-            """,
-            {"paths": list(relative_paths)},
-            database_=database,
-        )
-
-
 def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     """
     Orchestrates a knowledge-graph ingestion run using the provided pipeline options.
