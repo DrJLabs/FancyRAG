@@ -334,9 +334,17 @@ def _normalise_records(result: ValueResult) -> Sequence[Mapping[str, Any]]:
     if hasattr(result, "records"):
         records = result.records  # type: ignore[attr-defined]
         if callable(records):
-            return records()
-        return records
-    return result
+            records = records()
+        if isinstance(records, Sequence) and not isinstance(
+            records, (str, bytes, bytearray)
+        ):
+            return records
+        return list(records) if records else []
+    if isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
+        return result
+    if isinstance(result, Mapping):
+        return [result]
+    return []
 
 
 __all__ = [

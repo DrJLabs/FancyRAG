@@ -10,7 +10,9 @@ updated: '2025-10-04T17:05:00Z'
 waiver:
   active: false
 top_issues:
-- 'Technical: Keep diagnostics probe smoke in CI to catch override path drift across adapters (see QA-ENV-20251004 backlog follow-up).'
+- id: ARCH-001
+  severity: medium
+  summary: Keep diagnostics probe smoke in CI to catch override path drift across adapters (see QA-ENV-20251004 backlog follow-up).
 risk_summary:
   totals:
     critical: 0

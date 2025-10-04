@@ -263,7 +263,7 @@ def test_settings_enable_fallback_accepts_variants():
 def test_settings_enable_fallback_rejects_invalid():
     """Test OPENAI_ENABLE_FALLBACK rejects invalid values."""
     env = {"OPENAI_ENABLE_FALLBACK": "maybe"}
-    with pytest.raises(ValueError, match="Use true/false"):
+    with pytest.raises(ValueError, match="Use one of"):
         OpenAISettings.load(env, actor="pytest")
 
 

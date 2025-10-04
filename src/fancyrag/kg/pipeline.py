@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 try:  # pragma: no cover - exercised when optional deps (like pandas) are missing
     from neo4j import GraphDatabase
     from neo4j.exceptions import ClientError, Neo4jError
-except Exception as exc:  # noqa: BLE001 - ValueError raised by pandas binary mismatch must be caught
+except (ImportError, ValueError) as exc:  # ValueError raised by pandas binary mismatch must be caught
     GraphDatabase = None  # type: ignore[assignment]
 
     class Neo4jError(RuntimeError):
@@ -197,16 +197,6 @@ else:  # pragma: no cover - exercised only in minimal CI environments
                 "neo4j_graphrag is required for semantic enrichment support"
             )
 
-if _PYDANTIC_AVAILABLE and not _GRAPHRAG_AVAILABLE:
-
-    def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
-        """Fallback validate_call when neo4j_graphrag dependencies are unavailable."""
-
-        if func is None:
-            return lambda wrapped: wrapped
-        return func
-
-
     @dataclass
     class KGWriterModel:  # type: ignore[no-redef]
         """Minimal writer model capturing node/relationship counts."""
@@ -260,6 +250,21 @@ if _PYDANTIC_AVAILABLE and not _GRAPHRAG_AVAILABLE:
         """Container matching the interface expected from neo4j_graphrag splitters."""
 
         chunks: list[TextChunk]
+
+        def __iter__(self):
+            return iter(self.chunks)
+
+        def __len__(self) -> int:
+            return len(self.chunks)
+
+    if _PYDANTIC_AVAILABLE:
+
+        def validate_call(func=None, **_kwargs):  # type: ignore[no-redef]
+            """Fallback validate_call when neo4j_graphrag dependencies are unavailable."""
+
+            if func is None:
+                return lambda wrapped: wrapped
+            return func
 
 
     @dataclass

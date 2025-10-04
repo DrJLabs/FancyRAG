@@ -44,8 +44,16 @@ def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_
         return True
     if normalized in _FALSE_BOOL_VALUES:
         return False
-    logger.error(error_event, actor=actor_name, supplied=raw_value)
-    raise ValueError(f"Invalid {env_key} value '{raw_value}'. Use true/false.")
+    allowed_values = ", ".join(sorted(_TRUE_BOOL_VALUES | _FALSE_BOOL_VALUES))
+    logger.error(
+        error_event,
+        actor=actor_name,
+        supplied=raw_value,
+        allowed_values=allowed_values,
+    )
+    raise ValueError(
+        f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
+    )
 
 
 @dataclass(frozen=True)
