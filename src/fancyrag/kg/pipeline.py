@@ -1431,20 +1431,21 @@ def _ensure_positive(value: int, *, name: str) -> int:
 def _ensure_non_negative(value: int, *, name: str) -> int:
     """
     Validate that `value` is zero or positive.
-    
+
     Parameters:
-    	value (int): Integer to validate.
-    	name (str): Identifier used in the ValueError message when validation fails.
-    
+        value (int): Integer to validate.
+        name (str): Identifier used in the ValueError message when validation fails.
+
     Returns:
-    	int: The same `value` when it is zero or greater.
-    
+        int: The same `value` when it is zero or greater.
+
     Raises:
-    	ValueError: If `value` is less than zero; message will include `name`.
+        ValueError: If `value` is less than zero; message will include `name`.
     """
-    if value < 0:
+    validated = int(value)
+    if validated < 0:
         raise ValueError(f"{name} must be zero or positive")
-    return value
+    return validated
 
 
 def _ensure_directory(path: Path) -> None:
