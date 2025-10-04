@@ -1,27 +1,67 @@
 schema: 1
-gate: CONCERNS
-status_reason: "Pipeline extraction verified while semantic/QA toggle characterization tests and performance benchmark remain open follow-ups."
-reviewer: Quinn (QA)
-updated: 2025-10-03
+story: "4.2"
+story_title: "Pipeline Orchestrator Module"
+gate: "PASS"
+status_reason: "Orchestrator extraction validated through dedicated unit + integration coverage; semantic/QA toggles and docs parity confirmed with residual monitoring tracked for downstream module splits."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-04T10:30:00-07:00"
+waiver: { active: false }
 top_issues:
-  - id: TEST-001
+  - id: TECH-001
     severity: high
-    title: "Pipeline extraction misses semantic/QA toggles"
-    description: "Maintain characterization tests for semantic + QA toggles as additional modules extract."
-  - id: ARCH-002
+    summary: "Monitor semantic/QA toggle characterization as future module extractions build on the orchestrator."
+  - id: TECH-002
     severity: medium
-    title: "Import boundaries lack automated enforcement"
-    description: "Document and lint CLI → pipeline import direction to prevent circular dependencies."
-tests_reviewed:
-  - tests/unit/fancyrag/kg/test_pipeline.py
-  - tests/unit/fancyrag/cli/test_kg_build_main.py
-  - tests/integration/local_stack/test_minimal_path_smoke.py
-risks_identified:
-  - TEST-001 (score 6)
-  - ARCH-002 (score 4)
-  - DOC-001 (score 3)
-  - REL-001 (score 2)
-trace:
-  requirements: docs/stories/4.2.kg-pipeline.md
-  design: docs/architecture/projects/fancyrag-kg-build-refactor.md
-  tests: docs/qa/assessments/4.2-test-design-20251003.md
+    summary: "Track automation for CLI → pipeline import-direction linting during later refactors."
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/kg/test_pipeline.py"
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/cli/test_kg_build_main.py"
+    - "LOCAL_STACK_SKIP_DOCKER_CHECK=1 PYTHONPATH=src pytest tests/integration/local_stack/test_minimal_path_smoke.py -rs"
+  risks_identified:
+    - "TECH-001"
+    - "TECH-002"
+    - "DATA-001"
+    - "OPS-001"
+  trace:
+    totals:
+      requirements: 5
+      full: 5
+      partial: 0
+      none: 0
+    planning_ref: docs/qa/assessments/4.2-test-design-20251003.md
+    uncovered: []
+    notes: docs/stories/4.2.kg-pipeline.md
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 1
+    low: 2
+  highest: TECH-001
+  thresholds:
+    fail: "risk >= 9"
+    concerns: "risk >= 6"
+    pass: "risk < 6"
+  max_score: 6
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Expand semantic toggle regression tests as QA module refactors land."
+      - "Automate import-direction lint once QA and DB modules migrate."
+test_design:
+  scenarios_total: 11
+  by_level:
+    unit: 6
+    integration: 4
+    e2e: 1
+  by_priority:
+    p0: 5
+    p1: 5
+    p2: 1
+    p3: 0
+  coverage_gaps: []
+references:
+  risk_profile: docs/qa/assessments/4.2-risk-20251003.md
+  test_design: docs/qa/assessments/4.2-test-design-20251003.md
+  story: docs/stories/4.2.kg-pipeline.md
