@@ -1026,7 +1026,7 @@ def _build_chunk_metadata(
             raise ValueError("chunk object missing uid; cannot attribute metadata")
         if uid in seen_uids:
             raise ValueError(
-                "duplicate chunk uid detected while building metadata for ingestion"
+                f"duplicate chunk uid detected while building metadata for ingestion: {uid}"
             )
         seen_uids.add(uid)
         metadata.append(
