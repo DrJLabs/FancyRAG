@@ -73,4 +73,4 @@ Each script emits sanitized JSON logs under `artifacts/local_stack/`, making the
 - [GraphRAG Quickstart](docs/graphrag/QUICKSTART.md) – condensed setup checklist for newcomers.
 - Story close-outs live in `docs/stories/` with QA evidence under `docs/qa/`.
 
-For managed-service work, see open follow-ups in QA assessments; the mainline backlog currently ends with the local minimal path.
+This project is maintained for personal, local usage; managed-service deployment is out-of-scope.

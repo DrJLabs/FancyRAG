@@ -34,7 +34,7 @@ nfr_validation:
 recommendations:
   immediate: []
   future:
-    - action: "Schedule integration smoke rerun once managed-service stack updates resume."
+    - action: "Optionally rerun `tests/integration/local_stack/test_minimal_path_smoke.py` when major local environment changes occur."
       refs:
         - tests/integration/local_stack/test_minimal_path_smoke.py
 risk_summary:
@@ -51,7 +51,6 @@ risk_summary:
     must_fix:
       - "Maintain unit + pipeline regression coverage around scoped cache reuse"
     monitor:
-      - "Rerun integration smoke when managed-service stack work resumes"
       - "Add QA assertions to catch chunk metadata drift"
 test_design:
   scenarios_total: 8
