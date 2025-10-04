@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import statistics
 import time
@@ -15,7 +14,7 @@ from neo4j.exceptions import Neo4jError
 
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object
-from fancyrag.utils.paths import ensure_directory, relative_to_repo
+from fancyrag.qa.report import write_ingestion_report
 
 logger = get_logger(__name__)
 
@@ -263,11 +262,6 @@ class IngestionQaEvaluator:
             f"orphan_chunks={orphan_chunks}, checksum_mismatches={checksum_mismatches}"
         )
 
-        report_dir = self._report_root / timestamp.strftime("%Y%m%dT%H%M%S")
-        json_path = report_dir / "quality_report.json"
-        md_path = report_dir / "quality_report.md"
-        ensure_directory(json_path)
-
         payload = {
             "version": self._report_version,
             "generated_at": timestamp.isoformat(),
@@ -281,11 +275,11 @@ class IngestionQaEvaluator:
         metrics["qa_evaluation_ms"] = eval_duration_ms
 
         sanitized_payload = scrub_object(payload)
-        json_path.write_text(json.dumps(sanitized_payload, indent=2), encoding="utf-8")
-        md_path.write_text(self._render_markdown(sanitized_payload), encoding="utf-8")
-
-        report_json_rel = relative_to_repo(json_path)
-        report_md_rel = relative_to_repo(md_path)
+        report_json_rel, report_md_rel = write_ingestion_report(
+            sanitized_payload=sanitized_payload,
+            report_root=self._report_root,
+            timestamp=timestamp,
+        )
 
         return QaResult(
             status=status,
@@ -411,66 +405,3 @@ class IngestionQaEvaluator:
             except (IndexError, TypeError):
                 value = None
         return int(value or 0)
-
-    def _render_markdown(self, payload: Mapping[str, Any]) -> str:
-        """Render an ingestion QA payload as a Markdown-formatted report."""
-
-        lines: list[str] = []
-        lines.append(f"# Ingestion QA Report ({payload['version']})")
-        lines.append("")
-        lines.append(f"- Generated: {payload['generated_at']}")
-        lines.append(f"- Status: {payload['status'].upper()}")
-        lines.append(f"- Summary: {payload['summary']}")
-        lines.append("")
-        metrics_obj = payload.get("metrics", {})
-        metrics = metrics_obj if isinstance(metrics_obj, Mapping) else {}
-        lines.append("## Metrics")
-        lines.append("")
-        token_stats_obj = metrics.get("token_estimate", {})
-        token_stats = token_stats_obj if isinstance(token_stats_obj, Mapping) else {}
-        lines.append(f"- Files processed: {metrics.get('files_processed', 0)}")
-        lines.append(f"- Chunks processed: {metrics.get('chunks_processed', 0)}")
-        lines.append(f"- Token estimate total: {token_stats.get('total', 0)}")
-        lines.append(f"- Token estimate mean: {round(token_stats.get('mean', 0.0), 2)}")
-        lines.append(f"- Missing embeddings: {metrics.get('missing_embeddings', 0)}")
-        lines.append(f"- Orphan chunks: {metrics.get('orphan_chunks', 0)}")
-        lines.append(f"- Checksum mismatches: {metrics.get('checksum_mismatches', 0)}")
-        lines.append("")
-        histogram = token_stats.get("histogram", {})
-        if isinstance(histogram, Mapping) and histogram:
-            lines.append("### Token Histogram")
-            lines.append("")
-            lines.append("| Bucket | Count |")
-            lines.append("| --- | ---: |")
-            for bucket, count in histogram.items():
-                lines.append(f"| {bucket} | {count} |")
-            lines.append("")
-        anomalies = payload.get("anomalies", [])
-        lines.append("## Findings")
-        lines.append("")
-        if anomalies:
-            for item in anomalies:
-                lines.append(f"- ❌ {item}")
-        else:
-            lines.append("- ✅ All thresholds satisfied")
-        lines.append("")
-        thresholds = payload.get("thresholds", {})
-        if isinstance(thresholds, Mapping) and thresholds:
-            lines.append("## Thresholds")
-            lines.append("")
-            for key, value in thresholds.items():
-                lines.append(f"- {key}: {value}")
-            lines.append("")
-        files = metrics.get("files", [])
-        if isinstance(files, Sequence) and not isinstance(files, (str, bytes)) and files:
-            lines.append("## Files")
-            lines.append("")
-            lines.append("| Relative Path | Chunks | Checksum | Git Commit |")
-            lines.append("| --- | ---: | --- | --- |")
-            for entry in files:
-                if isinstance(entry, Mapping):
-                    lines.append(
-                        f"| {entry.get('relative_path', '***')} | {entry.get('chunks', '***')} | {entry.get('document_checksum', '***')} | {entry.get('git_commit') or '-'} |"
-                    )
-            lines.append("")
-        return "\n".join(lines)

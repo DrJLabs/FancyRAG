@@ -87,7 +87,7 @@ graph TD
 - **`src/fancyrag/kg/pipeline.py`**: Orchestrates the KG build stages (data loading, splitting, semantic enrichment, QA, Neo4j interactions) and now exposes a typed `PipelineOptions` + `run_pipeline()` API consumed by the CLI and future automation.
 - **`src/fancyrag/splitters/caching_fixed_size.py`**: Implements the `CachingFixedSizeSplitter` plus typed configuration and factory helpers for chunk size/overlap reuse.
 - **`src/fancyrag/qa/evaluator.py`**: Contains the `IngestionQaEvaluator` class, shared QA dataclasses, and `collect_counts` helper consumed by the pipeline.
-- **`src/fancyrag/qa/report.py`**: Generates JSON and Markdown QA reports.
+- **`src/fancyrag/qa/report.py`**: Generates sanitized JSON and Markdown QA reports, managing timestamped directories and relative paths for downstream consumers.
 - **`src/fancyrag/db/neo4j_queries.py`**: Stores Cypher query strings and thin wrappers for counts and lookups against Neo4j.
 - **`src/fancyrag/config/schema.py`**: Loads and validates KG schema definitions.
 - **`src/fancyrag/utils/env.py`**: Centralizes environment variable utilities reused across modules.
