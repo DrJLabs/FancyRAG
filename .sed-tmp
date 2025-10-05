@@ -1,0 +1,54 @@
+# Comprehensive Unit Tests - Story 4.7 Schema and Environment Utilities
+
+## Executive Summary
+
+This document describes the comprehensive test suite generated for Story 4.7, which introduces schema loading and environment configuration utilities for the FancyRAG project.
+
+## What Was Tested
+
+The following files from the git diff (main..HEAD) were tested:
+
+### Python Source Files
+1. **`src/fancyrag/config/schema.py`** (86 lines)
+   - Schema loading and validation helpers
+   - Path resolution utilities
+   - Module availability detection
+   - GraphSchema placeholder implementation
+
+2. **`src/fancyrag/config/__init__.py`** (21 lines)
+   - Public API exports
+   - Module initialization
+
+### Documentation Files
+3. **`docs/qa/gates/4.7-schema-and-env.yml`** (72 lines)
+   - QA gate configuration and status
+   - Risk summary and evidence
+   - NFR validation results
+
+4. **`docs/stories/4.7.schema-and-env.md`** (145 lines)
+   - Story description and acceptance criteria
+   - Implementation details
+   - Usage examples
+
+5. **QA Assessment Documents** (6 files, 234 lines total)
+   - `docs/qa/assessments/4.7-nfr-20251005.md`
+   - `docs/qa/assessments/4.7-po-validation-20251005.md`
+   - `docs/qa/assessments/4.7-review-20251005.md`
+   - `docs/qa/assessments/4.7-risk-20251005.md`
+   - `docs/qa/assessments/4.7-test-design-20251005.md`
+   - `docs/qa/assessments/4.7-trace-20251005.md`
+
+## Test Suite Overview
+
+### Test Files Created/Modified
+
+| File | Type | Tests | Lines | Purpose |
+|------|------|-------|-------|---------|
+| `tests/unit/fancyrag/config/test_schema.py` | Extended | 62 | 615 | Schema functionality tests |
+| `tests/unit/fancyrag/config/test_init.py` | New | 12 | ~100 | Module exports tests |
+| `tests/unit/docs/qa/gates/test_gate_yaml_validation.py` | New | 20 | ~300 | YAML gate validation |
+| `tests/unit/docs/stories/test_story_markdown_validation.py` | New | 15 | ~280 | Story markdown validation |
+| `tests/unit/docs/qa/assessments/test_assessment_validation.py` | New | 32 | ~300 | Assessment validation |
+| **TOTAL** | | **141** | **~1,595** | |
+
+### Test Distribution
