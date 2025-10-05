@@ -73,7 +73,7 @@ def test_story_markdown_code_blocks_have_language():
     if code_blocks:
         labeled_ratio = (len(code_blocks) - len(unlabeled)) / len(code_blocks)
         assert labeled_ratio >= 0.5, \
-            f"Less than 50% of code blocks have language specified"
+            "Less than 50% of code blocks have language specified"
 
 
 def test_story_markdown_no_broken_internal_links():
@@ -85,7 +85,7 @@ def test_story_markdown_no_broken_internal_links():
     # Find markdown links: [text](path)
     links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
 
-    for link_text, link_path in links:
+    for _link_text, link_path in links:
         # Skip external links
         if link_path.startswith(('http://', 'https://', 'mailto:', '#')):
             continue
@@ -239,3 +239,276 @@ def test_story_markdown_references_match_gate():
         story_filename = story_file.name
         assert story_filename in gate_content, \
             f"Story {story_filename} not referenced in gate file"
+
+
+def test_4_8_story_markdown_exists():
+    """Test that the Story 4.8 markdown file exists."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    assert story_file.exists(), f"Story file not found: {story_file}"
+
+
+def test_4_8_story_markdown_is_readable():
+    """Test that the Story 4.8 markdown file can be read."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+    assert len(content) > 0, "Story file is empty"
+
+
+def test_4_8_story_markdown_has_title():
+    """Test that Story 4.8 has a proper markdown title."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should have at least one H1 heading
+    assert re.search(r'^#\s+.*4\.8.*test', content, re.MULTILINE | re.IGNORECASE), \
+        "No Story 4.8 H1 heading found"
+
+
+def test_4_8_story_markdown_has_sections():
+    """Test that Story 4.8 has standard sections."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Common story sections
+    expected_sections = [
+        r'##\s+Status',
+        r'##\s+Story',
+        r'##\s+Acceptance\s+Criteria',
+        r'##\s+Tasks',
+        r'##\s+Testing',
+    ]
+
+    found_sections = sum(
+        1
+        for pattern in expected_sections
+        if re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
+    )
+    assert found_sections >= 3, f"Story 4.8 missing standard sections, found {found_sections}"
+
+
+def test_4_8_story_markdown_has_acceptance_criteria():
+    """Test that Story 4.8 has acceptance criteria section."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Look for acceptance criteria section
+    assert re.search(r'acceptance\s+criteria', content, re.IGNORECASE), \
+        "No acceptance criteria section found"
+    
+    # Should list multiple ACs
+    ac_items = re.findall(r'^\d+\.\s+', content, re.MULTILINE)
+    assert len(ac_items) >= 4, f"Story 4.8 should have at least 4 ACs, found {len(ac_items)}"
+
+
+def test_4_8_story_markdown_has_qa_results():
+    """Test that Story 4.8 documents QA results."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should have QA results section
+    assert re.search(r'##\s+QA\s+Results', content, re.MULTILINE | re.IGNORECASE), \
+        "No QA Results section found"
+
+
+def test_4_8_story_markdown_references_gate():
+    """Test that Story 4.8 references its gate YAML."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should reference the gate file
+    gate_ref = r'docs/qa/gates/4\.8-tests-and-smoke\.yml'
+    assert re.search(gate_ref, content), \
+        "Story 4.8 should reference gate YAML"
+
+
+def test_4_8_story_markdown_has_test_commands():
+    """Test that Story 4.8 documents test execution commands."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should mention pytest commands
+    assert "pytest" in content, "Story 4.8 should document pytest commands"
+    assert "PYTHONPATH=src" in content, "Story 4.8 should show PYTHONPATH setup"
+
+
+def test_4_8_story_markdown_has_code_blocks():
+    """Test that Story 4.8 has code examples."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Look for code blocks with triple backticks
+    code_blocks = re.findall(r'```[\s\S]*?```', content)
+    # Testing story should have code examples
+    assert len(code_blocks) > 0, "No code blocks found in Story 4.8"
+
+
+def test_4_8_story_markdown_references_assessments():
+    """Test that Story 4.8 references assessment documents."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should reference trace or other assessments
+    assessment_indicators = [
+        r'docs/qa/assessments/4\.8-',
+        r'trace',
+        r'nfr',
+    ]
+
+    found = sum(1 for indicator in assessment_indicators
+                if re.search(indicator, content, re.IGNORECASE))
+    assert found >= 2, "Story 4.8 should reference assessment documents"
+
+
+def test_4_8_story_markdown_has_proper_headings_hierarchy():
+    """Test that Story 4.8 headings follow proper hierarchy."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Extract all headings with their levels
+    headings = re.findall(r'^(#{1,6})\s+(.+)$', content, re.MULTILINE)
+
+    prev_level = 0
+    for heading_marks, heading_text in headings:
+        level = len(heading_marks)
+        # Allow going up one level or staying same, but not jumping multiple levels
+        if level > prev_level + 1:
+            pytest.fail(f"Story 4.8 heading hierarchy jump: H{prev_level} to H{level} ({heading_text})")
+        prev_level = level
+
+
+def test_4_8_story_markdown_valid_utf8():
+    """Test that Story 4.8 is valid UTF-8."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    try:
+        content = story_file.read_text(encoding="utf-8")
+        # Try encoding back to ensure no issues
+        content.encode("utf-8")
+    except UnicodeDecodeError as e:
+        pytest.fail(f"Invalid UTF-8 in Story 4.8: {e}")
+
+
+def test_4_8_story_markdown_references_match_gate():
+    """Test that Story 4.8 is referenced in the gate YAML."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    gate_file = Path("docs/qa/gates/4.8-tests-and-smoke.yml")
+
+    if gate_file.exists():
+        gate_content = gate_file.read_text(encoding="utf-8")
+        story_filename = story_file.name
+        assert story_filename in gate_content, \
+            f"Story {story_filename} not referenced in gate file"
+
+
+def test_4_8_story_markdown_has_dev_notes():
+    """Test that Story 4.8 includes development notes."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should have dev notes section
+    assert re.search(r'##\s+Dev\s+Notes', content, re.MULTILINE | re.IGNORECASE), \
+        "No Dev Notes section found"
+
+
+def test_4_8_story_markdown_has_change_log():
+    """Test that Story 4.8 includes a change log."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should have change log section
+    change_log_indicators = [
+        r'##\s+Change\s+Log',
+        r'\|\s*Date\s*\|',
+        r'\|\s*Version\s*\|',
+    ]
+
+    found = any(re.search(indicator, content, re.IGNORECASE)
+                for indicator in change_log_indicators)
+    assert found, "Story 4.8 should include change log"
+
+
+def test_4_8_story_markdown_status_is_done():
+    """Test that Story 4.8 status is marked as Done."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should have status section indicating Done
+    status_section = re.search(r'##\s+Status\s*\n([^\n#]+)', content, re.IGNORECASE)
+    if status_section:
+        status_text = status_section.group(1).lower()
+        assert 'done' in status_text, "Story 4.8 should be marked as Done"
+
+
+def test_4_8_story_markdown_mentions_unit_and_integration():
+    """Test that Story 4.8 mentions both unit and integration testing."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    assert re.search(r'\bunit\b', content, re.IGNORECASE), \
+        "Story 4.8 should mention unit testing"
+    assert re.search(r'\bintegration\b', content, re.IGNORECASE), \
+        "Story 4.8 should mention integration testing"
+
+
+def test_4_8_story_markdown_has_po_validation():
+    """Test that Story 4.8 documents PO validation."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Should mention PO validation
+    po_indicators = [
+        r'PO\s+Validation',
+        r'Product\s+Owner',
+        r'Approved',
+    ]
+
+    found = any(re.search(indicator, content, re.IGNORECASE)
+                for indicator in po_indicators)
+    assert found, "Story 4.8 should document PO validation"
+
+
+def test_4_8_story_markdown_no_broken_internal_links():
+    """Test that Story 4.8 internal links are valid."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+    repo_root = story_file.parent.parent.parent
+
+    # Find markdown links: [text](path)
+    links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
+
+    for _link_text, link_path in links:
+        # Skip external links
+        if link_path.startswith(('http://', 'https://', 'mailto:', '#')):
+            continue
+
+        # Resolve relative path
+        if link_path.startswith('/'):
+            target = repo_root / link_path.lstrip('/')
+        else:
+            target = story_file.parent / link_path
+
+        # Remove anchor
+        if '#' in link_path:
+            link_path = link_path.split('#')[0]
+            if link_path:  # Only check if there's a file path
+                target = story_file.parent / link_path if not link_path.startswith('/') \
+                    else repo_root / link_path.lstrip('/')
+
+        if link_path and not link_path.startswith('#'):
+            assert target.exists(), f"Broken link in Story 4.8: {link_path} -> {target}"
+
+
+def test_4_8_story_markdown_tasks_marked_complete():
+    """Test that Story 4.8 tasks are marked as complete."""
+    story_file = Path("docs/stories/4.8.tests-and-smoke.md")
+    content = story_file.read_text(encoding="utf-8")
+
+    # Find task checkboxes
+    completed_tasks = re.findall(r'-\s+\[x\]', content, re.IGNORECASE)
+    incomplete_tasks = re.findall(r'-\s+\[\s\]', content)
+
+    # Story is done, so tasks should be complete
+    if completed_tasks or incomplete_tasks:
+        total_tasks = len(completed_tasks) + len(incomplete_tasks)
+        completion_ratio = len(completed_tasks) / total_tasks if total_tasks > 0 else 1
+        assert completion_ratio >= 0.9, \
+            f"Story 4.8 marked Done but only {completion_ratio:.0%} tasks complete"
