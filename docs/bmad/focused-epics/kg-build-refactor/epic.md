@@ -1,7 +1,7 @@
 # Epic 4: FancyRAG `kg_build.py` Monolith Decomposition
 
 ## Status
-In Progress — 2025-10-04. Stories 4.1, 4.2, 4.5, and 4.6 delivered; remaining slices queue behind schema and testing work.
+In Progress — 2025-10-05. Stories 4.1–4.7 delivered; final slice focuses on regression parity and smoke automation.
 
 ## Epic Goal
 Break the `scripts/kg_build.py` monolith into composable modules under `src/fancyrag/`, leaving a thin CLI wrapper and establishing guardrails that improve maintainability, testability, and future extensibility.
@@ -26,11 +26,11 @@ Break the `scripts/kg_build.py` monolith into composable modules under `src/fanc
 ## Stories
 1. ☑ **Story 4.1:** Extract CLI wiring into `src/fancyrag/cli/kg_build_main.py` and update `scripts/kg_build.py` to call the packaged entry point (`docs/stories/4.1.cli-kg-build-main.md`).
 2. ☑ **Story 4.2:** Move pipeline orchestration and dependency validation into `src/fancyrag/kg/pipeline.py` with cohesive interfaces (`docs/stories/4.2.kg-pipeline.md`).
-3. ☐ **Story 4.3:** Relocate the caching splitter into `src/fancyrag/splitters/caching_fixed_size.py` with reusable configuration hooks (`docs/stories/4.3.caching-fixed-size-splitter.md`).
-4. ☐ **Story 4.4:** Separate QA evaluation logic into `src/fancyrag/qa/evaluator.py` and establish thresholds/totals utilities (`docs/stories/4.4.qa-evaluator.md`).
+3. ☑ **Story 4.3:** Relocate the caching splitter into `src/fancyrag/splitters/caching_fixed_size.py` with reusable configuration hooks (`docs/stories/4.3.caching-fixed-size-splitter.md`).
+4. ☑ **Story 4.4:** Separate QA evaluation logic into `src/fancyrag/qa/evaluator.py` and establish thresholds/totals utilities (`docs/stories/4.4.qa-evaluator.md`).
 5. ☑ **Story 4.5:** Create `src/fancyrag/qa/report.py` for JSON/Markdown reporting and wire it into the pipeline (`docs/stories/4.5.qa-report.md`).
 6. ☑ **Story 4.6:** Extract Neo4j query helpers into `src/fancyrag/db/neo4j_queries.py` and update call sites (`docs/stories/4.6.neo4j-queries.md`).
-7. ☐ **Story 4.7:** Stand up schema utilities under `src/fancyrag/config/schema.py` plus shared environment helpers in `src/fancyrag/utils/env.py` (`docs/stories/4.7.schema-and-env.md`).
+7. ☑ **Story 4.7:** Stand up schema utilities under `src/fancyrag/config/schema.py` plus shared environment helpers in `src/fancyrag/utils/env.py` (`docs/stories/4.7.schema-and-env.md`).
 8. ☐ **Story 4.8:** Author module-level unit tests and an end-to-end CLI smoke validating parity with the legacy script (`docs/stories/4.8.tests-and-smoke.md`).
 
 ## Compatibility Requirements
