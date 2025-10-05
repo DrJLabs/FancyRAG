@@ -1,7 +1,6 @@
 """Configuration helpers for FancyRAG."""
 
 from .schema import (
-    DEFAULT_SCHEMA,
     DEFAULT_SCHEMA_FILENAME,
     DEFAULT_SCHEMA_PATH,
     GraphSchema,
@@ -11,7 +10,6 @@ from .schema import (
 )
 
 __all__ = [
-    "DEFAULT_SCHEMA",
     "DEFAULT_SCHEMA_FILENAME",
     "DEFAULT_SCHEMA_PATH",
     "GraphSchema",
