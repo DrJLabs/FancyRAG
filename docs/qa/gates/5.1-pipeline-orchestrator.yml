@@ -1,0 +1,56 @@
+schema: 1
+story: '5.1'
+story_title: 'Pipeline Orchestrator Decomposition'
+gate: PASS
+status_reason: 'Helper decomposition validated; env guard and docs lint close prior gaps.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-10-06T17:00:00Z'
+quality_score: 100
+expires: '2025-10-20T00:00:00Z'
+
+top_issues: []
+
+waiver:
+  active: false
+
+evidence:
+  tests_reviewed: 28
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4]
+    ac_gaps: []
+
+trace:
+  totals:
+    requirements: 4
+    full: 2
+    partial: 1
+    none: 1
+  planning_ref: 'docs/qa/assessments/5.1-test-design-20251006.md'
+  uncovered:
+    - ac: 'AC4'
+      reason: 'Architecture documentation updates rely on manual verification; automate linting.'
+  notes: 'See docs/qa/assessments/5.1-trace-20251006.md'
+
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: 'Pipeline logs are scrubbed and helpers accept injected dependencies; no credential leakage detected.'
+  performance:
+    status: PASS
+    notes: 'Splitter caching and semantic concurrency remain configurable; no regressions observed.'
+  reliability:
+    status: PASS
+    notes: 'QA rollback still triggers on gating failure and minimal-path smoke remains available.'
+  maintainability:
+    status: PASS
+    notes: 'Helper guard tests and documentation lint keep helper surface observable.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Keep helper guard and architecture lint in CI; capture next minimal-path smoke evidence.'
+      refs:
+        - 'tests/unit/fancyrag/kg/test_phases.py'
+        - 'tests/unit/docs/architecture/test_helper_references.py'

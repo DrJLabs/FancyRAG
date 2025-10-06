@@ -85,6 +85,7 @@ graph TD
 - **`scripts/kg_build.py`**: Thin wrapper that calls the `main` function in `src/fancyrag/cli/kg_build_main.py`; contains no business logic.
 - **`src/fancyrag/cli/kg_build_main.py`**: Handles CLI argument parsing and orchestrates execution of the KG build pipeline by instantiating classes from other modules.
 - **`src/fancyrag/kg/pipeline.py`**: Orchestrates the KG build stages (data loading, splitting, semantic enrichment, QA, Neo4j interactions) and now exposes a typed `PipelineOptions` + `run_pipeline()` API consumed by the CLI and future automation.
+- **`src/fancyrag/kg/phases.py`**: Defines the decomposed helper surface (`resolve_settings`, `discover_sources`, `build_clients`, `ingest_source`, `run_semantic_enrichment`, `perform_qa`) plus light result dataclasses. `run_pipeline()` delegates to these helpers so each phase can be tested in isolation without touching global state.
 - **`src/fancyrag/splitters/caching_fixed_size.py`**: Implements the `CachingFixedSizeSplitter` plus typed configuration and factory helpers for chunk size/overlap reuse.
 - **`src/fancyrag/qa/evaluator.py`**: Contains the `IngestionQaEvaluator` class, shared QA dataclasses, and delegates graph lookups to the shared Neo4j helper module.
 - **`src/fancyrag/qa/report.py`**: Generates sanitized JSON and Markdown QA reports, managing timestamped directories and relative paths for downstream consumers.
@@ -98,13 +99,13 @@ graph TD
 1. User executes `scripts/kg_build.py` from the command line.
 2. The script calls the `main` function in `src/fancyrag/cli/kg_build_main.py`.
 3. `kg_build_main.py` parses arguments and instantiates the pipeline orchestrator.
-4. `pipeline.py` performs the KG build by:
-   - Loading the schema via `schema.py`.
-   - Loading data for ingestion.
-   - Splitting text with `caching_fixed_size.py`.
-   - Interacting with Neo4j through `neo4j_queries.py`.
-   - Evaluating ingestion quality using `evaluator.py`.
-   - Producing QA reports with `report.py`.
+4. `pipeline.py` performs the KG build by orchestrating helper phases:
+   - `resolve_settings` normalises chunk/semantic configuration from CLI input.
+   - `discover_sources` materialises `SourceSpec` records for either a single file or directory crawl.
+   - `build_clients` initialises the shared OpenAI client bundle and caching splitter.
+   - For each source, `ingest_source` runs `_execute_pipeline`, captures chunk metadata, and optionally invokes `run_semantic_enrichment`.
+   - `perform_qa` aggregates ingestion QA via `IngestionQaEvaluator`, producing both structured results and report artefact paths.
+   - The coordinator serialises the final log and QA report metadata for downstream tooling.
 
 ## 5. Testing Strategy
 

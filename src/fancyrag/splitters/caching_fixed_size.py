@@ -172,16 +172,32 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         Returns:
             TextChunks: The resulting chunks for `text`. On cache hits, chunks preserve text/index/metadata but have newly generated `uid` values.
         """
+        is_sequence_input = not isinstance(text, str)
+        normalized_sequence: tuple[str, ...] | None = None
+        sequence_items: list[str] | None = None
+        if is_sequence_input:
+            normalized_sequence = tuple(text)  # type: ignore[arg-type]
+            sequence_items = list(normalized_sequence)
+
+        cache_key_input: str | Sequence[str] = (
+            normalized_sequence if normalized_sequence is not None else text
+        )
+
         if config is not None:
+            if is_sequence_input and sequence_items is not None:
+                return self._build_chunks_from_items(sequence_items)
             try:
                 return await super().run(text, config)
             except (TypeError, ValidationError):  # pragma: no cover - fallback path
                 return await super().run(text)
 
-        key = self._cache_key(text)
+        key = self._cache_key(cache_key_input)
         blueprint = self._blueprints.get(key)
         if blueprint is None:
-            result = await super().run(text)
+            if is_sequence_input and sequence_items is not None:
+                result = self._build_chunks_from_items(sequence_items)
+            else:
+                result = await super().run(text)
             self._blueprints[key] = [
                 {
                     "text": chunk.text,
@@ -206,6 +222,15 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         text_chunks = TextChunks(chunks=chunks)
         self._last_outputs[key] = text_chunks
         return text_chunks
+
+    def _build_chunks_from_items(self, items: Sequence[str]) -> TextChunks:
+        """Construct TextChunks directly for sequence inputs."""
+
+        chunks = [
+            TextChunk(text=item, index=index, metadata=None, uid=str(uuid4()))
+            for index, item in enumerate(items)
+        ]
+        return TextChunks(chunks=chunks)
 
     def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
         """

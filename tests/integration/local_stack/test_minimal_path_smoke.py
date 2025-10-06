@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import json
 
 import pytest
 
@@ -227,6 +228,23 @@ def test_minimal_path_smoke() -> None:
             str(PROJECT_ROOT / "artifacts" / "docs" / "check_docs_smoke.json"),
             env=env,
         )
+
+        log_path = PROJECT_ROOT / "artifacts" / "local_stack" / "kg_build.json"
+        assert log_path.exists(), "kg_build.json log missing after CLI run"
+        log_data = json.loads(log_path.read_text(encoding="utf-8"))
+        assert log_data["status"] == "success"
+        assert log_data.get("run_ids"), "expected at least one run id"
+        assert log_data.get("files"), "log should include ingested files"
+        qa_section = log_data.get("qa")
+        assert qa_section and qa_section["status"] == "pass"
+        for key in ("report_json", "report_markdown"):
+            report_path = Path(qa_section[key])
+            if not report_path.is_absolute():
+                candidate = PROJECT_ROOT / report_path
+                if not candidate.exists():
+                    candidate = (log_path.parent / report_path)
+                report_path = candidate
+            assert report_path.exists(), f"{key} report missing at {report_path}"
 
     finally:
         if stack_started and not skip_docker_ops:

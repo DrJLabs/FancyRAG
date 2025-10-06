@@ -13,14 +13,15 @@ Greenfield implementation grounded in the official `neo4j-graphrag` Python packa
 |------------|---------|-------------------------------------------------------------------------------|------------|
 | 2025-09-24 | 0.1     | Recast architecture document into BMAD structure; added diagrams and workflows | Codex CLI  |
 | 2025-09-28 | 0.2     | Shifted scope to local Docker stack and scripted minimal path                 | Codex CLI  |
-| 2025-10-02 | 0.3     | Documented upcoming `kg_build.py` modular refactor and linked addendum      | Codex CLI  |
+| 2025-10-02 | 0.3     | Documented upcoming `kg_build.py` modular refactor and linked addendum        | Codex CLI  |
+| 2025-10-06 | 0.4     | Reflected delivered FancyRAG modules, telemetry/automation scope, and managed-endpoint readiness | Codex CLI  |
 
 ## High Level Architecture
 ### Technical Summary
-The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. Docker Compose (`docker-compose.neo4j-qdrant.yml`) launches Neo4j 5.26.12 with APOC Core and Qdrant 1.15.4 on the developer host. Python scripts create the Neo4j vector index, run `SimpleKGPipeline`, export embeddings to Qdrant, and execute retrieval with `QdrantNeo4jRetriever` and OpenAI GPT models.
+The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. Docker Compose (`docker-compose.neo4j-qdrant.yml`) launches Neo4j 5.26.12 with APOC Core and Qdrant 1.15.4 on the developer host. FancyRAG modules under `src/fancyrag/` wrap `SimpleKGPipeline`, Neo4j/Qdrant helpers, caching splitters, and QA evaluators. Python scripts (`scripts/*.py`) expose operable commands that create the Neo4j vector index, run ingestion, export embeddings to Qdrant, and execute retrieval with `QdrantNeo4jRetriever` and OpenAI GPT models.
 
 ### High Level Overview
-- **Architectural style:** Monolithic CLI orchestrator with local containerized dependencies.
+- **Architectural style:** Monolithic CLI orchestrator with modular FancyRAG subsystems and local containerized dependencies.
 - **Repository structure:** Single repository containing CLI code, scripts, Compose files, and documentation.
 - **Services:** Neo4j database (default DB `neo4j`), Qdrant collection (`chunks_main`), OpenAI APIs.
 - **Data Flow:** Text/PDF sources → KG builder → Neo4j (Document/Chunk nodes) → export embeddings → Qdrant → retrieval joins vector hits with Neo4j context → OpenAI generates grounded answers.
@@ -50,14 +51,25 @@ graph TD
 ### Architectural and Design Patterns
 - **Monolithic CLI Orchestrator:** A single Python entrypoint plus helper scripts coordinate ingestion, vector sync, and retrieval.
 - **Dependency Injection:** Scripts accept drivers/clients (Neo4j, Qdrant, OpenAI) via configuration helpers for easy swapping.
+- **Structured Telemetry Artifacts:** Ingestion emits sanitized JSON/Markdown bundles (run logs, QA reports, upcoming manifest schema) to `artifacts/local_stack/` for downstream QA and PM automation.
 - **Vector-Graph Join Pattern:** Store Neo4j identifiers in Qdrant payloads and hydrate graph context post-search to preserve grounded responses.
 - **Idempotent Pipelines:** Each script is safe to rerun; Neo4j writes use `MERGE` and Qdrant upserts replace existing vectors.
 
-## Upcoming Refactor — FancyRAG `kg_build.py`
-- Objective: Transform the current `scripts/kg_build.py` monolith into a `src/fancyrag/` package with modules for CLI wiring, pipeline orchestration, QA/reporting, Neo4j queries, and configuration utilities.
-- Guardrails: Single-responsibility modules (200–400 LOC), typed interfaces, centralized environment helpers, and per-module unit tests with an end-to-end CLI smoke.
-- Planning Artifacts: [Architecture Addendum](architecture/projects/fancyrag-kg-build-refactor.md), [Project Brief](prd/projects/fancyrag-kg-build-refactor/project-brief.md), and [Epic 4](bmad/focused-epics/kg-build-refactor/epic.md).
-- Impact: Source tree will grow under `src/fancyrag/`; update `docs/architecture/source-tree.md` once modules land, and keep `scripts/kg_build.py` as a thin delegator.
+## Delivered FancyRAG Modules
+- Status: Stories 4.3–4.6 migrated the ingestion pipeline into `src/fancyrag/` with dedicated packages for splitters, QA evaluation/reporting, Neo4j Cypher helpers, schema loading, and CLI orchestration. `scripts/kg_build.py` now delegates to `fancyrag.cli.kg_build_main.main`.
+- Guardrails: Modules remain within 200–400 LOC, fully typed, and covered by unit test suites (`tests/unit/fancyrag/...`). Integration smoke (`tests/integration/local_stack/test_minimal_path_smoke.py`) ensures parity with the original monolith.
+- Documentation: Source tree shards, refactor addendum, and Epic 4 entries have been updated to reflect the delivered modules.
+
+## Upcoming Service Hardening (Epic 5: FancyRAG Service Hardening)
+- Objective: Address maintainability gaps highlighted in the Oct 2025 refactor report—decomposing the ingestion pipeline, centralising configuration, adding pluggable adapters, caching expensive operations, introducing automated RAG evaluation, and instrumenting observability.
+- Key Deliverables:
+  - Composable pipeline helpers for settings, source discovery, client construction, ingestion, semantic enrichment, and QA.
+  - Typed settings surface (`FancyRAGSettings`) replacing ad-hoc environment lookups across CLI and pipeline entry points.
+  - Adapter interfaces (`Embedder`, `VectorStore`, `KGWriter`, `LLM`, etc.) with GraphRAG/OpenAI implementations to enable future swapping and easier testing.
+  - Embedding and generation caching with configurable TTL/versioning and telemetry on hit ratios.
+  - RAG evaluation harness (e.g., RAGAS) producing scorecards and CI gating on retrieval/faithfulness metrics.
+  - OpenTelemetry-based tracing and metrics covering every ingestion stage with OTLP export support.
+- Planning Artifacts: See `docs/prd.md` (v0.4), `docs/brownfield-architecture.md`, and the maintainability roadmap (`docs/Refactoring for maintainability.pdf`).
 
 ## Tech Stack
 See `docs/architecture/tech-stack.md` for the authoritative table. Highlights:
