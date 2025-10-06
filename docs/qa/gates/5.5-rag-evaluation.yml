@@ -1,7 +1,7 @@
 schema: 1
 story: "5.5"
 story_title: "RAG Evaluation Harness"
-gate: "PENDING"
+gate: "CONCERNS"
 status_reason: "Pre-implementation QA gate drafted to define evidence expectations and CI thresholds before Story 5.5 delivery."
 reviewer: "Quinn (Test Architect)"
 updated: "2025-10-06T00:00:00-04:00"
@@ -9,8 +9,12 @@ quality_score: 0
 expires: "2025-10-31T00:00:00-04:00"
 waiver: { active: false }
 top_issues:
-  - "Baseline precision/recall/faithfulness thresholds must be agreed with QA before CI enforcement."
-  - "Ensure evaluation scorecards are artefacted under artifacts/local_stack/evaluation/<timestamp>/."
+  - id: "TEST-501"
+    severity: high
+    summary: "Baseline precision/recall/faithfulness thresholds must be agreed with QA before CI enforcement."
+  - id: "REQ-502"
+    severity: medium
+    summary: "Ensure evaluation scorecards are artefacted under artifacts/local_stack/evaluation/<timestamp>/."
 
 evidence:
   tests_expected:

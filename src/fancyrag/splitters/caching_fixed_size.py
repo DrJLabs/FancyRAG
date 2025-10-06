@@ -184,8 +184,6 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         )
 
         if config is not None:
-            if is_sequence_input and sequence_items is not None:
-                return self._build_chunks_from_items(sequence_items)
             try:
                 return await super().run(text, config)
             except (TypeError, ValidationError):  # pragma: no cover - fallback path
@@ -194,10 +192,7 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         key = self._cache_key(cache_key_input)
         blueprint = self._blueprints.get(key)
         if blueprint is None:
-            if is_sequence_input and sequence_items is not None:
-                result = self._build_chunks_from_items(sequence_items)
-            else:
-                result = await super().run(text)
+            result = await super().run(text)
             self._blueprints[key] = [
                 {
                     "text": chunk.text,
@@ -222,15 +217,6 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         text_chunks = TextChunks(chunks=chunks)
         self._last_outputs[key] = text_chunks
         return text_chunks
-
-    def _build_chunks_from_items(self, items: Sequence[str]) -> TextChunks:
-        """Construct TextChunks directly for sequence inputs."""
-
-        chunks = [
-            TextChunk(text=item, index=index, metadata=None, uid=str(uuid4()))
-            for index, item in enumerate(items)
-        ]
-        return TextChunks(chunks=chunks)
 
     def get_cached(self, text: str | Sequence[str]) -> TextChunks | None:
         """

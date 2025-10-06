@@ -23,14 +23,12 @@ evidence:
 trace:
   totals:
     requirements: 4
-    full: 2
-    partial: 1
-    none: 1
+    full: 4
+    partial: 0
+    none: 0
   planning_ref: 'docs/qa/assessments/5.1-test-design-20251006.md'
-  uncovered:
-    - ac: 'AC4'
-      reason: 'Architecture documentation updates rely on manual verification; automate linting.'
-  notes: 'See docs/qa/assessments/5.1-trace-20251006.md'
+  uncovered: []
+  notes: 'See docs/qa/assessments/5.1-trace-20251006.md. All ACs are now covered.'
 
 nfr_validation:
   _assessed: [security, performance, reliability, maintainability]
