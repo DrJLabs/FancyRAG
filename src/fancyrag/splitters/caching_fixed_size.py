@@ -172,13 +172,22 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         Returns:
             TextChunks: The resulting chunks for `text`. On cache hits, chunks preserve text/index/metadata but have newly generated `uid` values.
         """
+        is_sequence_input = not isinstance(text, str)
+        normalized_sequence: tuple[str, ...] | None = None
+        if is_sequence_input:
+            normalized_sequence = tuple(text)  # type: ignore[arg-type]
+
+        cache_key_input: str | Sequence[str] = (
+            normalized_sequence if normalized_sequence is not None else text
+        )
+
         if config is not None:
             try:
                 return await super().run(text, config)
             except (TypeError, ValidationError):  # pragma: no cover - fallback path
                 return await super().run(text)
 
-        key = self._cache_key(text)
+        key = self._cache_key(cache_key_input)
         blueprint = self._blueprints.get(key)
         if blueprint is None:
             result = await super().run(text)
@@ -256,7 +265,7 @@ def build_caching_splitter(
 __all__ = [
     "CachingFixedSizeSplitter",
     "CachingSplitterConfig",
-    "build_caching_splitter",
     "TextChunk",
     "TextChunks",
+    "build_caching_splitter",
 ]

@@ -4,9 +4,10 @@ This file provides guidance and memory for Codex CLI.
 
 ## Project Snapshot — 2025-10-01
 
- - Epics 1 (Environment & Workspace) and 2 (Local GraphRAG Minimal Path) are complete; no managed-service rollout is planned for this personal deployment, so remaining work targets local workflows only.
+- Epics 1 (Environment & Workspace) and 2 (Local GraphRAG Minimal Path) are complete; no managed-service rollout is planned for this personal deployment, so remaining work targets local workflows only.
 - Local Docker Compose stack (`docker-compose.neo4j-qdrant.yml`) plus scripts under `scripts/` deliver ingestion, export, and retrieval against sample content.
 - Tests: unit coverage for scripts and CLI utilities; `tests/integration/local_stack/test_minimal_path_smoke.py` exercises the full minimal path when Docker/OpenAI credentials are present.
+- Reminder: project credentials and the local Neo4j/Qdrant stack are currently provisioned and ready, so integration smokes can be executed without additional setup.
 - Open follow-ups: monitor QA checklists for managed secrets and telemetry before expanding beyond the local stack.
 
 <!-- BEGIN: BMAD-AGENTS -->

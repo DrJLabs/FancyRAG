@@ -85,6 +85,25 @@ def _stub_pipeline_dependencies(monkeypatch):
 
     monkeypatch.setattr(pipeline, "IngestionQaEvaluator", DummyEvaluator)
 
+    class DummySplitter:
+        def __init__(self) -> None:
+            self._result = types.SimpleNamespace(chunks=[])
+
+        def scoped(self, _scope):
+            return contextlib.nullcontext(self)
+
+        def get_cached(self, _text):
+            return self._result
+
+        def run(self, _text):
+            return self._result
+
+    monkeypatch.setattr(
+        pipeline,
+        "build_caching_splitter",
+        lambda *_a, **_k: DummySplitter(),
+    )
+
 
 def test_shared_client_base_url(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example.com/v1")

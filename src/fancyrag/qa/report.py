@@ -50,7 +50,9 @@ def write_ingestion_report(
 
     payload_dict = copy.deepcopy(sanitized_payload)
     _scrub_relative_paths(payload_dict)
-    json_path.write_text(json.dumps(payload_dict, indent=2), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(payload_dict, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     markdown_path.write_text(render_markdown(payload_dict), encoding="utf-8")
 
     return (

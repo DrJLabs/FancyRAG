@@ -10,6 +10,7 @@ Teams previously depended on pre-provisioned databases, which slowed experimenta
 
 ## Upcoming Work
 - **Epic 4 — FancyRAG `kg_build.py` Monolith Decomposition:** Planning underway to split the monolithic script into a `src/fancyrag/` package. Track progress via the [project brief](projects/fancyrag-kg-build-refactor/project-brief.md), [PRD shard](projects/fancyrag-kg-build-refactor/prd.md), and [Epic 4 handoff](../bmad/focused-epics/kg-build-refactor/epic.md).
+- **Epic 5 — FancyRAG Service Hardening:** Upcoming effort to operationalise the refactored modules with typed configuration, automation, QA telemetry, and observability. See the [Epic 5 brief](../bmad/focused-epics/fancyrag-service-hardening/epic.md) for scope and story sequencing.
 - **Testing Alignment:** Epic 3 hardening complete with QA telemetry and chunking presets; refactor work must preserve these guarantees.
 
 ## Change Log

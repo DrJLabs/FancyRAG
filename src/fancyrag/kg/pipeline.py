@@ -76,18 +76,25 @@ from fancyrag.db.neo4j_queries import (
     reset_database as _reset_database,
     rollback_ingest as _rollback_ingest,
 )
-from fancyrag.qa import (
-    IngestionQaEvaluator,
-    QaChunkRecord,
-    QaSourceRecord,
-    QaThresholds,
-)
+from fancyrag.qa import IngestionQaEvaluator, QaSourceRecord
 from fancyrag.splitters import CachingSplitterConfig, build_caching_splitter
 from fancyrag.utils import (
     ensure_directory as _ensure_directory,
     ensure_env,
     relative_to_repo as _relative_to_repo,
     resolve_repo_root as _resolve_repo_root,
+)
+from .phases import (
+    ClientBundle,
+    IngestionArtifacts,
+    QaOutcome,
+    ResolvedSettings,
+    SourceDiscoveryResult,
+    build_clients,
+    discover_sources,
+    ingest_source,
+    perform_qa,
+    resolve_settings,
 )
 
 _PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
@@ -1240,25 +1247,23 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
         per-file and per-chunk summaries, and optional semantic and QA sections.
     """
 
-    profile = options.profile or DEFAULT_PROFILE
-    preset = PROFILE_PRESETS.get(profile, PROFILE_PRESETS[DEFAULT_PROFILE])
-    chunk_size = options.chunk_size if options.chunk_size is not None else preset["chunk_size"]
-    chunk_overlap = (
-        options.chunk_overlap if options.chunk_overlap is not None else preset["chunk_overlap"]
+    resolved_settings = resolve_settings(
+        profile=options.profile,
+        chunk_size=options.chunk_size,
+        chunk_overlap=options.chunk_overlap,
+        include_patterns_override=options.include_patterns,
+        semantic_enabled=options.semantic_enabled,
+        semantic_max_concurrency=options.semantic_max_concurrency,
+        profile_presets=PROFILE_PRESETS,
+        default_profile=DEFAULT_PROFILE,
+        ensure_positive=_ensure_positive,
+        ensure_non_negative=_ensure_non_negative,
     )
-    include_patterns = (
-        tuple(options.include_patterns)
-        if options.include_patterns
-        else tuple(preset.get("include", ()))
-    )
-
-    chunk_size = _ensure_positive(chunk_size, name="chunk_size")
-    chunk_overlap = _ensure_non_negative(chunk_overlap, name="chunk_overlap")
-    semantic_max_concurrency = options.semantic_max_concurrency
-    if options.semantic_enabled:
-        semantic_max_concurrency = _ensure_positive(
-            semantic_max_concurrency, name="semantic_max_concurrency"
-        )
+    profile = resolved_settings.profile
+    chunk_size = resolved_settings.chunk_size
+    chunk_overlap = resolved_settings.chunk_overlap
+    include_patterns = resolved_settings.include_patterns
+    semantic_max_concurrency = resolved_settings.semantic_max_concurrency
 
     ensure_env("OPENAI_API_KEY")
     ensure_env("NEO4J_URI")
@@ -1267,48 +1272,30 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
 
     git_commit = _resolve_git_commit()
 
-    source_specs: list[SourceSpec]
-    if options.source_dir:
-        directory = Path(options.source_dir).expanduser()
-        if not directory.is_dir():
-            raise ValueError(f"source directory not found: {directory}")
-        patterns = include_patterns or preset.get("include", ())
-        files = _discover_source_files(directory, patterns)
-        source_specs = []
-        for file_path in files:
-            content = _read_directory_source(file_path)
-            if content is None:
-                continue
-            source_specs.append(
-                SourceSpec(
-                    path=file_path,
-                    relative_path=_relative_to_repo(file_path, base=directory),
-                    text=content,
-                    checksum=_compute_checksum(content),
-                )
-            )
-        if not source_specs:
-            raise ValueError(
-                "No ingestible files matched the supplied directory and include patterns."
-            )
-    else:
-        source_path = Path(options.source).expanduser()
-        source_text = _read_source(source_path)
-        source_specs = [
-            SourceSpec(
-                path=source_path,
-                relative_path=_relative_to_repo(source_path),
-                text=source_text,
-                checksum=_compute_checksum(source_text),
-            )
-        ]
+    discovery = discover_sources(
+        source=options.source,
+        source_dir=options.source_dir,
+        include_patterns=include_patterns,
+        relative_to_repo=_relative_to_repo,
+        read_source=_read_source,
+        read_directory_source=_read_directory_source,
+        discover_source_files=_discover_source_files,
+        compute_checksum=_compute_checksum,
+        source_spec_factory=SourceSpec,
+    )
+    source_specs = list(discovery.sources)
 
     settings = OpenAISettings.load(actor="kg_build")
-    shared_client = SharedOpenAIClient(settings)
-    embedder = SharedOpenAIEmbedder(shared_client, settings)
-    llm = SharedOpenAILLM(shared_client, settings)
-    splitter_config = CachingSplitterConfig(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    splitter = build_caching_splitter(splitter_config)
+    clients = build_clients(
+        settings=settings,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        shared_client_factory=SharedOpenAIClient,
+        embedder_factory=SharedOpenAIEmbedder,
+        llm_factory=SharedOpenAILLM,
+        splitter_config_factory=CachingSplitterConfig,
+        splitter_factory=build_caching_splitter,
+    )
 
     uri = os.environ["NEO4J_URI"]
     auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
@@ -1323,155 +1310,67 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     qa_sources: list[QaSourceRecord] = []
     semantic_totals = SemanticEnrichmentStats()
     reset_pending = bool(options.reset_database)
+    source_mode = discovery.source_mode
+    source_root = discovery.source_root
 
     qa_section: dict[str, Any] | None = None
     counts: Mapping[str, int] | None = None
+    semantic_summary = SemanticQaSummary(enabled=bool(options.semantic_enabled))
     with GraphDatabase.driver(uri, auth=auth) as driver:
         for spec in source_specs:
-            scope_token = str(spec.path.resolve())
-            with splitter.scoped(scope_token):
-                ingest_run_key = f"kg-build:{uuid4()}"
-                try:
-                    run_id = _execute_pipeline(
-                        uri=uri,
-                        auth=auth,
-                        source_text=spec.text,
-                        database=options.database,
-                        embedder=embedder,
-                        llm=llm,
-                        splitter=splitter,
-                        reset_database=reset_pending,
-                        ingest_run_key=ingest_run_key,
-                    )
-                except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
-                    raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-                except (Neo4jError, ClientError) as exc:
-                    raise RuntimeError(f"Neo4j error: {exc}") from exc
-                run_ids.append(run_id)
-                reset_pending = False
-
-                chunk_result = splitter.get_cached(spec.text)
-                if chunk_result is None:
-                    chunk_result = asyncio.run(splitter.run(spec.text))
-                chunk_metadata = _build_chunk_metadata(
-                    chunk_result.chunks,
-                    relative_path=spec.relative_path,
+            try:
+                artifacts = ingest_source(
+                    spec=spec,
+                    options=options,
+                    uri=uri,
+                    auth=auth,
+                    driver=driver,
+                    clients=clients,
                     git_commit=git_commit,
+                    reset_database=reset_pending,
+                    execute_pipeline=_execute_pipeline,
+                    build_chunk_metadata=_build_chunk_metadata,
+                    ensure_document_relationships=_ensure_document_relationships,
+                    semantic_enabled=bool(options.semantic_enabled),
+                    semantic_max_concurrency=semantic_max_concurrency,
+                    run_semantic_enrichment=_run_semantic_enrichment,
+                    semantic_stats_factory=SemanticEnrichmentStats,
+                    ingest_run_key_factory=lambda: f"kg-build:{uuid4()}",
                 )
+            except (OpenAIClientError, LLMGenerationError, EmbeddingsGenerationError) as exc:
+                raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+            except (Neo4jError, ClientError) as exc:
+                raise RuntimeError(f"Neo4j error: {exc}") from exc
 
-                _ensure_document_relationships(
-                    driver,
-                    database=options.database,
-                    source_path=spec.path,
-                    relative_path=spec.relative_path,
-                    git_commit=git_commit,
-                    document_checksum=spec.checksum,
-                    chunks_metadata=chunk_metadata,
-                )
+            run_ids.append(artifacts.run_id)
+            reset_pending = False
 
-                qa_chunks = [
-                    QaChunkRecord(
-                        uid=meta.uid,
-                        checksum=meta.checksum,
-                        text=getattr(chunk, "text", "") or "",
-                    )
-                    for meta, chunk in zip(chunk_metadata, chunk_result.chunks)
-                ]
-                qa_sources.append(
-                    QaSourceRecord(
-                        path=str(spec.path),
-                        relative_path=spec.relative_path,
-                        document_checksum=spec.checksum,
-                        git_commit=git_commit,
-                        chunks=qa_chunks,
-                        ingest_run_key=ingest_run_key,
-                    )
-                )
-                log_files.append(
-                    {
-                        "path": str(spec.path),
-                        "relative_path": spec.relative_path,
-                        "checksum": spec.checksum,
-                        "chunks": len(chunk_metadata),
-                    }
-                )
-                log_chunks.extend(
-                    {
-                        "path": str(spec.path),
-                        "uid": chunk.uid,
-                        "sequence": chunk.sequence,
-                        "index": chunk.index,
-                        "checksum": chunk.checksum,
-                        "relative_path": chunk.relative_path,
-                        "git_commit": chunk.git_commit,
-                    }
-                    for chunk in chunk_metadata
-                )
+            qa_sources.append(artifacts.qa_source)
+            log_files.append(artifacts.log_entry)
+            log_chunks.extend(artifacts.chunk_entries)
 
-                if options.semantic_enabled:
-                    semantic_stats = _run_semantic_enrichment(
-                        driver=driver,
-                        database=options.database,
-                        llm=llm,
-                        chunk_result=chunk_result,
-                        chunk_metadata=chunk_metadata,
-                        relative_path=spec.relative_path,
-                        git_commit=git_commit,
-                        document_checksum=spec.checksum,
-                        ingest_run_key=ingest_run_key,
-                        max_concurrency=semantic_max_concurrency,
-                    )
-                    semantic_totals.chunks_processed += semantic_stats.chunks_processed
-                    semantic_totals.chunk_failures += semantic_stats.chunk_failures
-                    semantic_totals.nodes_written += semantic_stats.nodes_written
-                    semantic_totals.relationships_written += semantic_stats.relationships_written
+            semantic_totals.chunks_processed += artifacts.semantic_stats.chunks_processed
+            semantic_totals.chunk_failures += artifacts.semantic_stats.chunk_failures
+            semantic_totals.nodes_written += artifacts.semantic_stats.nodes_written
+            semantic_totals.relationships_written += artifacts.semantic_stats.relationships_written
 
-        thresholds = QaThresholds(
-            max_missing_embeddings=options.qa_limits.max_missing_embeddings,
-            max_orphan_chunks=options.qa_limits.max_orphan_chunks,
-            max_checksum_mismatches=options.qa_limits.max_checksum_mismatches,
-            max_semantic_failures=options.qa_limits.max_semantic_failures,
-            max_semantic_orphans=options.qa_limits.max_semantic_orphans,
-        )
-        semantic_summary = SemanticQaSummary(
-            enabled=bool(options.semantic_enabled),
-            chunks_processed=semantic_totals.chunks_processed,
-            chunk_failures=semantic_totals.chunk_failures,
-            nodes_written=semantic_totals.nodes_written,
-            relationships_written=semantic_totals.relationships_written,
-        )
-        evaluator = IngestionQaEvaluator(
+        qa_outcome = perform_qa(
             driver=driver,
             database=options.database,
-            sources=qa_sources,
-            thresholds=thresholds,
-            report_root=options.qa_report_dir,
-            report_version=QA_REPORT_VERSION,
-            semantic_summary=semantic_summary,
+            qa_sources=qa_sources,
+            semantic_enabled=bool(options.semantic_enabled),
+            semantic_totals=semantic_totals,
+            qa_limits=options.qa_limits,
+            qa_report_dir=options.qa_report_dir,
+            qa_report_version=QA_REPORT_VERSION,
+            qa_evaluator_factory=IngestionQaEvaluator,
+            collect_counts=_collect_counts,
+            rollback_ingest=_rollback_ingest,
+            semantic_summary_factory=SemanticQaSummary,
         )
-
-        qa_result = evaluator.evaluate()
-        qa_section = {
-            "status": qa_result.status,
-            "summary": qa_result.summary,
-            "report_version": qa_result.version,
-            "report_json": qa_result.report_json,
-            "report_markdown": qa_result.report_markdown,
-            "thresholds": asdict(qa_result.thresholds),
-            "metrics": qa_result.metrics,
-            "anomalies": qa_result.anomalies,
-            "duration_ms": qa_result.duration_ms,
-        }
-
-        if not qa_result.passed:
-            _rollback_ingest(driver, database=options.database, sources=qa_sources)
-            raise RuntimeError(
-                "Ingestion QA gating failed; see ingestion QA report for details"
-            )
-
-        counts = qa_result.metrics.get("graph_counts", {})
-        if not counts:
-            counts = _collect_counts(driver, database=options.database)
+        qa_section = qa_outcome.qa_section
+        counts = qa_outcome.counts
+        semantic_summary = qa_outcome.semantic_summary
 
     duration_ms = int((time.perf_counter() - start) * 1000)
 
@@ -1481,10 +1380,8 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
         "operation": "kg_build",
         "status": "success",
         "duration_ms": duration_ms,
-        "source": str(Path(options.source_dir).expanduser())
-        if options.source_dir
-        else str(source_specs[0].path),
-        "source_mode": "directory" if options.source_dir else "file",
+        "source": str(source_root),
+        "source_mode": source_mode,
         "input_bytes": total_bytes,
         "chunking": {
             "size": chunk_size,

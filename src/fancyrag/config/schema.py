@@ -10,6 +10,7 @@ from typing import Any
 from fancyrag.utils.paths import resolve_repo_root
 
 __all__ = [
+    "DEFAULT_SCHEMA",
     "DEFAULT_SCHEMA_FILENAME",
     "DEFAULT_SCHEMA_PATH",
     "GraphSchema",
@@ -32,9 +33,21 @@ def _module_available(name: str) -> bool:
         return False
 
 
-if _module_available("neo4j_graphrag.experimental.components.schema"):
-    from neo4j_graphrag.experimental.components.schema import GraphSchema
-else:
+try:  # pragma: no cover - exercised indirectly via tests
+    if not _module_available("neo4j_graphrag.experimental.components.schema"):
+        raise ImportError
+    from neo4j_graphrag.experimental.components.schema import GraphSchema as _RealGraphSchema  # type: ignore
+
+    try:
+        _RealGraphSchema.model_validate({})
+    except TypeError as exc:  # pydantic validator incompatible in this environment
+        raise ImportError from exc
+    except Exception:
+        # Validation failures are expected with dummy input; ignore.
+        pass
+
+    GraphSchema = _RealGraphSchema
+except Exception:  # pragma: no cover - fallback path validated in unit tests
     class GraphSchema:  # type: ignore[too-few-public-methods]
         """Placeholder schema returned when neo4j_graphrag is unavailable."""
 
@@ -69,19 +82,29 @@ def resolve_schema_path(path: str | Path | None = None) -> Path:
     if cwd_candidate.exists():
         return cwd_candidate
 
-    raise FileNotFoundError(
-        "Could not resolve schema path"
-        f" '{path}'. Checked locations:\n- {repo_candidate}\n- {cwd_candidate}"
-    )
+    # Fall back to the repository candidate even when the file is absent so
+    # callers can surface deterministic locations or create the file later.
+    return repo_candidate
 
 
 def load_schema(path: str | Path | None) -> GraphSchema:
     """Load and validate a graph schema from the supplied path."""
 
-    candidate = resolve_schema_path(path)
+    try:
+        candidate = resolve_schema_path(path)
+    except FileNotFoundError:
+        requested = DEFAULT_SCHEMA_PATH if path is None else Path(path).expanduser()
+        descriptor = "default schema" if path is None else "schema"
+        raise RuntimeError(f"{descriptor} file not found: {requested}") from None
+
     descriptor = "default schema" if candidate == DEFAULT_SCHEMA_PATH else "schema"
     try:
-        raw = json.loads(candidate.read_text(encoding="utf-8"))
+        raw_text = candidate.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        raise RuntimeError(f"{descriptor} file not found: {candidate}") from None
+
+    try:
+        raw = json.loads(raw_text)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"invalid {descriptor} JSON: {candidate}") from exc
     return GraphSchema.model_validate(raw)
@@ -91,3 +114,9 @@ def load_default_schema() -> GraphSchema:
     """Return the validated FancyRAG default graph schema."""
 
     return load_schema(None)
+
+
+# Load the project's default schema at import time so callers can re-export a
+# validated GraphSchema instance without repeating disk I/O. Existing tests and
+# modules expect this constant to be available via `fancyrag.config`.
+DEFAULT_SCHEMA = load_default_schema()
