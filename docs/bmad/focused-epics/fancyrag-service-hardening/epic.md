@@ -1,7 +1,7 @@
 # Epic 5: FancyRAG Service Hardening
 
 ## Status
-Not Started — 2025-10-06. Stories 5.1–5.6 queued for drafting by the Scrum Master.
+In Progress — 2025-10-06. Story 5.1 complete; stories 5.2–5.6 queued for drafting by the Scrum Master.
 
 ## Epic Goal
 Operationalise the refactored FancyRAG ingestion pipeline into a reliable service workflow that any operator can run end-to-end with built-in telemetry, configuration safeguards, and rollback procedures.
@@ -26,7 +26,7 @@ Operationalise the refactored FancyRAG ingestion pipeline into a reliable servic
 - Future managed-environment rollouts inherit the same configuration surface, reducing rework when migrating away from the local stack.
 
 ## Stories
-1. ☐ **Story 5.1:** Decompose the pipeline orchestrator into helper functions/classes with explicit inputs and outputs (`docs/stories/5.1.pipeline-orchestrator.md` — pending).
+1. ☑ **Story 5.1:** Decompose the pipeline orchestrator into helper functions/classes with explicit inputs and outputs (`docs/stories/5.1.pipeline-orchestrator.md` — done).
 2. ☐ **Story 5.2:** Centralise typed settings covering FancyRAG, OpenAI, Neo4j, Qdrant, and telemetry toggles (`docs/stories/5.2.typed-settings.md` — pending).
 3. ☐ **Story 5.3:** Automate stack lifecycle (bootstrap, ingest, teardown, rollback) with reproducible scripts and smoke validation (`docs/stories/5.3.stack-automation.md` — pending).
 4. ☐ **Story 5.4:** Harden configuration surface and defaults for new pipeline presets (chunking/cache/enrichment) and document the contracts (`docs/stories/5.4.pipeline-configuration.md` — pending).
