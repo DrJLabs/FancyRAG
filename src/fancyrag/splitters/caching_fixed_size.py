@@ -174,10 +174,8 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         """
         is_sequence_input = not isinstance(text, str)
         normalized_sequence: tuple[str, ...] | None = None
-        sequence_items: list[str] | None = None
         if is_sequence_input:
             normalized_sequence = tuple(text)  # type: ignore[arg-type]
-            sequence_items = list(normalized_sequence)
 
         cache_key_input: str | Sequence[str] = (
             normalized_sequence if normalized_sequence is not None else text
@@ -267,7 +265,7 @@ def build_caching_splitter(
 __all__ = [
     "CachingFixedSizeSplitter",
     "CachingSplitterConfig",
-    "build_caching_splitter",
     "TextChunk",
     "TextChunks",
+    "build_caching_splitter",
 ]
