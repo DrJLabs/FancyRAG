@@ -1265,7 +1265,7 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     include_patterns = resolved_settings.include_patterns
     semantic_max_concurrency = resolved_settings.semantic_max_concurrency
 
-    settings_bundle = _get_settings()
+    settings_bundle = _get_settings(require={"openai", "neo4j"})
     openai_settings = settings_bundle.openai.for_actor("kg_build")
     neo4j_settings = settings_bundle.neo4j
 
