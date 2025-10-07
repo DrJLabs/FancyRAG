@@ -20,10 +20,34 @@ FancyRAG delivers a local-first GraphRAG playground backed by Neo4j, Qdrant, and
 
 > All documentation references these canonical versions; update this table first, then propagate changes.
 
-## Run the Minimal Path Locally
-1. **Bootstrap tooling**
+## Run the Stack Automation (Story 5.3)
+When Story 5.3 lands, the onboarding “stack automation” workflow wraps the full bootstrap → ingest → export → evaluation → teardown path behind Make targets. This is the fastest way for newcomers to prove out the stack.
+
+1. **Bootstrap once** (same as manual flow)
    ```bash
    bash scripts/bootstrap.sh
+   source .venv/bin/activate
+   cp .env.example .env  # fill in OPENAI/Neo4j/Qdrant secrets
+   ```
+2. **Run the service workflow** — defaults to the smoke preset defined in `FancyRAGSettings`:
+   ```bash
+   make service-run
+   ```
+   - Set `FANCYRAG_PRESET=<smoke|full|enrich>` or `DATASET_PATH=...` to override inputs without editing code.
+   - Logs and QA/evaluation artifacts land under `artifacts/local_stack/<timestamp>/`.
+3. **Handle failures or clean up**
+   ```bash
+   make service-rollback    # rollback partial ingests, keep volumes
+   make service-reset       # optional: teardown + destroy docker volumes
+   ```
+   These commands delegate to the pipeline rollback helpers and `scripts/check_local_stack.sh` so Docker services return to a known-good state.
+
+See `docs/brownfield-architecture.md#automation-surface--rollback-workflow` for deep-dive details.
+
+## Run the Minimal Path Locally
+1. **Bootstrap tooling**
+  ```bash
+  bash scripts/bootstrap.sh
    source .venv/bin/activate
    ```
 2. **Configure credentials** – copy `.env.example` to `.env`, supply `OPENAI_API_KEY`, and keep Neo4j/Qdrant defaults for local usage (`bolt://localhost:7687`, `http://localhost:6333`).

@@ -169,8 +169,10 @@ This addendum captures the architectural targets for Epic 5 (“FancyRAG Service
 *(Extend this table when additional settings land in future stories.)*
 
 ### Automation Surface & Rollback Workflow
-- A single entry point (proposed `make service-run` and `make service-rollback`, with equivalent `scripts/service.py` wrapper) orchestrates stack bootstrap → ingestion → export → evaluation → teardown. The command MUST surface each stage with structured logging.
+- A single entry point (`make service-run` via `scripts/service.py` → `fancyrag.cli.service_workflow`) orchestrates stack bootstrap → ingestion → export → evaluation → teardown with structured logging. Stage outcomes and artifact locations are persisted to `artifacts/local_stack/service/<timestamp>/service_run.json` for traceability.
+- Companion commands `make service-rollback` and `make service-reset` delegate to the same workflow to unwind ingestion artefacts, stop Docker services, and optionally purge bound volumes/Qdrant collections.
 - Automation commands accept preset overrides via flags/environment (e.g., `--preset full`, `FANCYRAG_PRESET=qa`). Defaults should reproduce the “smoke” dataset for CI and onboarding.
+- Smoke preset baseline: bootstrap → teardown should complete within 35 seconds (measured 2025-10-07 via `artifacts/local_stack/service/20251007T124244/service_run.json`); flag runs exceeding this threshold for investigation.
 - Rollback automation is responsible for:
   - Stopping Docker services via `scripts/check_local_stack.sh --down`.
   - Optionally purging bind-mounted volumes when requested.
@@ -178,7 +180,8 @@ This addendum captures the architectural targets for Epic 5 (“FancyRAG Service
 - Integration smoke (`tests/integration/local_stack/test_minimal_path_smoke.py`) will call the automation entry point to guarantee parity.
 
 ### Configuration Presets & Contracts
-- Presets are versioned documents (store under `config/presets/<name>.yaml` or equivalent) defining:
+- Presets are currently surfaced through typed settings/environment keys (`FANCYRAG_PRESET`, `DATASET_PATH`, `DATASET_DIR`, `FANCYRAG_PROFILE`, `FANCYRAG_TELEMETRY`, `FANCYRAG_ENABLE_SEMANTIC`, `FANCYRAG_ENABLE_EVALUATION`, `FANCYRAG_VECTOR_INDEX`, `FANCYRAG_QDRANT_COLLECTION`). Story 5.4 will migrate these presets into versioned configuration files (`config/presets/<name>.yaml`) while retaining the same override knobs.
+- Presets define:
   - Chunking parameters (`chunk_size`, `overlap`, cache toggles).
   - Semantic enrichment/embedding toggles.
   - Evaluation coverage (query sets, thresholds).
