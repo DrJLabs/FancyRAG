@@ -58,12 +58,7 @@ _RETRIEVAL_QUERY = (
 def _load_settings(*, actor: str = "ask_qdrant"):
     """Load OpenAI settings for the ask_qdrant CLI."""
 
-    try:
-        return get_settings().openai.for_actor(actor)
-    except ValueError:
-        from config.settings import OpenAISettings
-
-        return OpenAISettings.load(actor=actor)
+    return get_settings().openai.for_actor(actor)
 
 
 def _record_to_match(record: Any) -> dict[str, Any]:
@@ -118,12 +113,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    settings_bundle = get_settings(require={"neo4j", "qdrant"})
+    settings_bundle = get_settings(require={"neo4j", "qdrant", "openai"})
     client = SharedOpenAIClient(_load_settings())
 
     qdrant_settings = settings_bundle.qdrant
-    if qdrant_settings is None:  # Defensive guard; require=... should prevent this.
-        raise SystemExit("Missing required environment variable: QDRANT_URL")
+    assert qdrant_settings is not None  # Guaranteed by require={"qdrant"} above.
     qdrant_client = QdrantClient(**qdrant_settings.client_kwargs())
 
     neo4j_settings = settings_bundle.neo4j

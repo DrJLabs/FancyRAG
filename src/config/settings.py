@@ -403,6 +403,7 @@ class FancyRAGSettings(BaseModel):
             return cls._CACHE
 
         required = {item.lower() for item in (require or set())}
+        require_openai = "openai" in required
         require_qdrant = "qdrant" in required
 
         if env is None:
@@ -424,10 +425,13 @@ class FancyRAGSettings(BaseModel):
             return value or None
 
         openai_settings = OpenAISettings.load(source, actor="fancyrag.service")
-        api_key_raw = _require("OPENAI_API_KEY")
-        openai_settings = openai_settings.model_copy(
-            update={"api_key": SecretStr(api_key_raw)}
-        )
+        api_key_raw = _optional("OPENAI_API_KEY")
+        if api_key_raw:
+            openai_settings = openai_settings.model_copy(
+                update={"api_key": SecretStr(api_key_raw)}
+            )
+        elif require_openai:
+            raise ValueError("Missing required environment variable: OPENAI_API_KEY")
 
         try:
             neo4j_settings = Neo4jSettings(

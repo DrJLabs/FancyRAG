@@ -57,10 +57,18 @@ def test_load_refresh_updates_values(monkeypatch: pytest.MonkeyPatch, base_env):
     assert cached_after_refresh is refreshed
 
 
-def test_missing_required_variable_raises(monkeypatch: pytest.MonkeyPatch, base_env):
+def test_missing_required_openai_variable_raises(monkeypatch: pytest.MonkeyPatch, base_env):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        FancyRAGSettings.load()
+        FancyRAGSettings.load(require={"openai"})
+
+
+def test_openai_optional_when_not_required(monkeypatch: pytest.MonkeyPatch, base_env):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    settings = FancyRAGSettings.load()
+
+    assert settings.openai.api_key is None
 
 
 def test_invalid_qdrant_url_rejected(monkeypatch: pytest.MonkeyPatch, base_env):
