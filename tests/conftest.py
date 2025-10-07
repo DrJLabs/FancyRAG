@@ -7,9 +7,6 @@ from types import ModuleType
 
 import pytest
 
-from fancyrag.utils.env import load_project_dotenv
-from fancyrag.utils.paths import resolve_repo_root
-
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
@@ -22,6 +19,10 @@ def _ensure_path(path: Path) -> None:
 
 
 _ensure_path(SRC_DIR)
+
+from fancyrag.utils.env import load_project_dotenv
+from fancyrag.utils.paths import resolve_repo_root
+
 load_project_dotenv()
 
 
