@@ -465,14 +465,55 @@ class ServiceSettings(BaseModel):
         preset_raw = (source.get(_ENV_FANCYRAG_PRESET) or "smoke").strip().lower()
         if not preset_raw:
             preset_raw = "smoke"
-        defaults = _SERVICE_PRESET_DEFAULTS.get(preset_raw, _SERVICE_PRESET_DEFAULTS["smoke"])
+        if preset_raw not in _SERVICE_PRESET_DEFAULTS:
+            logger.warning("service.preset.unknown", supplied=preset_raw, default="smoke")
+            preset_raw = "smoke"
+        defaults = _SERVICE_PRESET_DEFAULTS[preset_raw]
 
-        dataset_path = (source.get(_ENV_DATASET_PATH) or "").strip() or defaults.get("dataset_path")
-        dataset_dir = (source.get(_ENV_DATASET_DIR) or "").strip() or defaults.get("dataset_dir")
-        profile = (source.get(_ENV_FANCYRAG_PROFILE) or "").strip() or defaults.get("profile")
-        telemetry = (source.get(_ENV_FANCYRAG_TELEMETRY) or "").strip() or defaults.get("telemetry") or "console"
-        vector_index = (source.get(_ENV_FANCYRAG_VECTOR_INDEX) or "").strip() or defaults.get("vector_index", _SERVICE_VECTOR_INDEX_DEFAULT)
-        collection = (source.get(_ENV_FANCYRAG_QDRANT_COLLECTION) or "").strip() or defaults.get("collection", _SERVICE_QDRANT_COLLECTION_DEFAULT)
+        def _resolve_env_value(
+            key: str,
+            *,
+            default_value: Any = None,
+            fallback: Any = None,
+        ) -> str | None:
+            raw = (source.get(key) or "").strip()
+            if raw:
+                return raw
+            for candidate in (default_value, fallback):
+                if candidate is None:
+                    continue
+                text = str(candidate).strip()
+                if text:
+                    return text
+            return None
+
+        dataset_path = _resolve_env_value(
+            _ENV_DATASET_PATH,
+            default_value=defaults.get("dataset_path"),
+        )
+        dataset_dir = _resolve_env_value(
+            _ENV_DATASET_DIR,
+            default_value=defaults.get("dataset_dir"),
+        )
+        profile = _resolve_env_value(
+            _ENV_FANCYRAG_PROFILE,
+            default_value=defaults.get("profile"),
+        )
+        telemetry = _resolve_env_value(
+            _ENV_FANCYRAG_TELEMETRY,
+            default_value=defaults.get("telemetry"),
+            fallback="console",
+        ) or "console"
+        vector_index = _resolve_env_value(
+            _ENV_FANCYRAG_VECTOR_INDEX,
+            default_value=defaults.get("vector_index"),
+            fallback=_SERVICE_VECTOR_INDEX_DEFAULT,
+        ) or _SERVICE_VECTOR_INDEX_DEFAULT
+        collection = _resolve_env_value(
+            _ENV_FANCYRAG_QDRANT_COLLECTION,
+            default_value=defaults.get("collection"),
+            fallback=_SERVICE_QDRANT_COLLECTION_DEFAULT,
+        ) or _SERVICE_QDRANT_COLLECTION_DEFAULT
 
         include_env = (source.get(_ENV_FANCYRAG_INCLUDE_PATTERNS) or "").strip()
         if include_env:

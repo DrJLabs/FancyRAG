@@ -12,7 +12,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from _compat.structlog import get_logger
 from cli.sanitizer import sanitize_text, scrub_object
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 try:  # pragma: no branch - optional dependency for rollback cleanup
     from qdrant_client import QdrantClient
-except Exception:  # pragma: no cover - fallback when qdrant client absent
+except ImportError:  # pragma: no cover - fallback when qdrant client absent
     QdrantClient = None  # type: ignore
 
 from neo4j import GraphDatabase
@@ -132,7 +132,10 @@ class ServiceWorkflow:
         env.update(effective_service.export_environment())
 
         compose_file = overrides.compose_file or self.default_compose_file
-        env.setdefault("COMPOSE_FILE", str(compose_file))
+        if overrides.compose_file is not None:
+            env["COMPOSE_FILE"] = str(compose_file)
+        else:
+            env.setdefault("COMPOSE_FILE", str(compose_file))
         self._ensure_pythonpath(env)
 
         run_dir = self._prepare_run_directory(overrides.log_root)
@@ -236,7 +239,11 @@ class ServiceWorkflow:
         settings = get_settings(require={"neo4j"})
         env = os.environ.copy()
         env.update(settings.export_environment())
-        env.setdefault("COMPOSE_FILE", str((compose_file or self.default_compose_file)))
+        compose_candidate = compose_file or self.default_compose_file
+        if compose_file is not None:
+            env["COMPOSE_FILE"] = str(compose_candidate)
+        else:
+            env.setdefault("COMPOSE_FILE", str(compose_candidate))
         self._ensure_pythonpath(env)
 
         if log_path is None:
@@ -308,6 +315,9 @@ class ServiceWorkflow:
             if default_log.exists():
                 shutil.copy2(default_log, log_path)
             elif result.stdout:
+                # Some scripts emit their structured log to stdout when they cannot
+                # persist to disk (e.g., read-only directories). Capture that output
+                # so downstream stages still have an artifact to reference.
                 log_path.write_text(result.stdout, encoding="utf-8")
         return {"vector_index_log": self._relativize(log_path)}
 
@@ -333,42 +343,53 @@ class ServiceWorkflow:
         if context.semantic_enabled:
             args.append("--enable-semantic")
 
-        ingestion_root = self.repo_root / "artifacts" / "ingestion"
-        existing_qa_dirs: set[Path] = set()
-        if ingestion_root.exists():
-            existing_qa_dirs = {path.resolve() for path in ingestion_root.iterdir() if path.is_dir()}
-
         result = self._invoke_python_module(args, context.env)
         if not log_path.exists():
             default_log = self.repo_root / "artifacts" / "local_stack" / "kg_build.json"
             if default_log.exists():
                 shutil.copy2(default_log, log_path)
             elif result.stdout:
+                # Preserve stdout when kg_build emitted the JSON log there; see note
+                # in _stage_create_vector_index for rationale.
                 log_path.write_text(result.stdout, encoding="utf-8")
-
         qa_dir.mkdir(parents=True, exist_ok=True)
-        if ingestion_root.exists():
-            for candidate in ingestion_root.iterdir():
-                if not candidate.is_dir():
+
+        def _load_payload() -> dict[str, Any]:
+            payload: dict[str, Any] = {}
+            if log_path.exists():
+                try:
+                    payload = json.loads(log_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    payload = {}
+            if not payload and result.stdout:
+                try:
+                    payload = json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    payload = {}
+            return payload
+
+        payload = _load_payload()
+        qa_section = payload.get("qa") if isinstance(payload, dict) else None
+        if isinstance(qa_section, dict):
+            source_dirs: set[Path] = set()
+            for key in ("report_json", "report_markdown"):
+                raw_path = qa_section.get(key)
+                if not isinstance(raw_path, str):
                     continue
-                resolved = candidate.resolve()
-                if resolved in existing_qa_dirs:
-                    continue
-                target = qa_dir / candidate.name
+                candidate = Path(raw_path)
+                if not candidate.is_absolute():
+                    candidate = (self.repo_root / raw_path).resolve()
+                parent = candidate.parent
+                if parent.exists() and parent.is_dir():
+                    source_dirs.add(parent)
+            for directory in sorted(source_dirs):
+                target = qa_dir / directory.name
                 if target.exists():
                     shutil.rmtree(target)
-                shutil.copytree(candidate, target)
+                shutil.copytree(directory, target)
 
-        if result.stdout and not list(qa_dir.iterdir()):
-            try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                payload = {}
-            qa_summary = payload.get("qa") if isinstance(payload, dict) else None
-            if isinstance(qa_summary, dict):
-                qa_dir.mkdir(exist_ok=True, parents=True)
-                summary_path = qa_dir / "qa_summary.json"
-                summary_path.write_text(json.dumps(qa_summary, indent=2), encoding="utf-8")
+            summary_path = qa_dir / "qa_summary.json"
+            summary_path.write_text(json.dumps(qa_section, indent=2), encoding="utf-8")
         return {
             "kg_log": self._relativize(log_path),
             "qa_dir": self._relativize(qa_dir),
@@ -398,6 +419,8 @@ class ServiceWorkflow:
         ]
         result = self._invoke_python_module(args, context.env)
         if not log_path.exists() and result.stdout:
+            # See note in _stage_create_vector_index: capture stdout when the
+            # checker could not persist its JSON log to disk.
             log_path.write_text(result.stdout, encoding="utf-8")
         return {"docs_check": self._relativize(log_path)}
 
@@ -421,8 +444,9 @@ class ServiceWorkflow:
         if overrides.dataset_path is not None:
             updates["dataset_path"] = self._format_path_for_service(overrides.dataset_path)
             updates["dataset_dir"] = None
-        if overrides.dataset_dir is not None:
+        elif overrides.dataset_dir is not None:
             updates["dataset_dir"] = self._format_path_for_service(overrides.dataset_dir)
+            updates["dataset_path"] = None
         if overrides.include_patterns:
             updates["include_patterns"] = overrides.include_patterns
         if overrides.profile:
