@@ -14,7 +14,7 @@ Operationalise the refactored FancyRAG ingestion pipeline into a reliable servic
 
 **Enhancement Highlights:**
 - Refactor the pipeline coordinator into composable helpers so each ingestion phase (settings resolution, source discovery, semantic enrichment, QA, evaluation) can be tested and instrumented independently.
-- Introduce typed settings classes that centralise FancyRAG, Neo4j, Qdrant, OpenAI, and telemetry configuration with validation and sensible defaults.
+- Introduce typed settings classes (`FancyRAGSettings` with nested `OpenAISettings`, `Neo4jSettings`, and `QdrantSettings`) that centralise configuration with validation and sensible defaults.
 - Provide automation hooks for stack bootstrap, ingestion execution, rollback, and smoke validation so operators have a single command surface.
 - Expand ingestion presets (chunking, cache, semantic enrichment toggles) with documented configuration contracts and stable defaults.
 - Package QA, evaluation, and telemetry outputs into versioned artefacts that downstream reviewers can trust without spelunking logs.
@@ -27,7 +27,7 @@ Operationalise the refactored FancyRAG ingestion pipeline into a reliable servic
 
 ## Stories
 1. ☑ **Story 5.1:** Decompose the pipeline orchestrator into helper functions/classes with explicit inputs and outputs (`docs/stories/5.1.pipeline-orchestrator.md` — done).
-2. ☐ **Story 5.2:** Centralise typed settings covering FancyRAG, OpenAI, Neo4j, Qdrant, and telemetry toggles (`docs/stories/5.2.typed-settings.md` — pending).
+2. ☑ **Story 5.2:** Centralise typed settings covering FancyRAG, OpenAI, Neo4j, and Qdrant configuration (`docs/stories/5.2.centralise-typed-settings.md` — done).
 3. ☐ **Story 5.3:** Automate stack lifecycle (bootstrap, ingest, teardown, rollback) with reproducible scripts and smoke validation (`docs/stories/5.3.stack-automation.md` — pending).
 4. ☐ **Story 5.4:** Harden configuration surface and defaults for new pipeline presets (chunking/cache/enrichment) and document the contracts (`docs/stories/5.4.pipeline-configuration.md` — pending).
 5. ☐ **Story 5.5:** Integrate a retrieval QA harness (e.g., RAGAS) that records scorecards alongside ingestion artefacts and CI gates (`docs/stories/5.5.rag-evaluation.md` — pending).

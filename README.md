@@ -27,6 +27,7 @@ FancyRAG delivers a local-first GraphRAG playground backed by Neo4j, Qdrant, and
    source .venv/bin/activate
    ```
 2. **Configure credentials** – copy `.env.example` to `.env`, supply `OPENAI_API_KEY`, and keep Neo4j/Qdrant defaults for local usage (`bolt://localhost:7687`, `http://localhost:6333`).
+   - `FancyRAGSettings` centralises these values into typed `OpenAISettings`, `Neo4jSettings`, and `QdrantSettings` objects. The scripts hydrate this aggregate on startup, surfacing validation errors (bad URLs, missing credentials, unsupported models) before any network calls occur.
 3. **Verify the workspace**
    ```bash
    PYTHONPATH=src python -m cli.diagnostics workspace --write-report

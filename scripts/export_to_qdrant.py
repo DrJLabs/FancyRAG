@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -27,7 +26,7 @@ except Exception:  # pragma: no cover - fallback when exceptions module unavaila
         """Fallback response exception when qdrant_client is not installed."""
 
 from cli.sanitizer import scrub_object
-from fancyrag.utils import ensure_env
+from fancyrag.utils import get_settings
 
 
 def _fetch_chunks(driver, *, database: str | None) -> list[dict[str, Any]]:
@@ -155,16 +154,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    ensure_env("QDRANT_URL")
-    ensure_env("NEO4J_URI")
-    ensure_env("NEO4J_USERNAME")
-    ensure_env("NEO4J_PASSWORD")
+    settings_bundle = get_settings()
+    qdrant_settings = settings_bundle.qdrant
+    neo4j_settings = settings_bundle.neo4j
 
-    qdrant_url = os.environ["QDRANT_URL"]
-    qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
-    neo4j_uri = os.environ["NEO4J_URI"]
-    neo4j_auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
-    neo4j_database = os.environ.get("NEO4J_DATABASE")
+    qdrant_client = QdrantClient(**qdrant_settings.client_kwargs())
+    neo4j_uri = neo4j_settings.uri
+    neo4j_auth = neo4j_settings.auth()
+    neo4j_database = neo4j_settings.database
 
     start = time.perf_counter()
     status = "success"
@@ -204,7 +201,7 @@ def main() -> None:
                     raise RuntimeError("Chunk embeddings missing or empty")
                 dimensions = len(embedding)
 
-                client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+                client = qdrant_client
                 vector_params = qmodels.VectorParams(
                     size=dimensions,
                     distance=qmodels.Distance.COSINE,

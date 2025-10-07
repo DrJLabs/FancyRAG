@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import importlib.util
+import os
 from itertools import chain
 from pathlib import Path
 from typing import Optional
@@ -67,33 +67,49 @@ def _load_dotenv_once() -> None:
     _ENV_LOADED = True
 
 
-def ensure_env(var: str) -> str:
-    """
-    Ensure an environment variable is present and return its value.
-    
-    This function triggers a one-time load of a .env file (if found) before reading the environment.
-    
-    Parameters:
-        var (str): Name of the environment variable to read.
-    
-    Returns:
-        str: The value of the requested environment variable.
-    
-    Raises:
-        SystemExit: If the environment variable is not set; exits with the message
-        "Missing required environment variable: {var}".
-    """
-
-    _load_dotenv_once()
-
-    value = os.getenv(var)
-    if value is not None:
-        return value
-    raise SystemExit(f"Missing required environment variable: {var}")
-
-
 def load_project_dotenv() -> Path | None:
     """Ensure the project's `.env` file (if any) is loaded and return its path."""
 
     _load_dotenv_once()
     return _DOTENV_PATH
+
+
+def get_settings(*, refresh: bool = False):
+    """Return the cached FancyRAGSettings aggregate, loading it on demand."""
+
+    from config.settings import FancyRAGSettings
+
+    return FancyRAGSettings.load(refresh=refresh)
+
+
+def ensure_env(var: str) -> str:
+    """Legacy helper that ensures a required environment variable is present."""
+
+    raw_env = os.getenv(var)
+    try:
+        settings = get_settings(refresh=True)
+    except ValueError:
+        settings = None
+
+    if settings is not None:
+        resolved = settings.export_environment()
+        value = resolved.get(var)
+        if value:
+            return value
+
+    if raw_env is not None and raw_env != "":
+        return raw_env
+
+    _load_dotenv_once()
+    raw = os.getenv(var)
+    if raw is not None and raw != "":
+        return raw
+
+    raise SystemExit(f"Missing required environment variable: {var}")
+
+
+__all__ = [
+    "ensure_env",
+    "get_settings",
+    "load_project_dotenv",
+]

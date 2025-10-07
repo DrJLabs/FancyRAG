@@ -39,6 +39,20 @@ def temporary_docs(tmp_path: Path) -> Path:
         "scripts/check_docs.py appears in the tree",
         encoding="utf-8",
     )
+
+    (tmp_path / "docs" / "brownfield-architecture.md").write_text(
+        "\n".join(
+            (
+                "### Orchestrator Decomposition & Typed Settings",
+                "#### `.env` Migration Checklist (Story 5.2)",
+                "PYTHONPATH=src python -m cli.diagnostics openai-probe",
+                "`OPENAI_API_KEY` maps to FancyRAGSettings.openai.api_key",
+                "`NEO4J_URI` aligns with FancyRAGSettings.neo4j.{uri, auth()}",
+                "`QDRANT_URL` aligns with FancyRAGSettings.qdrant.{url, client_kwargs()}",
+            )
+        ),
+        encoding="utf-8",
+    )
     return tmp_path
 
 
@@ -71,6 +85,17 @@ def test_main_fails_when_retriever_reference_missing(temporary_docs: Path, tmp_p
         ),
         encoding="utf-8",
     )
+
+    exit_code = check_docs.main(
+        ["--root", str(temporary_docs), "--json-output", str(tmp_path / "result.json")]
+    )
+
+    assert exit_code == 1
+
+
+def test_main_fails_when_migration_table_missing(temporary_docs: Path, tmp_path: Path) -> None:
+    doc = temporary_docs / "docs" / "brownfield-architecture.md"
+    doc.write_text("placeholder", encoding="utf-8")
 
     exit_code = check_docs.main(
         ["--root", str(temporary_docs), "--json-output", str(tmp_path / "result.json")]
