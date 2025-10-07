@@ -9,13 +9,6 @@ from pathlib import Path
 from typing import Any, Sequence
 from uuid import uuid4
 
-try:  # pragma: no cover - exercised only in minimal CI environments
-    from pydantic import ValidationError
-except ModuleNotFoundError:  # pragma: no cover
-    class ValidationError(ValueError):  # type: ignore[no-redef]
-        """Fallback validation error when pydantic is unavailable."""
-
-
 try:  # pragma: no branch - import-time dependency check
     from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
         FixedSizeSplitter,
@@ -163,11 +156,11 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         """
         Run the splitter on the given text, using a cached blueprint when available to rehydrate fresh chunk UIDs.
         
-        When `config` is provided, delegates to the superclass `run` implementation and returns its result; if that call fails with `TypeError` or `ValidationError`, falls back to the superclass `run` without `config`. When `config` is not provided, computes a cache key for `text`; on a cache miss it invokes the superclass `run`, stores a blueprint (text, index, deep-copied metadata) and the result, and returns that result. On a cache hit it reconstructs a new TextChunks instance from the stored blueprint, assigning new UIDs to each TextChunk, updates the last-output cache, and returns the reconstructed TextChunks.
+        When `config` is provided, caching is bypassed but the same normalization logic is applied before delegating to the upstream splitter. When `config` is not provided, a cache key is computed for `text`; on a cache miss the splitter (or sequence aggregator) is executed, a blueprint (text, index, deep-copied metadata) is stored alongside the most recent output, and the fresh result is returned. On a cache hit the stored blueprint is rehydrated into new TextChunks with regenerated UIDs, and the cached output reference is updated.
         
         Parameters:
             text (str | Sequence[str]): The input text or sequence of texts to split.
-            config (Any | None): Optional configuration passed through to the superclass `run`; when present, caching is bypassed.
+            config (Any | None): Optional configuration presence flag; when provided, caching is bypassed but the upstream splitter still receives the normalized inputs.
         
         Returns:
             TextChunks: The resulting chunks for `text`. On cache hits, chunks preserve text/index/metadata but have newly generated `uid` values.
@@ -175,22 +168,48 @@ class CachingFixedSizeSplitter(FixedSizeSplitter):
         is_sequence_input = not isinstance(text, str)
         normalized_sequence: tuple[str, ...] | None = None
         if is_sequence_input:
-            normalized_sequence = tuple(text)  # type: ignore[arg-type]
+            normalized_sequence = tuple(str(part) for part in text)  # type: ignore[arg-type]
 
-        cache_key_input: str | Sequence[str] = (
-            normalized_sequence if normalized_sequence is not None else text
-        )
+        cache_key_input: str | tuple[str, ...]
+        if normalized_sequence is not None:
+            cache_key_input = normalized_sequence
+        else:
+            cache_key_input = text  # type: ignore[assignment]
+
+        parent_run = super().run
+
+        async def _invoke_super(item: str) -> TextChunks:
+            return await parent_run(item)
+
+        async def _execute_without_cache(
+            input_value: str | tuple[str, ...]
+        ) -> TextChunks:
+            if isinstance(input_value, tuple):
+                combined_chunks: list[TextChunk] = []
+                index_offset = 0
+                for part in input_value:
+                    sub_result = await _invoke_super(part)
+                    for chunk in sub_result.chunks:
+                        chunk_cls = chunk.__class__
+                        combined_chunks.append(
+                            chunk_cls(
+                                text=chunk.text,
+                                index=index_offset + getattr(chunk, "index", 0),
+                                metadata=getattr(chunk, "metadata", None),
+                                uid=getattr(chunk, "uid", None),
+                            )
+                        )
+                    index_offset = len(combined_chunks)
+                return TextChunks(chunks=combined_chunks)
+            return await _invoke_super(input_value)
 
         if config is not None:
-            try:
-                return await super().run(text, config)
-            except (TypeError, ValidationError):  # pragma: no cover - fallback path
-                return await super().run(text)
+            return await _execute_without_cache(cache_key_input)
 
         key = self._cache_key(cache_key_input)
         blueprint = self._blueprints.get(key)
         if blueprint is None:
-            result = await super().run(text)
+            result = await _execute_without_cache(cache_key_input)
             self._blueprints[key] = [
                 {
                     "text": chunk.text,
