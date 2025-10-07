@@ -438,9 +438,16 @@ class ServiceWorkflow:
     # Helpers
     # ------------------------------------------------------------------
     def _merge_service_settings(self, service: ServiceSettings, overrides: RunOverrides) -> ServiceSettings:
+        base_service = service
+        preset_override = overrides.preset.strip().lower() if overrides.preset else None
+        if preset_override:
+            env_snapshot = dict(os.environ)
+            env_snapshot["FANCYRAG_PRESET"] = preset_override
+            base_service = ServiceSettings.from_environment(env_snapshot)
+
         updates: dict[str, object] = {}
-        if overrides.preset:
-            updates["preset"] = overrides.preset.strip().lower()
+        if preset_override:
+            updates["preset"] = preset_override
         if overrides.dataset_path is not None:
             updates["dataset_path"] = self._format_path_for_service(overrides.dataset_path)
             updates["dataset_dir"] = None
@@ -458,8 +465,8 @@ class ServiceWorkflow:
         if overrides.telemetry:
             updates["telemetry"] = overrides.telemetry
         if not updates:
-            return service
-        return service.model_copy(update=updates)
+            return base_service
+        return base_service.model_copy(update=updates)
 
     def _prepare_run_directory(self, override_root: Path | None) -> Path:
         base = override_root.resolve() if override_root else self.repo_root / "artifacts" / "local_stack" / "service"

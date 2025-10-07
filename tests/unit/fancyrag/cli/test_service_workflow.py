@@ -73,6 +73,7 @@ def workflow_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workflow = ServiceWorkflow(repo_root=tmp_path)
 
     def make_overrides(**kwargs) -> RunOverrides:
+        preset = kwargs.pop("preset", None)
         dataset_path = kwargs.pop("dataset_path", None)
         dataset_dir = kwargs.pop("dataset_dir", None)
         include_patterns = tuple(kwargs.pop("include_patterns", ()))
@@ -89,7 +90,7 @@ def workflow_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         if kwargs:
             raise AssertionError(f"Unexpected overrides: {kwargs}")
         return RunOverrides(
-            preset=None,
+            preset=preset,
             dataset_path=dataset_path,
             dataset_dir=dataset_dir,
             include_patterns=include_patterns,
@@ -287,3 +288,30 @@ def test_service_run_custom_dataset_path(workflow_setup):
     )
     expected_env_path = str(custom_file.relative_to(repo_root))
     assert pipeline_env["DATASET_PATH"] == expected_env_path
+
+
+def test_preset_override_refreshes_defaults(workflow_setup):
+    workflow, calls, _, make_overrides, _service_settings, repo_root = workflow_setup
+    calls.clear()
+
+    summary = workflow.run(make_overrides(preset="full"))
+
+    pipeline_call = next(
+        call["command"]
+        for call in calls
+        if "-m" in call["command"] and "fancyrag.cli.kg_build_main" in call["command"]
+    )
+    source_dir_index = pipeline_call.index("--source-dir")
+    assert pipeline_call[source_dir_index + 1] == str((repo_root / "docs").resolve())
+
+    pipeline_env = next(
+        call["env"]
+        for call in calls
+        if "-m" in call["command"] and "fancyrag.cli.kg_build_main" in call["command"]
+    )
+    assert pipeline_env["FANCYRAG_PRESET"] == "full"
+    assert "DATASET_PATH" not in pipeline_env
+    assert pipeline_env["DATASET_DIR"] == "docs"
+
+    assert summary.dataset_path is None
+    assert summary.dataset_dir == str((repo_root / "docs").resolve())
