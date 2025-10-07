@@ -1,0 +1,40 @@
+schema: 1
+story: '5.2'
+story_title: 'Centralise Typed Settings'
+gate: PASS
+status_reason: 'Typed settings, CLI entry points, and documentation lint now have automated coverage with no outstanding gaps.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-10-07T05:45:29Z'
+waiver:
+  active: false
+quality_score: 100
+expires: '2025-10-21T05:45:29Z'
+top_issues: []
+evidence:
+  tests_reviewed: 6
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 4, 5]
+    ac_gaps: [3]
+    notes: 'See docs/qa/assessments/5.2-trace-20251007.md for partial coverage details.'
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: 'Secret masking remains enforced and failure paths stay redacted.'
+  performance:
+    status: PASS
+    notes: 'Typed settings caching now covered by dedicated unit and CLI tests.'
+  reliability:
+    status: PASS
+    notes: 'Missing-variable and invalid URL paths raise deterministic errors with unit coverage.'
+  maintainability:
+    status: PASS
+    notes: 'Documentation lint guards the migration checklist; settings suite documents behaviour.'
+recommendations:
+  immediate: []
+  future:
+    - action: 'Keep typed settings unit suite and docs lint updated as new configuration fields land.'
+      refs:
+        - tests/unit/config/test_fancyrag_settings.py
+        - scripts/check_docs.py

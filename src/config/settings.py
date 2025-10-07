@@ -1,15 +1,15 @@
-"""OpenAI configuration helpers for GraphRAG CLI components."""
+"""Typed configuration surfaces for FancyRAG tooling."""
 
 from __future__ import annotations
 
 import getpass
 import os
-from dataclasses import dataclass
-from typing import Mapping, Optional
+from typing import Any, ClassVar, Mapping, Optional
 from urllib.parse import urlparse
 
 from _compat.structlog import get_logger
 from cli.sanitizer import mask_base_url
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 logger = get_logger(__name__)
 
@@ -36,6 +36,8 @@ _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
 _VALID_BASE_SCHEMES = frozenset({"http", "https"})
 _TRUE_BOOL_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_BOOL_VALUES = frozenset({"0", "false", "no", "off"})
+_ALLOWED_NEO4J_SCHEMES = frozenset({"bolt", "bolt+s", "neo4j", "neo4j+s"})
+_ALLOWED_QDRANT_SCHEMES = frozenset({"http", "https"})
 
 
 def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_event: str) -> bool:
@@ -56,40 +58,44 @@ def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_
     )
 
 
-@dataclass(frozen=True)
-class OpenAISettings:
+class OpenAISettings(BaseModel):
     """Resolved OpenAI settings with guardrails and audit metadata."""
 
-    chat_model: str
-    embedding_model: str
-    embedding_dimensions: int
-    embedding_dimensions_override: Optional[int]
+    model_config = ConfigDict(frozen=True)
+
+    api_key: SecretStr | None = None
+    chat_model: str = Field(default=DEFAULT_CHAT_MODEL)
+    embedding_model: str = Field(default=DEFAULT_EMBEDDING_MODEL)
+    embedding_dimensions: int = Field(default=DEFAULT_EMBEDDING_DIMENSIONS, gt=0)
+    embedding_dimensions_override: int | None = Field(default=None, gt=0)
     actor: str
-    max_attempts: int
-    backoff_seconds: float
-    enable_fallback: bool
-    api_base_url: Optional[str] = None
+    max_attempts: int = Field(default=DEFAULT_MAX_RETRY_ATTEMPTS, gt=0)
+    backoff_seconds: float = Field(default=DEFAULT_BACKOFF_SECONDS, gt=0)
+    enable_fallback: bool = Field(default=DEFAULT_FALLBACK_ENABLED)
+    api_base_url: str | None = None
     allow_insecure_base_url: bool = False
 
     @property
     def is_chat_override(self) -> bool:
-        """
-        Indicates whether a non-default chat model is configured.
-        
-        Returns:
-            True if `chat_model` is different from DEFAULT_CHAT_MODEL, False otherwise.
-        """
+        """Return True when a non-default chat model is configured."""
+
         return self.chat_model != DEFAULT_CHAT_MODEL
 
     @property
     def allowed_chat_models(self) -> frozenset[str]:
-        """
-        Get the set of chat model identifiers allowed by the application.
-        
-        Returns:
-            frozenset[str]: Allowed chat model identifiers.
-        """
+        """Expose the valid chat models for guardrails and telemetry."""
+
         return ALLOWED_CHAT_MODELS
+
+    def expected_embedding_dimensions(self) -> int:
+        """Return the embedding dimensionality accounting for overrides."""
+
+        return self.embedding_dimensions_override or self.embedding_dimensions
+
+    def for_actor(self, actor: str) -> OpenAISettings:
+        """Return a copy of the settings with the provided actor metadata."""
+
+        return self.model_copy(update={"actor": actor})
 
     @classmethod
     def load(
@@ -97,30 +103,8 @@ class OpenAISettings:
         env: Optional[Mapping[str, str]] = None,
         *,
         actor: Optional[str] = None,
-    ) -> "OpenAISettings":
-        """
-        Load OpenAI configuration from the given environment mapping or the process environment, applying validation and overrides.
-        
-        Parameters:
-            env (Optional[Mapping[str, str]]): Optional mapping of environment variables to read; if omitted, os.environ is used.
-            actor (Optional[str]): Optional actor name to record; if omitted, the value is taken from the environment variable GRAPH_RAG_ACTOR, then USER, then "unknown".
-        
-        Description:
-            Reads OPENAI_MODEL, OPENAI_EMBEDDING_MODEL, OPENAI_EMBEDDING_DIMENSIONS,
-            OPENAI_MAX_ATTEMPTS, OPENAI_BACKOFF_SECONDS, OPENAI_ENABLE_FALLBACK,
-            OPENAI_ALLOW_INSECURE_BASE_URL, and OPENAI_BASE_URL (plus GRAPH_RAG_ACTOR
-            for actor hint). Validates
-            chat-model allowlists, embedding override dimensions, retry/backoff
-            ranges, fallback toggles, and base URL overrides. Records informational
-            logs for overrides and error logs for invalid values.
-        
-        Returns:
-            OpenAISettings: An instance populated with the resolved chat model, embedding model, default embedding dimensions, any embedding-dimensions override, and the resolved actor name.
-        
-        Raises:
-            ValueError: If OPENAI_MODEL is not in the allowed models.
-            ValueError: If OPENAI_EMBEDDING_DIMENSIONS is not a valid positive integer when provided.
-        """
+    ) -> OpenAISettings:
+        """Load OpenAI configuration from environment values with validation."""
 
         source = env or os.environ
         actor_name = actor or source.get(_ENV_ACTOR_HINT) or getpass.getuser() or "unknown"
@@ -148,7 +132,7 @@ class OpenAISettings:
 
         embedding_model = (source.get(_ENV_OPENAI_EMBEDDING_MODEL) or DEFAULT_EMBEDDING_MODEL).strip()
         override_raw = (source.get(_ENV_OPENAI_EMBEDDING_DIMENSIONS) or "").strip()
-        override_dimensions = None
+        override_dimensions: int | None = None
         if override_raw:
             try:
                 override_dimensions = int(override_raw)
@@ -318,6 +302,7 @@ class OpenAISettings:
             )
 
         return cls(
+            api_key=None,
             chat_model=requested_chat_model,
             embedding_model=embedding_model,
             embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
@@ -330,18 +315,222 @@ class OpenAISettings:
             allow_insecure_base_url=allow_insecure,
         )
 
-    def expected_embedding_dimensions(self) -> int:
+
+class Neo4jSettings(BaseModel):
+    """Typed Neo4j connection settings."""
+
+    model_config = ConfigDict(frozen=True)
+
+    uri: str
+    username: str
+    password: SecretStr
+    database: str | None = None
+    bolt_advertised_address: str | None = None
+    http_advertised_address: str | None = None
+
+    @field_validator("uri")
+    @classmethod
+    def _validate_uri(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in _ALLOWED_NEO4J_SCHEMES or not parsed.netloc:
+            raise ValueError(
+                "NEO4J_URI must use bolt:// or neo4j:// scheme with host and port."
+            )
+        return value
+
+    def auth(self) -> tuple[str, str]:
+        """Return the username/password tuple for Neo4j driver usage."""
+
+        return self.username, self.password.get_secret_value()
+
+
+class QdrantSettings(BaseModel):
+    """Typed Qdrant connection settings."""
+
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    api_key: SecretStr | None = None
+    neo4j_id_property: str = "chunk_id"
+    external_id_property: str = "chunk_id"
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in _ALLOWED_QDRANT_SCHEMES or not parsed.netloc:
+            raise ValueError("QDRANT_URL must be an http(s) URL with host information.")
+        return value
+
+    def client_kwargs(self) -> dict[str, Any]:
+        """Return keyword arguments suitable for QdrantClient construction."""
+
+        kwargs: dict[str, Any] = {"url": self.url}
+        if self.api_key is not None:
+            kwargs["api_key"] = self.api_key.get_secret_value()
+        return kwargs
+
+
+class FancyRAGSettings(BaseModel):
+    """Aggregate typed settings for FancyRAG tooling."""
+
+    model_config = ConfigDict(frozen=True)
+
+    openai: OpenAISettings
+    neo4j: Neo4jSettings
+    qdrant: QdrantSettings | None = None
+
+    _CACHE: ClassVar[FancyRAGSettings | None] = None
+
+    @classmethod
+    def load(
+        cls,
+        env: Optional[Mapping[str, str]] = None,
+        *,
+        refresh: bool = False,
+        require: set[str] | None = None,
+    ) -> FancyRAGSettings:
+        """Load settings from environment variables and cache the result.
+
+        Args:
+            env: Optional environment mapping for testing.
+            refresh: When True, force reloading from the environment.
+            require: Optional set of component names that must be present (e.g.,
+                {"qdrant"}). Missing required components raise ``ValueError``.
         """
-        Return the effective embedding vector dimensionality for these settings.
-        
-        Returns:
-            The embedding dimension to use: the `embedding_dimensions_override` value if set, otherwise `embedding_dimensions`.
-        """
-        return self.embedding_dimensions_override or self.embedding_dimensions
+
+        required = {item.lower() for item in (require or set())}
+
+        def _ensure_requirements(settings: "FancyRAGSettings") -> None:
+            if "openai" in required and settings.openai.api_key is None:
+                raise ValueError("Missing required environment variable: OPENAI_API_KEY")
+            if "qdrant" in required and settings.qdrant is None:
+                raise ValueError("Missing required environment variable: QDRANT_URL")
+
+        if env is None and not refresh and cls._CACHE is not None:
+            cached = cls._CACHE
+            _ensure_requirements(cached)
+            return cached
+
+        require_openai = "openai" in required
+        require_qdrant = "qdrant" in required
+
+        if env is None:
+            from fancyrag.utils.env import load_project_dotenv
+
+            load_project_dotenv()
+            source: Mapping[str, str] = os.environ
+        else:
+            source = env
+
+        def _require(key: str) -> str:
+            value = (source.get(key) or "").strip()
+            if not value:
+                raise ValueError(f"Missing required environment variable: {key}")
+            return value
+
+        def _optional(key: str) -> str | None:
+            value = (source.get(key) or "").strip()
+            return value or None
+
+        openai_settings = OpenAISettings.load(source, actor="fancyrag.service")
+        api_key_raw = _optional("OPENAI_API_KEY")
+        if api_key_raw:
+            openai_settings = openai_settings.model_copy(
+                update={"api_key": SecretStr(api_key_raw)}
+            )
+        elif require_openai:
+            raise ValueError("Missing required environment variable: OPENAI_API_KEY")
+
+        try:
+            neo4j_settings = Neo4jSettings(
+                uri=_require("NEO4J_URI"),
+                username=_require("NEO4J_USERNAME"),
+                password=SecretStr(_require("NEO4J_PASSWORD")),
+                database=_optional("NEO4J_DATABASE"),
+                bolt_advertised_address=_optional("NEO4J_BOLT_ADVERTISED_ADDRESS"),
+                http_advertised_address=_optional("NEO4J_HTTP_ADVERTISED_ADDRESS"),
+            )
+        except ValidationError as exc:
+            raise ValueError("Invalid Neo4j configuration") from exc
+
+        qdrant_settings: QdrantSettings | None
+        qdrant_url = _optional("QDRANT_URL")
+        if not qdrant_url:
+            if require_qdrant:
+                raise ValueError("Missing required environment variable: QDRANT_URL")
+            qdrant_settings = None
+        else:
+            qdrant_api_key = _optional("QDRANT_API_KEY")
+            try:
+                qdrant_settings = QdrantSettings(
+                    url=qdrant_url,
+                    api_key=SecretStr(qdrant_api_key) if qdrant_api_key else None,
+                    neo4j_id_property=_optional("QDRANT_NEO4J_ID_PROPERTY_NEO4J") or "chunk_id",
+                    external_id_property=_optional("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL") or "chunk_id",
+                )
+            except ValidationError as exc:
+                raise ValueError("Invalid Qdrant configuration") from exc
+
+        settings = cls(openai=openai_settings, neo4j=neo4j_settings, qdrant=qdrant_settings)
+        _ensure_requirements(settings)
+        if env is None:
+            cls._CACHE = settings
+        return settings
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Reset the cached settings instance."""
+
+        cls._CACHE = None
+
+    def export_environment(self) -> dict[str, str]:
+        """Return an environment-style mapping of the resolved settings."""
+
+        env: dict[str, str] = {
+            "OPENAI_API_KEY": self.openai.api_key.get_secret_value() if self.openai.api_key else "",
+            "OPENAI_MODEL": self.openai.chat_model,
+            "OPENAI_EMBEDDING_MODEL": self.openai.embedding_model,
+            "OPENAI_MAX_ATTEMPTS": str(self.openai.max_attempts),
+            "OPENAI_BACKOFF_SECONDS": str(self.openai.backoff_seconds),
+            "OPENAI_ENABLE_FALLBACK": "true" if self.openai.enable_fallback else "false",
+        }
+        if self.openai.embedding_dimensions_override is not None:
+            env["OPENAI_EMBEDDING_DIMENSIONS"] = str(self.openai.embedding_dimensions_override)
+        if self.openai.api_base_url:
+            env["OPENAI_BASE_URL"] = self.openai.api_base_url
+            env["OPENAI_ALLOW_INSECURE_BASE_URL"] = "true" if self.openai.allow_insecure_base_url else "false"
+
+        env.update(
+            {
+                "NEO4J_URI": self.neo4j.uri,
+                "NEO4J_USERNAME": self.neo4j.username,
+                "NEO4J_PASSWORD": self.neo4j.password.get_secret_value(),
+            }
+        )
+        if self.neo4j.database:
+            env["NEO4J_DATABASE"] = self.neo4j.database
+        if self.neo4j.bolt_advertised_address:
+            env["NEO4J_BOLT_ADVERTISED_ADDRESS"] = self.neo4j.bolt_advertised_address
+        if self.neo4j.http_advertised_address:
+            env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = self.neo4j.http_advertised_address
+
+        if self.qdrant is not None:
+            env.update({"QDRANT_URL": self.qdrant.url})
+            if self.qdrant.api_key:
+                env["QDRANT_API_KEY"] = self.qdrant.api_key.get_secret_value()
+            if self.qdrant.neo4j_id_property:
+                env["QDRANT_NEO4J_ID_PROPERTY_NEO4J"] = self.qdrant.neo4j_id_property
+            if self.qdrant.external_id_property:
+                env["QDRANT_NEO4J_ID_PROPERTY_EXTERNAL"] = self.qdrant.external_id_property
+        return env
 
 
 __all__ = [
     "OpenAISettings",
+    "Neo4jSettings",
+    "QdrantSettings",
+    "FancyRAGSettings",
     "DEFAULT_CHAT_MODEL",
     "FALLBACK_CHAT_MODELS",
     "DEFAULT_EMBEDDING_MODEL",

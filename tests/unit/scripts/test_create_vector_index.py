@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.settings import FancyRAGSettings
+
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -69,6 +71,13 @@ else:
     sys.modules.setdefault("neo4j.exceptions", neo_stub.exceptions)
 
 import scripts.create_vector_index as civ
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings_cache():
+    FancyRAGSettings.clear_cache()
+    yield
+    FancyRAGSettings.clear_cache()
 
 
 class FakeRecord:
@@ -204,6 +213,41 @@ def test_mismatch_different_label(monkeypatch: pytest.MonkeyPatch, env) -> None:
 
     with pytest.raises(civ.VectorIndexMismatchError):
         civ.run([])
+
+
+def test_run_invokes_get_settings_once(monkeypatch: pytest.MonkeyPatch, env) -> None:
+    calls = {"count": 0}
+
+    class Neo4jStub:
+        uri = "bolt://localhost:7687"
+
+        @staticmethod
+        def auth() -> tuple[str, str]:
+            return ("neo4j", "password")
+
+    stub_settings = SimpleNamespace(neo4j=Neo4jStub())
+
+    def fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
+        calls["count"] += 1
+        required = {item.lower() for item in require or set()}
+        if "neo4j" in required and not hasattr(stub_settings, "neo4j"):
+            raise ValueError("Missing required environment variable: NEO4J_URI")
+        return stub_settings
+
+    monkeypatch.setattr(civ, "get_settings", fake_get_settings)
+
+    def _unexpected(*_args, **_kwargs):
+        raise AssertionError("ensure_env should not be called during typed settings execution")
+
+    monkeypatch.setattr("fancyrag.utils.env.ensure_env", _unexpected)
+    monkeypatch.setattr(civ.GraphDatabase, "driver", lambda *_args, **_kwargs: FakeDriver())
+    monkeypatch.setattr(civ, "retrieve_vector_index_info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(civ, "create_vector_index", lambda *_args, **_kwargs: None)
+
+    log = civ.run([])
+
+    assert log["status"] == "created"
+    assert calls["count"] == 1
 
 
 def test_mismatch_different_property(monkeypatch: pytest.MonkeyPatch, env) -> None:
@@ -616,7 +660,7 @@ def test_invalid_uri_format(monkeypatch: pytest.MonkeyPatch, env) -> None:
     
     monkeypatch.setattr(civ.GraphDatabase, "driver", failing_driver)
 
-    with pytest.raises(ValueError, match="Invalid URI scheme"):
+    with pytest.raises(ValueError, match="Invalid Neo4j configuration"):
         civ.run([])
 
 

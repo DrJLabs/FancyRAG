@@ -80,7 +80,7 @@ from fancyrag.qa import IngestionQaEvaluator, QaSourceRecord
 from fancyrag.splitters import CachingSplitterConfig, build_caching_splitter
 from fancyrag.utils import (
     ensure_directory as _ensure_directory,
-    ensure_env,
+    get_settings as _get_settings,
     relative_to_repo as _relative_to_repo,
     resolve_repo_root as _resolve_repo_root,
 )
@@ -1265,10 +1265,9 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     include_patterns = resolved_settings.include_patterns
     semantic_max_concurrency = resolved_settings.semantic_max_concurrency
 
-    ensure_env("OPENAI_API_KEY")
-    ensure_env("NEO4J_URI")
-    ensure_env("NEO4J_USERNAME")
-    ensure_env("NEO4J_PASSWORD")
+    settings_bundle = _get_settings(require={"openai", "neo4j"})
+    openai_settings = settings_bundle.openai.for_actor("kg_build")
+    neo4j_settings = settings_bundle.neo4j
 
     git_commit = _resolve_git_commit()
 
@@ -1285,9 +1284,8 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     )
     source_specs = list(discovery.sources)
 
-    settings = OpenAISettings.load(actor="kg_build")
     clients = build_clients(
-        settings=settings,
+        settings=openai_settings,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         shared_client_factory=SharedOpenAIClient,
@@ -1297,8 +1295,8 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
         splitter_factory=build_caching_splitter,
     )
 
-    uri = os.environ["NEO4J_URI"]
-    auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
+    uri = neo4j_settings.uri
+    auth = neo4j_settings.auth()
 
     if GraphDatabase is None:
         raise RuntimeError(_neo4j_import_unavailable_message())
@@ -1392,10 +1390,10 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
         "database": options.database,
         "reset_database": bool(options.reset_database),
         "openai": {
-            "chat_model": settings.chat_model,
-            "embedding_model": settings.embedding_model,
-            "embedding_dimensions": settings.embedding_dimensions,
-            "max_attempts": settings.max_attempts,
+            "chat_model": openai_settings.chat_model,
+            "embedding_model": openai_settings.embedding_model,
+            "embedding_dimensions": openai_settings.embedding_dimensions,
+            "max_attempts": openai_settings.max_attempts,
         },
         "counts": counts,
         "run_id": run_ids[-1] if run_ids else None,

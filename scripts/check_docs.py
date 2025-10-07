@@ -72,6 +72,22 @@ DEFAULT_RULES: tuple[LintRule, ...] = (
             ),
         ),
     ),
+    LintRule(
+        relative_path=Path("docs/brownfield-architecture.md"),
+        checks=(
+            TokenCheck(
+                check_id="typed-settings-migration-checklist",
+                tokens=(
+                    "`.env` Migration Checklist",
+                    "FancyRAGSettings.openai.api_key",
+                    "FancyRAGSettings.neo4j.{uri, auth()}",
+                    "FancyRAGSettings.qdrant.{url, client_kwargs()}",
+                    "PYTHONPATH=src python -m cli.diagnostics openai-probe",
+                ),
+                description="Migration checklist documents typed settings mapping and validation command.",
+            ),
+        ),
+    ),
 )
 
 

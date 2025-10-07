@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from importlib import util
 from importlib.machinery import ModuleSpec
@@ -9,6 +10,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+
+from config.settings import FancyRAGSettings
 
 existing_neo4j = sys.modules.get("neo4j")
 def _stub_driver(*_args, **_kwargs):
@@ -110,6 +113,13 @@ SPEC.loader.exec_module(ask)  # type: ignore[union-attr]
 
 
 @pytest.fixture(autouse=True)
+def _reset_fancyrag_settings_cache():
+    FancyRAGSettings.clear_cache()
+    yield
+    FancyRAGSettings.clear_cache()
+
+
+@pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
@@ -118,6 +128,61 @@ def _env(monkeypatch):
     monkeypatch.setenv("NEO4J_PASSWORD", "password")
     monkeypatch.delenv("NEO4J_DATABASE", raising=False)
     monkeypatch.delenv("QDRANT_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def settings_stub(monkeypatch):
+    """Provide FancyRAG settings stubs for the ask_qdrant module."""
+
+    class Neo4jStub:
+        @property
+        def uri(self) -> str:
+            return os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+
+        @property
+        def database(self) -> str | None:
+            return os.environ.get("NEO4J_DATABASE")
+
+        def auth(self) -> tuple[str, str]:
+            return (
+                os.environ.get("NEO4J_USERNAME", "neo4j"),
+                os.environ.get("NEO4J_PASSWORD", "password"),
+            )
+
+    class QdrantStub:
+        @property
+        def neo4j_id_property(self) -> str:
+            return os.environ.get("QDRANT_NEO4J_ID_PROPERTY_NEO4J", "chunk_id")
+
+        @property
+        def external_id_property(self) -> str:
+            return os.environ.get("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL", "chunk_id")
+
+        def client_kwargs(self) -> dict[str, str]:
+            kwargs = {"url": os.environ.get("QDRANT_URL", "http://localhost:6333")}
+            api_key = os.environ.get("QDRANT_API_KEY")
+            if api_key:
+                kwargs["api_key"] = api_key
+            return kwargs
+
+    class OpenAIStub:
+        def for_actor(self, actor: str):
+            return SimpleNamespace(
+                actor=actor,
+                api_base_url=os.environ.get("OPENAI_BASE_URL"),
+                allow_insecure_base_url=False,
+            )
+
+    stub = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub(), openai=OpenAIStub())
+
+    def _fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
+        required = {item.lower() for item in require or set()}
+        if "qdrant" in required and stub.qdrant is None:
+            raise ValueError("Missing required environment variable: QDRANT_URL")
+        return stub
+
+    monkeypatch.setattr(ask, "get_settings", _fake_get_settings)
+    return stub
 
 
 def _setup_shared_client(monkeypatch, *, vector):
@@ -379,6 +444,74 @@ def test_main_includes_semantic_context(monkeypatch, tmp_path, capsys):
     artifact_path = tmp_path / "artifacts" / "local_stack" / "ask_qdrant.json"
     saved = json.loads(artifact_path.read_text())
     assert saved["matches"][0]["semantic"] == semantic_payload["chunk-1"]
+
+
+def test_main_calls_get_settings_once(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ask_qdrant.py", "--question", "Ping?"])
+
+    calls = {"count": 0}
+
+    class Neo4jStub:
+        @property
+        def uri(self) -> str:
+            return "bolt://localhost:7687"
+
+        @property
+        def database(self) -> str | None:
+            return None
+
+        def auth(self) -> tuple[str, str]:
+            return ("neo4j", "password")
+
+    class QdrantStub:
+        @property
+        def neo4j_id_property(self) -> str:
+            return "chunk_id"
+
+        @property
+        def external_id_property(self) -> str:
+            return "chunk_id"
+
+        def client_kwargs(self) -> dict[str, str]:
+            return {"url": "http://localhost:6333"}
+
+    class OpenAIStub:
+        def for_actor(self, actor: str):
+            return SimpleNamespace(actor=actor)
+
+    stub_settings = SimpleNamespace(
+        neo4j=Neo4jStub(),
+        qdrant=QdrantStub(),
+        openai=OpenAIStub(),
+    )
+
+    def fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
+        calls["count"] += 1
+        required = {item.lower() for item in require or set()}
+        if "qdrant" in required and stub_settings.qdrant is None:
+            raise ValueError("Missing required environment variable: QDRANT_URL")
+        return stub_settings
+
+    monkeypatch.setattr(ask, "get_settings", fake_get_settings)
+
+    def _unexpected(*_args, **_kwargs):
+        raise AssertionError("ensure_env should not be called")
+
+    monkeypatch.setattr("fancyrag.utils.env.ensure_env", _unexpected)
+    _setup_shared_client(monkeypatch, vector=[0.1, 0.2, 0.3])
+    _setup_driver(monkeypatch)
+    capture: dict[str, object] = {}
+    _setup_retriever(
+        monkeypatch,
+        records=[{"chunk_id": "1", "chunk_uid": "chunk-1", "text": "example", "score": 0.9}],
+        capture=capture,
+    )
+
+    ask.main()
+
+    capsys.readouterr()
+    assert calls["count"] == 1
 
 
 def test_main_handles_openai_error(monkeypatch, tmp_path, capsys):

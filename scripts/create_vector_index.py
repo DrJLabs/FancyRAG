@@ -45,7 +45,7 @@ except Exception as exc:  # pragma: no cover - dependency missing in minimal env
 from _compat.structlog import get_logger
 from cli.sanitizer import scrub_object
 from config.settings import DEFAULT_EMBEDDING_DIMENSIONS
-from fancyrag.utils import ensure_env
+from fancyrag.utils import get_settings
 
 
 logger = get_logger(__name__)
@@ -355,12 +355,9 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     args.dimensions = _validate_dimensions(args.dimensions)
     args.similarity = _normalise_similarity(args.similarity)
 
-    ensure_env("NEO4J_URI")
-    ensure_env("NEO4J_USERNAME")
-    ensure_env("NEO4J_PASSWORD")
-
-    uri = os.environ["NEO4J_URI"]
-    auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
+    neo4j_settings = get_settings(require={"neo4j"}).neo4j
+    uri = neo4j_settings.uri
+    auth = neo4j_settings.auth()
 
     cfg = VectorIndexConfig(
         name=args.index_name,

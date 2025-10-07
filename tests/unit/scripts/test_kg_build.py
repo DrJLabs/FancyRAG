@@ -143,6 +143,18 @@ class FakePipeline:
         return SimpleNamespace(run_id="test-run")
 
 
+def _make_settings_loader(openai_settings, neo4j_settings):
+    """Produce a callable mirroring ``get_settings`` with requirement checks."""
+
+    def _loader(*, require=None, **_kwargs):
+        if require is not None:
+            required = set(require)
+            assert {"openai", "neo4j"}.issubset(required)
+        return SimpleNamespace(openai=openai_settings, neo4j=neo4j_settings)
+
+    return _loader
+
+
 class FakeDriver:
     def __init__(self) -> None:
         """
@@ -320,7 +332,14 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     log = kg.run(
         [
@@ -450,7 +469,14 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     kg.run(
         [
@@ -528,7 +554,14 @@ def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # no
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     semantic_calls: list[dict[str, Any]] = []
 
@@ -618,7 +651,14 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001
 
     monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: FailingClient())
     _patch_driver(monkeypatch, lambda *_, **__: FakeDriver())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
     monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -659,7 +699,14 @@ def test_run_fails_on_qa_threshold(tmp_path, monkeypatch, env) -> None:  # noqa:
     monkeypatch.setattr(kg_pipeline, "SharedOpenAIClient", lambda *_args, **_kwargs: fake_client)
     monkeypatch.setattr(kg_pipeline, "SimpleKGPipeline", lambda **kwargs: FakePipeline(**kwargs))
     _patch_driver(monkeypatch, lambda *_, **__: failing_driver)
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     with pytest.raises(RuntimeError) as excinfo:
         kg.run(
@@ -849,7 +896,14 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     log = kg.run(
         [
@@ -920,7 +974,14 @@ def test_run_with_external_qa_report_dir(tmp_path, monkeypatch, env) -> None:  #
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     log = kg.run(
         [
@@ -1071,7 +1132,14 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
         return driver
 
     _patch_driver(monkeypatch, lambda *_, **__: driver_factory())
-    monkeypatch.setattr(kg_pipeline.OpenAISettings, "load", classmethod(lambda *_, **__: settings))
+
+    neo4j_stub = SimpleNamespace(uri="bolt://localhost:7687", database=None)
+    neo4j_stub.auth = lambda: ("neo4j", "password")
+    monkeypatch.setattr(
+        kg_pipeline,
+        "_get_settings",
+        _make_settings_loader(settings, neo4j_stub),
+    )
 
     log = kg.run(
         [

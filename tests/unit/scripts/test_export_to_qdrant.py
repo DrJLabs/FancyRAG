@@ -25,6 +25,8 @@ pytest.importorskip(
 from neo4j.exceptions import Neo4jError
 import qdrant_client.models as qmodels
 
+import scripts.export_to_qdrant as export_script
+
 # Import functions to test
 from scripts.export_to_qdrant import (
     _batched,
@@ -32,6 +34,15 @@ from scripts.export_to_qdrant import (
     _fetch_chunks,
     main,
 )
+
+from config.settings import FancyRAGSettings
+
+
+@pytest.fixture(autouse=True)
+def _reset_fancyrag_settings_cache():
+    FancyRAGSettings.clear_cache()
+    yield
+    FancyRAGSettings.clear_cache()
 
 
 class TestFetchChunks:
@@ -301,6 +312,48 @@ class TestCoercePointId:
         assert isinstance(result, str)
 
 
+@pytest.fixture
+def settings_stub(monkeypatch):
+    """Provide a stubbed FancyRAG settings aggregate for exporter tests."""
+
+    class Neo4jStub:
+        @property
+        def uri(self) -> str:
+            return os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+
+        @property
+        def database(self) -> str | None:
+            return os.environ.get("NEO4J_DATABASE")
+
+        def auth(self) -> tuple[str, str]:
+            return (
+                os.environ.get("NEO4J_USERNAME", "neo4j"),
+                os.environ.get("NEO4J_PASSWORD", "password"),
+            )
+
+    class QdrantStub:
+        @property
+        def neo4j_id_property(self) -> str:
+            return os.environ.get("QDRANT_NEO4J_ID_PROPERTY_NEO4J", "chunk_id")
+
+        @property
+        def external_id_property(self) -> str:
+            return os.environ.get("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL", "chunk_id")
+
+        def client_kwargs(self) -> dict[str, str]:
+            kwargs = {"url": os.environ.get("QDRANT_URL", "http://localhost:6333")}
+            api_key = os.environ.get("QDRANT_API_KEY")
+            if api_key:
+                kwargs["api_key"] = api_key
+            return kwargs
+
+    stub = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub())
+
+    monkeypatch.setattr("scripts.export_to_qdrant.get_settings", lambda: stub)
+    return stub
+
+
+@pytest.mark.usefixtures("settings_stub")
 class TestMain:
     """Test suite for main function."""
 
@@ -308,7 +361,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -319,7 +371,7 @@ class TestMain:
         },
     )
     def test_main_success_with_chunks(
-        self, mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function successfully exports chunks."""
         # Setup mocks
@@ -365,8 +417,6 @@ class TestMain:
             main()
 
         # Assertions
-        mock_ensure_env.assert_any_call("QDRANT_URL")
-        mock_ensure_env.assert_any_call("NEO4J_URI")
         mock_graph_db.driver.assert_called_once()
         mock_client.create_collection.assert_called_once()
         mock_client.upsert.assert_called_once()
@@ -375,11 +425,97 @@ class TestMain:
         assert payload_batch.payloads[0]["checksum"] == "aaa"
         assert payload_batch.payloads[1]["relative_path"] == "src/file2.txt"
 
+    def test_main_calls_get_settings_once(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        calls = {"count": 0}
+
+        class Neo4jStub:
+            uri = "bolt://localhost:7687"
+            database = None
+
+            @staticmethod
+            def auth() -> tuple[str, str]:
+                return ("neo4j", "password")
+
+        class QdrantStub:
+            def client_kwargs(self) -> dict[str, str]:
+                return {"url": "http://localhost:6333"}
+
+        class OpenAIStub:
+            def for_actor(self, actor: str):
+                return SimpleNamespace(actor=actor)
+
+        stub_settings = SimpleNamespace(
+            neo4j=Neo4jStub(),
+            qdrant=QdrantStub(),
+            openai=OpenAIStub(),
+        )
+
+        def fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
+            calls["count"] += 1
+            required = {item.lower() for item in require or set()}
+            if "qdrant" in required and stub_settings.qdrant is None:
+                raise ValueError("Missing required environment variable: QDRANT_URL")
+            return stub_settings
+
+        class FakeDriver:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute_query(self, *_args, **_kwargs):
+                record = {
+                    "chunk_id": "1",
+                    "chunk_uid": "chunk-1",
+                    "chunk_index": 0,
+                    "text": "example",
+                    "embedding": [0.1, 0.2, 0.3],
+                    "source_path": "doc.txt",
+                    "relative_path": "docs/doc.txt",
+                    "git_commit": "deadbeef",
+                    "checksum": "aaa",
+                }
+                return ([record], None, None)
+
+        class FakeQdrantClient:
+            def __init__(self, **_kwargs):
+                self.created = False
+
+            def collection_exists(self, _name):
+                return False
+
+            def create_collection(self, **_kwargs):
+                self.created = True
+
+            def get_collection(self, _name):
+                return SimpleNamespace(config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=3))))
+
+            def upsert(self, **_kwargs):
+                return SimpleNamespace()
+
+        monkeypatch.setattr(export_script, "get_settings", fake_get_settings)
+
+        def _unexpected(*_args, **_kwargs):
+            raise AssertionError("ensure_env should not be invoked during typed settings path")
+
+        monkeypatch.setattr("fancyrag.utils.env.ensure_env", _unexpected)
+        monkeypatch.setattr(export_script, "GraphDatabase", SimpleNamespace(driver=lambda *_args, **_kwargs: FakeDriver()))
+        monkeypatch.setattr(export_script, "QdrantClient", FakeQdrantClient)
+        monkeypatch.setattr(export_script.qmodels, "VectorParams", lambda size, distance: SimpleNamespace(size=size, distance=distance))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PYTHONPATH", "src")
+
+        monkeypatch.setattr(sys, "argv", ["export_to_qdrant.py", "--collection", "chunks_main", "--batch-size", "1"])
+
+        export_script.main()
+
+        assert calls["count"] == 1
+
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -390,7 +526,7 @@ class TestMain:
         },
     )
     def test_main_skipped_no_chunks(
-        self, _mock_ensure_env, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function when no chunks are available."""
         mock_driver = Mock()
@@ -417,7 +553,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -428,7 +563,7 @@ class TestMain:
         },
     )
     def test_main_skips_empty_embeddings(
-        self, _mock_ensure_env, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function skips chunks that have empty embeddings."""
         mock_driver = Mock()
@@ -464,7 +599,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -475,7 +609,7 @@ class TestMain:
         },
     )
     def test_main_with_batch_size_argument(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function with custom batch size argument."""
         mock_driver = Mock()
@@ -515,7 +649,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -526,7 +659,7 @@ class TestMain:
         },
     )
     def test_main_deletes_existing_collection(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function deletes existing collection before creating new one."""
         mock_driver = Mock()
@@ -567,7 +700,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -578,7 +710,7 @@ class TestMain:
         },
     )
     def test_main_preserves_existing_collection_when_not_recreating(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         mock_driver = Mock()
         mock_graph_db.driver.return_value.__enter__.return_value = mock_driver
@@ -621,7 +753,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -632,7 +763,7 @@ class TestMain:
         },
     )
     def test_main_existing_collection_dimension_mismatch_requires_recreate(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         mock_driver = Mock()
         mock_graph_db.driver.return_value.__enter__.return_value = mock_driver
@@ -677,7 +808,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -689,7 +819,7 @@ class TestMain:
         },
     )
     def test_main_with_qdrant_api_key(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function uses Qdrant API key when provided."""
         mock_driver = Mock()
@@ -727,7 +857,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -738,7 +867,7 @@ class TestMain:
         },
     )
     def test_main_neo4j_error_handling(
-        self, _mock_ensure_env, mock_graph_db, mock_scrub, mock_path
+        self, mock_graph_db, mock_scrub, mock_path
     ):
         """Test main function handles Neo4j errors gracefully."""
         mock_driver = Mock()
@@ -755,16 +884,16 @@ class TestMain:
         with patch("sys.argv", ["export_to_qdrant.py"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
-            assert exc_info.value.code == 1
+        assert exc_info.value.code == 1
 
         scrub_arg = mock_scrub.call_args[0][0]
         assert scrub_arg["status"] == "error"
+        assert scrub_arg["message"] == "Connection failed"
 
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -776,7 +905,7 @@ class TestMain:
         },
     )
     def test_main_with_neo4j_database_env(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function uses NEO4J_DATABASE environment variable."""
         mock_driver = Mock()
@@ -815,7 +944,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -826,7 +954,7 @@ class TestMain:
         },
     )
     def test_main_creates_artifacts_directory(
-        self, _mock_ensure_env, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function creates artifacts directory."""
         mock_driver = Mock()
@@ -850,7 +978,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -861,7 +988,7 @@ class TestMain:
         },
     )
     def test_main_writes_json_artifact(
-        self, _mock_ensure_env, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function writes JSON artifact file."""
         mock_driver = Mock()
@@ -894,7 +1021,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -905,7 +1031,7 @@ class TestMain:
         },
     )
     def test_main_payload_structure(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test that main function creates correct payload structure for Qdrant."""
         mock_driver = Mock()
@@ -955,7 +1081,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -966,7 +1091,7 @@ class TestMain:
         },
     )
     def test_main_vector_config_cosine_distance(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test that main function configures Qdrant collection with COSINE distance."""
         mock_driver = Mock()
@@ -1007,7 +1132,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -1018,7 +1142,7 @@ class TestMain:
         },
     )
     def test_main_fallback_id_generation(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test that main function generates fallback IDs correctly."""
         mock_driver = Mock()
@@ -1062,7 +1186,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -1073,7 +1196,7 @@ class TestMain:
         },
     )
     def test_main_log_structure(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test that main function creates proper log structure."""
         mock_driver = Mock()
@@ -1123,7 +1246,6 @@ class TestMain:
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -1134,7 +1256,7 @@ class TestMain:
         },
     )
     def test_main_handles_none_embeddings(
-        self, _mock_ensure_env, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, _mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test main function when embeddings are None."""
         mock_driver = Mock()
@@ -1159,15 +1281,16 @@ class TestMain:
         mock_scrub.return_value = {"status": "error"}
 
         with patch("sys.argv", ["export_to_qdrant.py"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
+            main()
+
+        log_arg = mock_scrub.call_args[0][0]
+        assert log_arg["status"] == "skipped"
+        assert log_arg["skipped_chunks"] == 1
 
     @patch("scripts.export_to_qdrant.Path")
     @patch("scripts.export_to_qdrant.scrub_object")
     @patch("scripts.export_to_qdrant.QdrantClient")
     @patch("scripts.export_to_qdrant.GraphDatabase")
-    @patch("scripts.export_to_qdrant.ensure_env")
     @patch.dict(
         os.environ,
         {
@@ -1178,7 +1301,7 @@ class TestMain:
         },
     )
     def test_main_batch_size_minimum_one(
-        self, _mock_ensure_env, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
+        self, mock_graph_db, mock_qdrant_client, mock_scrub, mock_path
     ):
         """Test that main function enforces minimum batch size of 1."""
         mock_driver = Mock()

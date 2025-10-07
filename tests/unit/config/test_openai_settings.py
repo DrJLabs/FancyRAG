@@ -3,6 +3,8 @@ from dataclasses import FrozenInstanceError
 
 from _compat.structlog import capture_logs
 
+from pydantic import ValidationError
+
 from config.settings import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_BACKOFF_SECONDS,
@@ -345,7 +347,7 @@ def test_settings_actor_explicit_overrides_env():
 def test_settings_frozen_dataclass():
     """Test OpenAISettings is immutable (frozen)."""
     settings = OpenAISettings.load({}, actor="pytest")
-    with pytest.raises((FrozenInstanceError, AttributeError)):
+    with pytest.raises((FrozenInstanceError, AttributeError, ValidationError)):
         settings.chat_model = "different-model"
 
 

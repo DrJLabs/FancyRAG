@@ -8,6 +8,8 @@ asttokens==3.0.0
 attrs==25.3.0
 banks==2.2.0
 beautifulsoup4==4.14.0
+blosc2==3.9.1
+bottleneck==1.6.0
 certifi==2025.8.3
 charset-normalizer==3.4.3
 click==8.3.0
@@ -62,6 +64,7 @@ llama-parse==0.6.54
 MarkupSafe==3.0.3
 marshmallow==3.26.1
 matplotlib-inline==0.1.7
+msgpack==1.1.1
 multidict==6.6.4
 mypy_extensions==1.1.0
 neo4j[pandas]==5.28.2
@@ -70,7 +73,9 @@ neo4j-viz==0.4.2
 nest-asyncio==1.6.0
 networkx==3.5
 nltk==3.9.1
+ndindex==1.10.0
 numpy==2.3.3
+numexpr==2.13.1
 openai==1.109.1
 orjson==3.11.3
 packaging==25.0

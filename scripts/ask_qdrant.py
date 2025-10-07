@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 import traceback
@@ -28,8 +27,7 @@ except Exception:  # pragma: no cover - fallback when qdrant_client is unavailab
 
 from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 from cli.sanitizer import scrub_object
-from config.settings import OpenAISettings
-from fancyrag.utils import ensure_env
+from fancyrag.utils import get_settings
 from neo4j_graphrag.exceptions import (
     RetrieverInitializationError,
     SearchValidationError,
@@ -38,6 +36,8 @@ from neo4j_graphrag.retrievers import QdrantNeo4jRetriever
 
 
 SEMANTIC_SOURCE = "kg_build.semantic_enrichment.v1"
+
+_SETTINGS_BUNDLE: Any | None = None
 
 
 _RETRIEVAL_QUERY = (
@@ -57,14 +57,13 @@ _RETRIEVAL_QUERY = (
 )
 
 
-def _load_settings() -> OpenAISettings:
-    """
-    Load OpenAI settings configured for the "ask_qdrant" actor.
-    
-    Returns:
-        OpenAISettings: An OpenAISettings instance with the actor set to "ask_qdrant".
-    """
-    return OpenAISettings.load(actor="ask_qdrant")
+def _load_settings(*, actor: str = "ask_qdrant"):
+    """Load OpenAI settings for the ask_qdrant CLI."""
+
+    bundle = _SETTINGS_BUNDLE
+    if bundle is None:
+        bundle = get_settings(require={"openai"})
+    return bundle.openai.for_actor(actor)
 
 
 def _record_to_match(record: Any) -> dict[str, Any]:
@@ -119,22 +118,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    ensure_env("OPENAI_API_KEY")
-    ensure_env("QDRANT_URL")
-    ensure_env("NEO4J_URI")
-    ensure_env("NEO4J_USERNAME")
-    ensure_env("NEO4J_PASSWORD")
+    global _SETTINGS_BUNDLE
 
-    settings = _load_settings()
-    client = SharedOpenAIClient(settings)
+    settings_bundle = get_settings(require={"neo4j", "qdrant", "openai"})
+    _SETTINGS_BUNDLE = settings_bundle
+    try:
+        client = SharedOpenAIClient(_load_settings())
+    finally:
+        _SETTINGS_BUNDLE = None
 
-    qdrant_url = os.environ["QDRANT_URL"]
-    qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
-    qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    qdrant_settings = settings_bundle.qdrant
+    assert qdrant_settings is not None  # Guaranteed by require={"qdrant"} above.
+    qdrant_client = QdrantClient(**qdrant_settings.client_kwargs())
 
-    neo4j_uri = os.environ["NEO4J_URI"]
-    neo4j_auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
-    neo4j_database = os.environ.get("NEO4J_DATABASE")
+    neo4j_settings = settings_bundle.neo4j
+    neo4j_uri = neo4j_settings.uri
+    neo4j_auth = neo4j_settings.auth()
+    neo4j_database = neo4j_settings.database
 
     start = time.perf_counter()
     status = "success"
@@ -154,8 +154,8 @@ def main() -> None:
                 driver=driver,
                 client=qdrant_client,
                 collection_name=args.collection,
-                id_property_neo4j=os.environ.get("QDRANT_NEO4J_ID_PROPERTY_NEO4J", "chunk_id"),
-                id_property_external=os.environ.get("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL", "chunk_id"),
+                id_property_neo4j=qdrant_settings.neo4j_id_property,
+                id_property_external=qdrant_settings.external_id_property,
                 neo4j_database=neo4j_database,
                 retrieval_query=_RETRIEVAL_QUERY,
             )

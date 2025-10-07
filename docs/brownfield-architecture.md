@@ -86,9 +86,9 @@
   - Stories 2.5, 4.3, 4.5 encode post-development QA expectations and should be checked when assessing readiness.
 
 ## Configuration and Secrets
-- `.env` (developer-local) supplies OpenAI, Neo4j, and Qdrant credentials. The repository enforces that populated secrets stay out of git history; `fancyrag.utils.env.ensure_env` aborts with `SystemExit` when required keys are missing.
-- OpenAI settings restrict chat models to the allowlisted set inside `config/settings.py` to prevent silent drift; overriding models or embedding dimensions requires explicit env variables and emits structlog audit entries.
-- Qdrant and Neo4j hostnames/ports default to Docker bridge names; managed deployments must override `NEO4J_URI`, `QDRANT_URL`, and advertise addresses accordingly.
+- `.env` (developer-local) supplies OpenAI, Neo4j, and Qdrant credentials. `FancyRAGSettings` (defined in `src/config/settings.py`) loads these values via Pydantic, emitting actionable `ValueError` messages when required keys are missing or malformed before any network calls execute. Legacy helpers such as `fancyrag.utils.env.ensure_env` now delegate to the typed surface and fall back to raw environment reads only when validation cannot run (e.g., partial test fixtures).
+- `FancyRAGSettings.openai` enforces the chat-model allowlist (`gpt-4.1-mini` baseline, optional `gpt-4o-mini` fallback), validates embedding overrides, and records base URL overrides with masked logging. Override knobs remain the same (`OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_MAX_ATTEMPTS`, etc.) but are now typed and cached per actor.
+- `FancyRAGSettings.neo4j` and `FancyRAGSettings.qdrant` normalise connection details (URI validation, optional database names, API keys). Docker defaults still map to `bolt://localhost:7687` and `http://localhost:6333`; managed deployments must override the same environment keys, which are now surfaced through typed accessors.
 
 ## Observability and Telemetry
 - Structlog instrumentation (backed by `_compat.structlog`) standardizes log fields across scripts. JSON artifacts are scrubbed via `cli.sanitizer.scrub_object` to remove credentials.
@@ -145,27 +145,28 @@ pytest tests/integration/local_stack/test_minimal_path_smoke.py -k minimal_path_
 This addendum captures the architectural targets for Epic 5 (“FancyRAG Service Hardening”) and should be treated as the source of truth while Stories 5.1–5.6 are in flight. Update individual subsections as the implementation lands.
 
 ### Orchestrator Decomposition & Typed Settings
-- `src/fancyrag/kg/pipeline.py` will be refactored into helper functions/classes (`resolve_settings`, `discover_sources`, `build_clients`, `ingest_source`, `run_semantic_enrichment`, `perform_qa`, `run_evaluation`) so orchestration logic remains testable and telemetry-friendly.
-- Introduce `src/fancyrag/config/settings.py` (exact path TBD during Story 5.2) exposing a `FancyRAGSettings` aggregate with nested `OpenAISettings`, `Neo4jSettings`, `QdrantSettings`, `TelemetrySettings`, and `PresetSettings`. Settings load from `.env`/environment with validation via Pydantic.
-- All scripts under `scripts/` and modules under `src/fancyrag/` shall consume typed settings rather than direct `os.environ` lookups. `.env.example` must remain the single onboarding artifact for required keys.
-- Migration note: maintain backwards compatibility by mapping legacy environment variables into the new settings classes and emitting deprecation warnings where required.
+- `src/fancyrag/kg/pipeline.py` now leans on helper functions and typed settings for validation, continuing the decomposition started in Story 5.1.
+- `src/config/settings.py` exposes the implemented `FancyRAGSettings` aggregate with nested `OpenAISettings`, `Neo4jSettings`, and `QdrantSettings`. The aggregate loads from `.env`/environment via Pydantic, caches per process, and is the canonical surface for scripts and pipeline code.
+- All runtime entry points (`scripts/ask_qdrant.py`, `scripts/create_vector_index.py`, `scripts/export_to_qdrant.py`, and `src/fancyrag/kg/pipeline.py`) consume the aggregate instead of direct `os.environ` lookups. `.env.example` remains the onboarding artifact for required keys.
+- Backwards compatibility: `fancyrag.utils.env.ensure_env` now delegates to `FancyRAGSettings` first, then falls back to raw environment reads for legacy tests or partial fixtures.
 
 #### `.env` Migration Checklist (Story 5.2)
-1. Back up existing `.env` files (`cp .env .env.backup-$(date +%Y%m%d)`).
-2. Run the forthcoming helper (`scripts/manage_env.py migrate` or documented equivalent) to copy legacy keys into the typed settings namespace; tool must no-op if values already follow the new contract.
-3. Confirm required variables using `scripts/bootstrap.sh --verify-env` (Story 5.2 delivers updated checks).
-4. Update any CI secrets or `.env.local` variants using the mapping table below.
-5. Rollback plan: restore `.env.backup-*` and set `FANCYRAG_USE_TYPED_SETTINGS=0` (temporary toggle) if migration blockers surface.
+1. Back up your current `.env` (`cp .env .env.backup-$(date +%Y%m%d)`).
+2. Copy `.env.example` updates if new comments are desired; the variable names remain identical. Ensure the backed-up values replace the `YOUR_…` placeholders.
+3. Run `PYTHONPATH=src python -m cli.diagnostics openai-probe` or any FancyRAG script; typed settings will fail fast with descriptive errors if a value is missing or malformed.
+4. Update CI secrets or `.env.local` variants using the mapping table below to align credential management discussions with the typed surface.
+5. Rollback plan: restore `.env.backup-*` if a migration issue occurs; no feature flag is required because the typed loader honours the legacy variables directly.
 
-| Legacy Variable | Replacement Setting Path | Notes |
+| Legacy Variable | Typed Settings Location | Notes |
 | --------------- | ----------------------- | ----- |
-| `OPENAI_API_KEY` | `FancyRAGSettings.openai.api_key` | unchanged value; now validated at load. |
-| `NEO4J_URI` | `FancyRAGSettings.neo4j.bolt_url` | ensure `bolt://` prefix retained. |
-| `QDRANT_URL` | `FancyRAGSettings.qdrant.host` + `port` | split host/port; defaults documented in Story 5.2. |
-| `KG_SOURCE_DIR` | `FancyRAGSettings.presets.source_dir` | optional; defaults to `docs/samples`. |
-| `ENABLE_SEMANTIC_ENRICHMENT` | `FancyRAGSettings.presets.semantic_enrichment` | boolean; derives from preset when unset. |
+| `OPENAI_API_KEY` | `FancyRAGSettings.openai.api_key` | Same key; now available as a `SecretStr` for clients.
+| `OPENAI_MODEL` / `OPENAI_EMBEDDING_MODEL` / overrides | `FancyRAGSettings.openai` fields | Validation errors now highlight unsupported models or invalid overrides.
+| `NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_PASSWORD` | `FancyRAGSettings.neo4j.{uri, auth()}` | URI scheme must be `bolt://`/`neo4j://`; auth tuple sourced via `auth()`.
+| `NEO4J_DATABASE` (optional) | `FancyRAGSettings.neo4j.database` | Still optional; returned as `None` when unset.
+| `QDRANT_URL` / `QDRANT_API_KEY` | `FancyRAGSettings.qdrant.{url, client_kwargs()}` | HTTP/HTTPS URLs enforced; API key is optional and masked.
+| `QDRANT_NEO4J_ID_PROPERTY_*` | `FancyRAGSettings.qdrant.{neo4j_id_property, external_id_property}` | Defaults remain `chunk_id`; override in `.env` for custom schemas.
 
-*(Populate additional mappings as migration tooling lands.)*
+*(Extend this table when additional settings land in future stories.)*
 
 ### Automation Surface & Rollback Workflow
 - A single entry point (proposed `make service-run` and `make service-rollback`, with equivalent `scripts/service.py` wrapper) orchestrates stack bootstrap → ingestion → export → evaluation → teardown. The command MUST surface each stage with structured logging.
