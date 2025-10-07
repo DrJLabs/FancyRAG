@@ -74,18 +74,23 @@ def load_project_dotenv() -> Path | None:
     return _DOTENV_PATH
 
 
-def get_settings(*, refresh: bool = False):
-    """Return the cached FancyRAGSettings aggregate, loading it on demand."""
+def get_settings(*, refresh: bool = False, require: set[str] | None = None):
+    """Return the cached FancyRAGSettings aggregate, loading it on demand.
+
+    Args:
+        refresh: When True, bypass the cache and reload settings from the environment.
+        require: Optional set of component names (e.g., {"qdrant"}) that must be
+            configured; a ``ValueError`` is raised if any are missing.
+    """
 
     from config.settings import FancyRAGSettings
 
-    return FancyRAGSettings.load(refresh=refresh)
+    return FancyRAGSettings.load(refresh=refresh, require=require)
 
 
 def ensure_env(var: str) -> str:
     """Legacy helper that ensures a required environment variable is present."""
 
-    raw_env = os.getenv(var)
     try:
         settings = get_settings(refresh=True)
     except ValueError:
@@ -93,17 +98,13 @@ def ensure_env(var: str) -> str:
 
     if settings is not None:
         resolved = settings.export_environment()
-        value = resolved.get(var)
-        if value:
+        if value := resolved.get(var):
             return value
 
-    if raw_env is not None and raw_env != "":
-        return raw_env
-
-    _load_dotenv_once()
-    raw = os.getenv(var)
-    if raw is not None and raw != "":
-        return raw
+    # Ensure .env variables are available even when typed settings failed.
+    load_project_dotenv()
+    if value := os.getenv(var):
+        return value
 
     raise SystemExit(f"Missing required environment variable: {var}")
 

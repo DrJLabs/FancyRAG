@@ -18,10 +18,6 @@ PACKAGES=(
   "qdrant-client>=1.10"
   "structlog>=24,<25"
   "pytest>=8,<9"
-  "pandas==2.2.3"
-  "numexpr==2.13.1"
-  "bottleneck==1.6.0"
-  "blosc2==3.9.1"
 )
 TEST_LOCK_CONTENT=$(cat <<'EOF'
 # Generated in test mode (no packages installed)

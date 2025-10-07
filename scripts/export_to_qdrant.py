@@ -154,8 +154,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    settings_bundle = get_settings()
+    settings_bundle = get_settings(require={"neo4j", "qdrant"})
     qdrant_settings = settings_bundle.qdrant
+    if qdrant_settings is None:
+        raise SystemExit("Missing required environment variable: QDRANT_URL")
     neo4j_settings = settings_bundle.neo4j
 
     qdrant_client = QdrantClient(**qdrant_settings.client_kwargs())

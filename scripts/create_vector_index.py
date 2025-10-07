@@ -355,7 +355,7 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     args.dimensions = _validate_dimensions(args.dimensions)
     args.similarity = _normalise_similarity(args.similarity)
 
-    neo4j_settings = get_settings().neo4j
+    neo4j_settings = get_settings(require={"neo4j"}).neo4j
     uri = neo4j_settings.uri
     auth = neo4j_settings.auth()
 

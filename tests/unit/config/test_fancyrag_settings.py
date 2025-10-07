@@ -69,6 +69,15 @@ def test_invalid_qdrant_url_rejected(monkeypatch: pytest.MonkeyPatch, base_env):
         FancyRAGSettings.load()
 
 
+def test_qdrant_optional_when_not_required(monkeypatch: pytest.MonkeyPatch, base_env):
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    settings = FancyRAGSettings.load()
+    assert settings.qdrant is None
+
+    with pytest.raises(ValueError, match="QDRANT_URL"):
+        FancyRAGSettings.load(require={"qdrant"})
+
+
 def test_export_environment_round_trip(base_env):
     settings = FancyRAGSettings.load()
     exported = settings.export_environment()

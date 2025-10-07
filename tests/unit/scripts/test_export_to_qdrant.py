@@ -440,10 +440,21 @@ class TestMain:
             def client_kwargs(self) -> dict[str, str]:
                 return {"url": "http://localhost:6333"}
 
-        stub_settings = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub())
+        class OpenAIStub:
+            def for_actor(self, actor: str):
+                return SimpleNamespace(actor=actor)
 
-        def fake_get_settings():
+        stub_settings = SimpleNamespace(
+            neo4j=Neo4jStub(),
+            qdrant=QdrantStub(),
+            openai=OpenAIStub(),
+        )
+
+        def fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
             calls["count"] += 1
+            required = {item.lower() for item in require or set()}
+            if "qdrant" in required and stub_settings.qdrant is None:
+                raise ValueError("Missing required environment variable: QDRANT_URL")
             return stub_settings
 
         class FakeDriver:

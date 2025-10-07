@@ -165,8 +165,19 @@ def settings_stub(monkeypatch):
                 kwargs["api_key"] = api_key
             return kwargs
 
-    stub = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub())
-    monkeypatch.setattr(ask, "get_settings", lambda: stub)
+    class OpenAIStub:
+        def for_actor(self, actor: str):
+            return SimpleNamespace(actor=actor)
+
+    stub = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub(), openai=OpenAIStub())
+
+    def _fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
+        required = {item.lower() for item in require or set()}
+        if "qdrant" in required and stub.qdrant is None:
+            raise ValueError("Missing required environment variable: QDRANT_URL")
+        return stub
+
+    monkeypatch.setattr(ask, "get_settings", _fake_get_settings)
     return stub
 
 
@@ -461,10 +472,21 @@ def test_main_calls_get_settings_once(monkeypatch, tmp_path, capsys):
         def client_kwargs(self) -> dict[str, str]:
             return {"url": "http://localhost:6333"}
 
-    stub_settings = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub())
+    class OpenAIStub:
+        def for_actor(self, actor: str):
+            return SimpleNamespace(actor=actor)
 
-    def fake_get_settings():
+    stub_settings = SimpleNamespace(
+        neo4j=Neo4jStub(),
+        qdrant=QdrantStub(),
+        openai=OpenAIStub(),
+    )
+
+    def fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
         calls["count"] += 1
+        required = {item.lower() for item in require or set()}
+        if "qdrant" in required and stub_settings.qdrant is None:
+            raise ValueError("Missing required environment variable: QDRANT_URL")
         return stub_settings
 
     monkeypatch.setattr(ask, "get_settings", fake_get_settings)

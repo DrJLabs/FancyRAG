@@ -378,7 +378,7 @@ class FancyRAGSettings(BaseModel):
 
     openai: OpenAISettings
     neo4j: Neo4jSettings
-    qdrant: QdrantSettings
+    qdrant: QdrantSettings | None = None
 
     _CACHE: ClassVar[FancyRAGSettings | None] = None
 
@@ -388,11 +388,22 @@ class FancyRAGSettings(BaseModel):
         env: Optional[Mapping[str, str]] = None,
         *,
         refresh: bool = False,
+        require: set[str] | None = None,
     ) -> FancyRAGSettings:
-        """Load settings from environment variables and cache the result."""
+        """Load settings from environment variables and cache the result.
+
+        Args:
+            env: Optional environment mapping for testing.
+            refresh: When True, force reloading from the environment.
+            require: Optional set of component names that must be present (e.g.,
+                {"qdrant"}). Missing required components raise ``ValueError``.
+        """
 
         if env is None and not refresh and cls._CACHE is not None:
             return cls._CACHE
+
+        required = {item.lower() for item in (require or set())}
+        require_qdrant = "qdrant" in required
 
         if env is None:
             from fancyrag.utils.env import load_project_dotenv
@@ -430,16 +441,23 @@ class FancyRAGSettings(BaseModel):
         except ValidationError as exc:
             raise ValueError("Invalid Neo4j configuration") from exc
 
-        qdrant_api_key = _optional("QDRANT_API_KEY")
-        try:
-            qdrant_settings = QdrantSettings(
-                url=_require("QDRANT_URL"),
-                api_key=SecretStr(qdrant_api_key) if qdrant_api_key else None,
-                neo4j_id_property=_optional("QDRANT_NEO4J_ID_PROPERTY_NEO4J") or "chunk_id",
-                external_id_property=_optional("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL") or "chunk_id",
-            )
-        except ValidationError as exc:
-            raise ValueError("Invalid Qdrant configuration") from exc
+        qdrant_settings: QdrantSettings | None
+        qdrant_url = _optional("QDRANT_URL")
+        if not qdrant_url:
+            if require_qdrant:
+                raise ValueError("Missing required environment variable: QDRANT_URL")
+            qdrant_settings = None
+        else:
+            qdrant_api_key = _optional("QDRANT_API_KEY")
+            try:
+                qdrant_settings = QdrantSettings(
+                    url=qdrant_url,
+                    api_key=SecretStr(qdrant_api_key) if qdrant_api_key else None,
+                    neo4j_id_property=_optional("QDRANT_NEO4J_ID_PROPERTY_NEO4J") or "chunk_id",
+                    external_id_property=_optional("QDRANT_NEO4J_ID_PROPERTY_EXTERNAL") or "chunk_id",
+                )
+            except ValidationError as exc:
+                raise ValueError("Invalid Qdrant configuration") from exc
 
         settings = cls(openai=openai_settings, neo4j=neo4j_settings, qdrant=qdrant_settings)
         if env is None:
@@ -483,13 +501,14 @@ class FancyRAGSettings(BaseModel):
         if self.neo4j.http_advertised_address:
             env["NEO4J_HTTP_ADVERTISED_ADDRESS"] = self.neo4j.http_advertised_address
 
-        env.update({"QDRANT_URL": self.qdrant.url})
-        if self.qdrant.api_key:
-            env["QDRANT_API_KEY"] = self.qdrant.api_key.get_secret_value()
-        if self.qdrant.neo4j_id_property:
-            env["QDRANT_NEO4J_ID_PROPERTY_NEO4J"] = self.qdrant.neo4j_id_property
-        if self.qdrant.external_id_property:
-            env["QDRANT_NEO4J_ID_PROPERTY_EXTERNAL"] = self.qdrant.external_id_property
+        if self.qdrant is not None:
+            env.update({"QDRANT_URL": self.qdrant.url})
+            if self.qdrant.api_key:
+                env["QDRANT_API_KEY"] = self.qdrant.api_key.get_secret_value()
+            if self.qdrant.neo4j_id_property:
+                env["QDRANT_NEO4J_ID_PROPERTY_NEO4J"] = self.qdrant.neo4j_id_property
+            if self.qdrant.external_id_property:
+                env["QDRANT_NEO4J_ID_PROPERTY_EXTERNAL"] = self.qdrant.external_id_property
         return env
 
 

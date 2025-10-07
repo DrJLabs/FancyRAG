@@ -227,8 +227,11 @@ def test_run_invokes_get_settings_once(monkeypatch: pytest.MonkeyPatch, env) -> 
 
     stub_settings = SimpleNamespace(neo4j=Neo4jStub())
 
-    def fake_get_settings():
+    def fake_get_settings(*, refresh: bool = False, require: set[str] | None = None):  # noqa: FBT002
         calls["count"] += 1
+        required = {item.lower() for item in require or set()}
+        if "neo4j" in required and not hasattr(stub_settings, "neo4j"):
+            raise ValueError("Missing required environment variable: NEO4J_URI")
         return stub_settings
 
     monkeypatch.setattr(civ, "get_settings", fake_get_settings)
