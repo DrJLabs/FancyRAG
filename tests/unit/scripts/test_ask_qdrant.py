@@ -167,7 +167,11 @@ def settings_stub(monkeypatch):
 
     class OpenAIStub:
         def for_actor(self, actor: str):
-            return SimpleNamespace(actor=actor)
+            return SimpleNamespace(
+                actor=actor,
+                api_base_url=os.environ.get("OPENAI_BASE_URL"),
+                allow_insecure_base_url=False,
+            )
 
     stub = SimpleNamespace(neo4j=Neo4jStub(), qdrant=QdrantStub(), openai=OpenAIStub())
 

@@ -14,6 +14,7 @@ PACKAGES=(
   "neo4j-graphrag[openai,qdrant]"
   "neo4j>=5,<6"
   "openai>=1,<2"
+  "pydantic>=2,<3"
   "prometheus-client>=0.23,<1"
   "qdrant-client>=1.10"
   "structlog>=24,<25"
@@ -28,6 +29,7 @@ prometheus-client==0.23.1
 qdrant-client==1.10.4
 structlog==24.1.0
 pytest==8.3.2
+pydantic==2.11.9
 EOF
 )
 # Test hook: when set, skip real import and simulate success/failure outcome.

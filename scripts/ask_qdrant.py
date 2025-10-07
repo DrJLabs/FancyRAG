@@ -37,6 +37,8 @@ from neo4j_graphrag.retrievers import QdrantNeo4jRetriever
 
 SEMANTIC_SOURCE = "kg_build.semantic_enrichment.v1"
 
+_SETTINGS_BUNDLE: Any | None = None
+
 
 _RETRIEVAL_QUERY = (
     "WITH node, score "
@@ -58,7 +60,10 @@ _RETRIEVAL_QUERY = (
 def _load_settings(*, actor: str = "ask_qdrant"):
     """Load OpenAI settings for the ask_qdrant CLI."""
 
-    return get_settings().openai.for_actor(actor)
+    bundle = _SETTINGS_BUNDLE
+    if bundle is None:
+        bundle = get_settings(require={"openai"})
+    return bundle.openai.for_actor(actor)
 
 
 def _record_to_match(record: Any) -> dict[str, Any]:
@@ -113,8 +118,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    global _SETTINGS_BUNDLE
+
     settings_bundle = get_settings(require={"neo4j", "qdrant", "openai"})
-    client = SharedOpenAIClient(_load_settings())
+    _SETTINGS_BUNDLE = settings_bundle
+    try:
+        client = SharedOpenAIClient(_load_settings())
+    finally:
+        _SETTINGS_BUNDLE = None
 
     qdrant_settings = settings_bundle.qdrant
     assert qdrant_settings is not None  # Guaranteed by require={"qdrant"} above.

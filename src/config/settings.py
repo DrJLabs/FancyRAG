@@ -399,10 +399,19 @@ class FancyRAGSettings(BaseModel):
                 {"qdrant"}). Missing required components raise ``ValueError``.
         """
 
-        if env is None and not refresh and cls._CACHE is not None:
-            return cls._CACHE
-
         required = {item.lower() for item in (require or set())}
+
+        def _ensure_requirements(settings: "FancyRAGSettings") -> None:
+            if "openai" in required and settings.openai.api_key is None:
+                raise ValueError("Missing required environment variable: OPENAI_API_KEY")
+            if "qdrant" in required and settings.qdrant is None:
+                raise ValueError("Missing required environment variable: QDRANT_URL")
+
+        if env is None and not refresh and cls._CACHE is not None:
+            cached = cls._CACHE
+            _ensure_requirements(cached)
+            return cached
+
         require_openai = "openai" in required
         require_qdrant = "qdrant" in required
 
@@ -464,6 +473,7 @@ class FancyRAGSettings(BaseModel):
                 raise ValueError("Invalid Qdrant configuration") from exc
 
         settings = cls(openai=openai_settings, neo4j=neo4j_settings, qdrant=qdrant_settings)
+        _ensure_requirements(settings)
         if env is None:
             cls._CACHE = settings
         return settings
