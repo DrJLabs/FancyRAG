@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import getpass
 import os
+from pathlib import Path
 from typing import Any, ClassVar, Mapping, Optional
 from urllib.parse import urlparse
 
 from _compat.structlog import get_logger
 from cli.sanitizer import mask_base_url
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+
+from fancyrag.utils.paths import resolve_repo_root
 
 logger = get_logger(__name__)
 
@@ -32,6 +35,17 @@ _ENV_OPENAI_BACKOFF_SECONDS = "OPENAI_BACKOFF_SECONDS"
 _ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
 _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
+
+_ENV_FANCYRAG_PRESET = "FANCYRAG_PRESET"
+_ENV_DATASET_PATH = "DATASET_PATH"
+_ENV_DATASET_DIR = "DATASET_DIR"
+_ENV_FANCYRAG_PROFILE = "FANCYRAG_PROFILE"
+_ENV_FANCYRAG_TELEMETRY = "FANCYRAG_TELEMETRY"
+_ENV_FANCYRAG_ENABLE_SEMANTIC = "FANCYRAG_ENABLE_SEMANTIC"
+_ENV_FANCYRAG_ENABLE_EVALUATION = "FANCYRAG_ENABLE_EVALUATION"
+_ENV_FANCYRAG_QDRANT_COLLECTION = "FANCYRAG_QDRANT_COLLECTION"
+_ENV_FANCYRAG_VECTOR_INDEX = "FANCYRAG_VECTOR_INDEX"
+_ENV_FANCYRAG_INCLUDE_PATTERNS = "FANCYRAG_INCLUDE_PATTERNS"
 
 _VALID_BASE_SCHEMES = frozenset({"http", "https"})
 _TRUE_BOOL_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -56,6 +70,65 @@ def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_
     raise ValueError(
         f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
     )
+
+
+def _optional_boolean(raw_value: str | None, *, default: bool, env_key: str) -> bool:
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        return default
+    if normalized in _TRUE_BOOL_VALUES:
+        return True
+    if normalized in _FALSE_BOOL_VALUES:
+        return False
+    allowed_values = ", ".join(sorted(_TRUE_BOOL_VALUES | _FALSE_BOOL_VALUES))
+    logger.error(
+        "service.bool.invalid",
+        key=env_key,
+        supplied=raw_value,
+        allowed_values=allowed_values,
+    )
+    raise ValueError(
+        f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
+    )
+
+
+_SERVICE_VECTOR_INDEX_DEFAULT = "chunks_vec"
+_SERVICE_QDRANT_COLLECTION_DEFAULT = "chunks_main"
+
+_SERVICE_PRESET_DEFAULTS: dict[str, dict[str, Any]] = {
+    "smoke": {
+        "dataset_path": "docs/samples/pilot.txt",
+        "profile": "text",
+        "include_patterns": ("**/*.txt",),
+        "telemetry": "console",
+        "semantic_enabled": False,
+        "evaluation_enabled": True,
+        "vector_index": _SERVICE_VECTOR_INDEX_DEFAULT,
+        "collection": _SERVICE_QDRANT_COLLECTION_DEFAULT,
+    },
+    "full": {
+        "dataset_dir": "docs",
+        "include_patterns": ("**/*.md", "**/*.txt"),
+        "profile": "markdown",
+        "telemetry": "console",
+        "semantic_enabled": False,
+        "evaluation_enabled": True,
+        "vector_index": _SERVICE_VECTOR_INDEX_DEFAULT,
+        "collection": _SERVICE_QDRANT_COLLECTION_DEFAULT,
+    },
+    "enrich": {
+        "dataset_dir": "docs",
+        "include_patterns": ("**/*.md", "**/*.txt"),
+        "profile": "markdown",
+        "telemetry": "console",
+        "semantic_enabled": True,
+        "evaluation_enabled": True,
+        "vector_index": _SERVICE_VECTOR_INDEX_DEFAULT,
+        "collection": _SERVICE_QDRANT_COLLECTION_DEFAULT,
+    },
+}
 
 
 class OpenAISettings(BaseModel):
@@ -371,6 +444,113 @@ class QdrantSettings(BaseModel):
         return kwargs
 
 
+class ServiceSettings(BaseModel):
+    """Automation preset and workflow configuration for FancyRAG service runs."""
+
+    model_config = ConfigDict(frozen=True)
+
+    preset: str
+    dataset_path: str | None = None
+    dataset_dir: str | None = None
+    include_patterns: tuple[str, ...] = ()
+    profile: str | None = None
+    telemetry: str = "console"
+    semantic_enabled: bool = False
+    evaluation_enabled: bool = True
+    vector_index: str = _SERVICE_VECTOR_INDEX_DEFAULT
+    collection: str = _SERVICE_QDRANT_COLLECTION_DEFAULT
+
+    @classmethod
+    def from_environment(cls, source: Mapping[str, str]) -> "ServiceSettings":
+        preset_raw = (source.get(_ENV_FANCYRAG_PRESET) or "smoke").strip().lower()
+        if not preset_raw:
+            preset_raw = "smoke"
+        defaults = _SERVICE_PRESET_DEFAULTS.get(preset_raw, _SERVICE_PRESET_DEFAULTS["smoke"])
+
+        dataset_path = (source.get(_ENV_DATASET_PATH) or "").strip() or defaults.get("dataset_path")
+        dataset_dir = (source.get(_ENV_DATASET_DIR) or "").strip() or defaults.get("dataset_dir")
+        profile = (source.get(_ENV_FANCYRAG_PROFILE) or "").strip() or defaults.get("profile")
+        telemetry = (source.get(_ENV_FANCYRAG_TELEMETRY) or "").strip() or defaults.get("telemetry") or "console"
+        vector_index = (source.get(_ENV_FANCYRAG_VECTOR_INDEX) or "").strip() or defaults.get("vector_index", _SERVICE_VECTOR_INDEX_DEFAULT)
+        collection = (source.get(_ENV_FANCYRAG_QDRANT_COLLECTION) or "").strip() or defaults.get("collection", _SERVICE_QDRANT_COLLECTION_DEFAULT)
+
+        include_env = (source.get(_ENV_FANCYRAG_INCLUDE_PATTERNS) or "").strip()
+        if include_env:
+            include_patterns = tuple(
+                pattern.strip()
+                for pattern in include_env.split(",")
+                if pattern.strip()
+            )
+        else:
+            include_patterns = tuple(defaults.get("include_patterns", ()))
+
+        semantic_enabled = _optional_boolean(
+            source.get(_ENV_FANCYRAG_ENABLE_SEMANTIC),
+            default=bool(defaults.get("semantic_enabled", False)),
+            env_key=_ENV_FANCYRAG_ENABLE_SEMANTIC,
+        )
+        evaluation_enabled = _optional_boolean(
+            source.get(_ENV_FANCYRAG_ENABLE_EVALUATION),
+            default=bool(defaults.get("evaluation_enabled", True)),
+            env_key=_ENV_FANCYRAG_ENABLE_EVALUATION,
+        )
+
+        # A dataset path override takes precedence over dataset directories to respect
+        # Story 5.3 ergonomics (single-file smoke workflow by default).
+        if dataset_path:
+            dataset_dir = None
+
+        return cls(
+            preset=preset_raw,
+            dataset_path=dataset_path or None,
+            dataset_dir=dataset_dir or None,
+            include_patterns=include_patterns,
+            profile=profile or None,
+            telemetry=telemetry,
+            semantic_enabled=semantic_enabled,
+            evaluation_enabled=evaluation_enabled,
+            vector_index=vector_index,
+            collection=collection,
+        )
+
+    def resolve_dataset_path(self, repo_root: Path | None = None) -> Path | None:
+        if self.dataset_path is None:
+            return None
+        candidate = Path(self.dataset_path).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        root = repo_root or resolve_repo_root() or Path.cwd()
+        return (root / candidate).resolve()
+
+    def resolve_dataset_dir(self, repo_root: Path | None = None) -> Path | None:
+        if self.dataset_dir is None:
+            return None
+        candidate = Path(self.dataset_dir).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        root = repo_root or resolve_repo_root() or Path.cwd()
+        return (root / candidate).resolve()
+
+    def export_environment(self) -> dict[str, str]:
+        env: dict[str, str] = {
+            _ENV_FANCYRAG_PRESET: self.preset,
+            _ENV_FANCYRAG_TELEMETRY: self.telemetry,
+            _ENV_FANCYRAG_ENABLE_SEMANTIC: "true" if self.semantic_enabled else "false",
+            _ENV_FANCYRAG_ENABLE_EVALUATION: "true" if self.evaluation_enabled else "false",
+            _ENV_FANCYRAG_VECTOR_INDEX: self.vector_index,
+            _ENV_FANCYRAG_QDRANT_COLLECTION: self.collection,
+        }
+        if self.dataset_path is not None:
+            env[_ENV_DATASET_PATH] = self.dataset_path
+        if self.dataset_dir is not None:
+            env[_ENV_DATASET_DIR] = self.dataset_dir
+        if self.profile is not None:
+            env[_ENV_FANCYRAG_PROFILE] = self.profile
+        if self.include_patterns:
+            env[_ENV_FANCYRAG_INCLUDE_PATTERNS] = ",".join(self.include_patterns)
+        return env
+
+
 class FancyRAGSettings(BaseModel):
     """Aggregate typed settings for FancyRAG tooling."""
 
@@ -379,6 +559,7 @@ class FancyRAGSettings(BaseModel):
     openai: OpenAISettings
     neo4j: Neo4jSettings
     qdrant: QdrantSettings | None = None
+    service: ServiceSettings
 
     _CACHE: ClassVar[FancyRAGSettings | None] = None
 
@@ -472,7 +653,14 @@ class FancyRAGSettings(BaseModel):
             except ValidationError as exc:
                 raise ValueError("Invalid Qdrant configuration") from exc
 
-        settings = cls(openai=openai_settings, neo4j=neo4j_settings, qdrant=qdrant_settings)
+        service_settings = ServiceSettings.from_environment(source)
+
+        settings = cls(
+            openai=openai_settings,
+            neo4j=neo4j_settings,
+            qdrant=qdrant_settings,
+            service=service_settings,
+        )
         _ensure_requirements(settings)
         if env is None:
             cls._CACHE = settings
@@ -523,6 +711,8 @@ class FancyRAGSettings(BaseModel):
                 env["QDRANT_NEO4J_ID_PROPERTY_NEO4J"] = self.qdrant.neo4j_id_property
             if self.qdrant.external_id_property:
                 env["QDRANT_NEO4J_ID_PROPERTY_EXTERNAL"] = self.qdrant.external_id_property
+
+        env.update(self.service.export_environment())
         return env
 
 
@@ -530,6 +720,7 @@ __all__ = [
     "OpenAISettings",
     "Neo4jSettings",
     "QdrantSettings",
+    "ServiceSettings",
     "FancyRAGSettings",
     "DEFAULT_CHAT_MODEL",
     "FALLBACK_CHAT_MODELS",

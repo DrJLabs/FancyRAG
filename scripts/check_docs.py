@@ -63,6 +63,26 @@ DEFAULT_RULES: tuple[LintRule, ...] = (
         ),
     ),
     LintRule(
+        relative_path=Path("README.md"),
+        checks=(
+            TokenCheck(
+                check_id="service-automation-make-targets",
+                tokens=("make service-run", "make service-rollback", "make service-reset"),
+                description="README documents service automation make targets.",
+            ),
+        ),
+    ),
+    LintRule(
+        relative_path=Path("docs/graphrag/QUICKSTART.md"),
+        checks=(
+            TokenCheck(
+                check_id="quickstart-service-run",
+                tokens=("make service-run",),
+                description="Quickstart references the stack automation command.",
+            ),
+        ),
+    ),
+    LintRule(
         relative_path=Path("docs/architecture/source-tree.md"),
         checks=(
             TokenCheck(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -94,9 +95,41 @@ def test_export_environment_round_trip(base_env):
     assert exported["NEO4J_URI"] == "bolt://localhost:7687"
     assert exported["QDRANT_URL"] == "http://localhost:6333"
     assert exported["OPENAI_ENABLE_FALLBACK"] == "true"
+    assert exported["FANCYRAG_PRESET"] == "smoke"
 
 
 def test_clear_cache_handles_empty_cache():
     FancyRAGSettings.clear_cache()
     FancyRAGSettings.clear_cache()
     # If we reach here without an exception the behaviour is acceptable.
+
+
+def test_service_settings_defaults(base_env):
+    settings = FancyRAGSettings.load(refresh=True)
+    service = settings.service
+    assert service.preset == "smoke"
+    assert service.dataset_path == "docs/samples/pilot.txt"
+    assert service.dataset_dir is None
+    assert service.telemetry == "console"
+    resolved = service.resolve_dataset_path(repo_root=Path("/repo"))
+    assert resolved == Path("/repo/docs/samples/pilot.txt")
+
+
+def test_service_settings_env_overrides(monkeypatch: pytest.MonkeyPatch, base_env):
+    monkeypatch.setenv("FANCYRAG_PRESET", "enrich")
+    monkeypatch.setenv("DATASET_DIR", "data/full")
+    monkeypatch.setenv("FANCYRAG_ENABLE_SEMANTIC", "1")
+    monkeypatch.setenv("FANCYRAG_TELEMETRY", "otlp")
+    monkeypatch.setenv("FANCYRAG_VECTOR_INDEX", "custom_vec")
+    monkeypatch.setenv("FANCYRAG_QDRANT_COLLECTION", "custom_collection")
+
+    settings = FancyRAGSettings.load(refresh=True)
+    service = settings.service
+
+    assert service.preset == "enrich"
+    assert service.dataset_dir == "data/full"
+    assert service.dataset_path is None
+    assert service.semantic_enabled is True
+    assert service.telemetry == "otlp"
+    assert service.vector_index == "custom_vec"
+    assert service.collection == "custom_collection"

@@ -1,7 +1,7 @@
 # Epic 5: FancyRAG Service Hardening
 
 ## Status
-In Progress — 2025-10-06. Story 5.1 complete; stories 5.2–5.6 queued for drafting by the Scrum Master.
+In Progress — 2025-10-07. Stories 5.1–5.3 complete; stories 5.4–5.6 pending execution.
 
 ## Epic Goal
 Operationalise the refactored FancyRAG ingestion pipeline into a reliable service workflow that any operator can run end-to-end with built-in telemetry, configuration safeguards, and rollback procedures.
@@ -28,7 +28,7 @@ Operationalise the refactored FancyRAG ingestion pipeline into a reliable servic
 ## Stories
 1. ☑ **Story 5.1:** Decompose the pipeline orchestrator into helper functions/classes with explicit inputs and outputs (`docs/stories/5.1.pipeline-orchestrator.md` — done).
 2. ☑ **Story 5.2:** Centralise typed settings covering FancyRAG, OpenAI, Neo4j, and Qdrant configuration (`docs/stories/5.2.centralise-typed-settings.md` — done).
-3. ☐ **Story 5.3:** Automate stack lifecycle (bootstrap, ingest, teardown, rollback) with reproducible scripts and smoke validation (`docs/stories/5.3.stack-automation.md` — pending).
+3. ☑ **Story 5.3:** Automate stack lifecycle (bootstrap, ingest, teardown, rollback) with reproducible scripts and smoke validation (`docs/stories/5.3.stack-automation.md` — done).
 4. ☐ **Story 5.4:** Harden configuration surface and defaults for new pipeline presets (chunking/cache/enrichment) and document the contracts (`docs/stories/5.4.pipeline-configuration.md` — pending).
 5. ☐ **Story 5.5:** Integrate a retrieval QA harness (e.g., RAGAS) that records scorecards alongside ingestion artefacts and CI gates (`docs/stories/5.5.rag-evaluation.md` — pending).
 6. ☐ **Story 5.6:** Instrument pipeline stages with OpenTelemetry spans/metrics and provide local/remote exporter guidance (`docs/stories/5.6.observability.md` — pending).

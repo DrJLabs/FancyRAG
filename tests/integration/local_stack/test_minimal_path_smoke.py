@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 import json
 
@@ -154,87 +153,28 @@ def test_minimal_path_smoke() -> None:
         pytest.skip("OPENAI_API_KEY environment variable is required for minimal path smoke test")
     env["OPENAI_API_KEY"] = api_key
 
-    # Ensure bind-mount directories exist before starting the stack.
-    for relative in (".data/neo4j/data", ".data/neo4j/logs", ".data/neo4j/import", ".data/qdrant/storage"):
-        (PROJECT_ROOT / relative).mkdir(parents=True, exist_ok=True)
-
-    skip_docker_ops = _is_truthy(os.environ.get("LOCAL_STACK_SKIP_DOCKER_CHECK"))
-    if not skip_docker_ops and _docker_containers_running(STACK_SERVICE_NAMES):
-        skip_docker_ops = True
-
-    if not skip_docker_ops:
-        run_command(str(CHECK_SCRIPT), "--config", env=env)
-
-    stack_started = False
     try:
-        if not skip_docker_ops:
-            up_result = run_command(str(CHECK_SCRIPT), "--up", env=env, check=False)
-            if up_result.returncode != 0:
-                pytest.skip(f"docker compose up failed: {up_result.stdout.strip()}")
-            stack_started = True
-            run_command(str(CHECK_SCRIPT), "--status", "--wait", env=env)
-        else:
-            # Assume external orchestrator started the stack when docker CLI is unavailable.
-            stack_started = True
+        run_command("make", "service-run", env=env)
 
-        # Execute minimal path scripts sequentially.
-        python = sys.executable
-        run_command(
-            python,
-            "scripts/create_vector_index.py",
-            "--index-name",
-            "chunks_vec",
-            "--label",
-            "Chunk",
-            "--embedding-property",
-            "embedding",
-            "--dimensions",
-            "1536",
-            "--similarity",
-            "cosine",
-            env=env,
-        )
-        run_command(
-            python,
-            "scripts/kg_build.py",
-            "--source",
-            "docs/samples/pilot.txt",
-            "--reset-database",
-            env=env,
-        )
-        run_command(
-            python,
-            "scripts/export_to_qdrant.py",
-            "--collection",
-            "chunks_main",
-            "--recreate-collection",
-            env=env,
-        )
-        run_command(
-            python,
-            "scripts/ask_qdrant.py",
-            "--question",
-            "What did Acme launch?",
-            "--top-k",
-            "3",
-            env=env,
-        )
+        service_root = PROJECT_ROOT / "artifacts" / "local_stack" / "service"
+        summaries = sorted(service_root.glob("*/service_run.json"))
+        assert summaries, "service_run summary missing"
+        latest_summary = summaries[-1]
+        summary_data = json.loads(latest_summary.read_text(encoding="utf-8"))
+        assert summary_data["status"] == "success"
+        assert summary_data["stages"], "expected recorded stages"
 
-        run_command(
-            python,
-            "-m",
-            "scripts.check_docs",
-            "--json-output",
-            str(PROJECT_ROOT / "artifacts" / "docs" / "check_docs_smoke.json"),
-            env=env,
-        )
+        artifacts = summary_data.get("artifacts", {})
+        kg_log_rel = artifacts.get("kg_log")
+        assert kg_log_rel, "kg_log artifact missing"
+        kg_log_path = (PROJECT_ROOT / kg_log_rel).resolve()
+        assert kg_log_path.exists(), f"kg_build log missing at {kg_log_path}"
 
-        log_path = PROJECT_ROOT / "artifacts" / "local_stack" / "kg_build.json"
-        assert log_path.exists(), "kg_build.json log missing after CLI run"
-        log_data = json.loads(log_path.read_text(encoding="utf-8"))
+        log_data = json.loads(kg_log_path.read_text(encoding="utf-8"))
         assert log_data["status"] == "success"
         assert log_data.get("run_ids"), "expected at least one run id"
         assert log_data.get("files"), "log should include ingested files"
+
         qa_section = log_data.get("qa")
         assert qa_section and qa_section["status"] == "pass"
         for key in ("report_json", "report_markdown"):
@@ -242,12 +182,26 @@ def test_minimal_path_smoke() -> None:
             if not report_path.is_absolute():
                 candidate = PROJECT_ROOT / report_path
                 if not candidate.exists():
-                    candidate = (log_path.parent / report_path)
+                    candidate = kg_log_path.parent / report_path
                 report_path = candidate
             assert report_path.exists(), f"{key} report missing at {report_path}"
 
+        vector_log_rel = artifacts.get("vector_index_log")
+        assert vector_log_rel, "vector index log missing"
+        assert (PROJECT_ROOT / vector_log_rel).exists()
+
+        export_log_rel = artifacts.get("export_log")
+        assert export_log_rel, "export log missing"
+        assert (PROJECT_ROOT / export_log_rel).exists()
+
+        docs_check_rel = artifacts.get("docs_check")
+        assert docs_check_rel, "documentation check log missing"
+        assert (PROJECT_ROOT / docs_check_rel).exists()
+
+        qa_dir_rel = artifacts.get("qa_dir")
+        assert qa_dir_rel, "qa_dir artifact missing"
+        qa_dir_path = (PROJECT_ROOT / qa_dir_rel).resolve()
+        assert qa_dir_path.exists() and qa_dir_path.is_dir()
+
     finally:
-        if stack_started and not skip_docker_ops:
-            run_command(
-                str(CHECK_SCRIPT), "--down", "--destroy-volumes", env=env, check=False
-            )
+        run_command("make", "service-reset", env=env, check=False)
