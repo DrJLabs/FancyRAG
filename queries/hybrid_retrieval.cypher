@@ -1,0 +1,3 @@
+RETURN
+    node,
+    score

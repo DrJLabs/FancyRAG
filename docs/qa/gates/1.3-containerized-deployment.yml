@@ -1,0 +1,74 @@
+schema: 1
+story: '1.3'
+story_title: 'Containerized Deployment'
+gate: CONCERNS
+status_reason: 'Compose manifest lacks automated validation and container image hygiene/performance checks remain manual.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-10-09T18:04:23Z'
+quality_score: 70
+expires: '2025-10-23T18:04:31Z'
+top_issues:
+  - severity: medium
+    summary: 'Production docker-compose.yml is unvalidated; drift could break deployments despite smoke stack passing.'
+    refs:
+      - 'docker-compose.yml'
+      - 'docker-compose.smoke.yml'
+    suggested_owner: dev
+  - severity: medium
+    summary: 'No automated secret scan or digest capture for the MCP image, leaving SEC-002 mitigations manual.'
+    refs:
+      - 'Dockerfile'
+      - 'Makefile'
+    suggested_owner: dev
+  - severity: medium
+    summary: 'Hybrid search latency target is unchecked inside the containerized workflow.'
+    refs:
+      - 'tests/smoke/test_stack.py'
+    suggested_owner: dev
+waiver:
+  active: false
+evidence:
+  tests_reviewed: 1
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 3]
+    ac_gaps: [2]
+trace:
+  totals:
+    requirements: 3
+    full: 1
+    partial: 1
+    none: 1
+  planning_ref: 'docs/qa/assessments/1.3-test-design-20251009.md'
+  uncovered:
+    - ac: 'AC2'
+      reason: 'No automated validation of docker-compose.yml wiring or port exposure.'
+  notes: 'docs/qa/assessments/1.3-trace-20251009.md'
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: CONCERNS
+    notes: 'Image build lacks automated secret scanning/digest capture; smoke Compose hardcodes static token without guardrails.'
+  performance:
+    status: CONCERNS
+    notes: 'Smoke test validates functionality but does not assert the ≤1.5s latency baseline for hybrid search.'
+  reliability:
+    status: PASS
+    notes: 'Compose healthchecks, wait-for-bolt helper, and end-to-end smoke confirm startup sequencing succeeds.'
+  maintainability:
+    status: CONCERNS
+    notes: 'Two divergent Compose manifests require manual sync; no tooling detects drift.'
+recommendations:
+  immediate:
+    - action: 'Add CI validation that parses docker-compose.yml (or runs docker compose config) and asserts mcp service wiring.'
+      refs:
+        - 'docker-compose.yml'
+        - 'tests'
+    - action: 'Introduce CI stage that builds the MCP image, records its digest, and runs secret scanning (trivy/gitleaks).'
+      refs:
+        - 'Dockerfile'
+        - '.github/workflows'
+  future:
+    - action: 'Instrument smoke test (or perf suite) to measure /mcp/search latency inside the container and enforce SLA.'
+      refs:
+        - 'tests/smoke/test_stack.py'

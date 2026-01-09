@@ -1,0 +1,13 @@
+schema: 1
+story: '1.1'
+gate: PASS
+status_reason: 'Readiness wait and CI smoke now protect fulltext index automation; release approved.'
+reviewer: 'Quinn'
+updated: '2025-10-09T19:00:00Z'
+top_issues:
+  - id: 'DOC-001'
+    severity: low
+    finding: 'README instructions rely on manual discipline; automation now covers drift but consider docs lint for future expansion.'
+    suggested_action: 'Add doc lint or checklist step if operator documentation grows materially.'
+waiver:
+  active: false

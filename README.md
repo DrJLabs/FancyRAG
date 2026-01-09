@@ -1,77 +1,185 @@
-# FancyRAG Workspace
+# Fancryrag Neo4j GraphRAG Baseline
 
-FancyRAG delivers a local-first GraphRAG playground backed by Neo4j, Qdrant, and OpenAI. The current release (Epics 1–2) equips a solo developer with everything needed to ingest sample content and retrieve grounded answers on a laptop.
+This project bootstraps a Neo4j-backed GraphRAG pipeline using Astral's `uv` package manager.
 
-## Current Stack Snapshot
-- **Environment & Workspace (Epic 1):** `scripts/bootstrap.sh` provisions a Python 3.12 virtualenv with pinned dependencies and scaffolds `.env` defaults.
-- **Local GraphRAG Minimal Path (Epic 2):** `docker-compose.neo4j-qdrant.yml` launches Neo4j 5.26.12 + Qdrant 1.15.4, while scripts under `scripts/` create vector indexes, run `SimpleKGPipeline`, export embeddings, and query with `GraphRAG`.
-- **Automation:** Unit tests cover the ingestion/export scripts; `tests/integration/local_stack/test_minimal_path_smoke.py` exercises the end-to-end flow when Docker and OpenAI credentials are available.
-- **Upcoming Refactor (Epic 4):** Planning underway to decompose `scripts/kg_build.py` into a `src/fancyrag/` package with modular CLI, pipeline, QA, and database helpers. See the refactor docs below for scope, guardrails, and story breakdown.
+## Quick Start
 
-## Version Matrix
+```bash
+# Install dependencies (creates .venv/)
+uv sync
 
-| Component | Version | Notes |
-|-----------|---------|-------|
-| Python | 3.12.x | Virtualenv bootstrapped via `scripts/bootstrap.sh` |
-| Neo4j (APOC Core) | 5.26.12 | Pinned in `docker-compose.neo4j-qdrant.yml` |
-| Qdrant | 1.15.4 | Pinned in `docker-compose.neo4j-qdrant.yml` |
-| neo4j-graphrag | latest main (2025-09 snapshot) | Installed via `pip install -r requirements.txt` |
-| OpenAI Models | `gpt-4.1-mini`, `text-embedding-3-small` | Configure via `.env`; audited by `scripts/audit_openai_allowlist.py` |
+# Copy base configuration and fill in real credentials
+cp .env.example .env.local
+# ...edit .env.local with embedding, OAuth, and Neo4j secrets...
 
-> All documentation references these canonical versions; update this table first, then propagate changes.
+# Build the MCP image using the frozen uv.lock
+docker compose build mcp
 
-## Run the Minimal Path Locally
-1. **Bootstrap tooling**
-   ```bash
-   bash scripts/bootstrap.sh
-   source .venv/bin/activate
-   ```
-2. **Configure credentials** – copy `.env.example` to `.env`, supply `OPENAI_API_KEY`, and keep Neo4j/Qdrant defaults for local usage (`bolt://localhost:7687`, `http://localhost:6333`).
-   - `FancyRAGSettings` centralises these values into typed `OpenAISettings`, `Neo4jSettings`, and `QdrantSettings` objects. The scripts hydrate this aggregate on startup, surfacing validation errors (bad URLs, missing credentials, unsupported models) before any network calls occur.
-3. **Verify the workspace**
-   ```bash
-   PYTHONPATH=src python -m cli.diagnostics workspace --write-report
-   PYTHONPATH=src python -m cli.diagnostics openai-probe
-   ```
-4. **Start the stack**
-   ```bash
-   scripts/check_local_stack.sh --up
-   scripts/check_local_stack.sh --status --wait
-   ```
-5. **Ingest and query**
-   ```bash
-   PYTHONPATH=src python scripts/create_vector_index.py --index-name chunks_vec --label Chunk --dimensions 1536
-   PYTHONPATH=src python scripts/kg_build.py --source docs/samples/pilot.txt
-   PYTHONPATH=src python scripts/export_to_qdrant.py --collection chunks_main
-   PYTHONPATH=src python scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5
-   ```
-   - Use `--profile text|markdown|code` to apply tuned chunk sizes/overlaps. For example, `PYTHONPATH=src python scripts/kg_build.py --source-dir docs --profile markdown --include-pattern "**/*.md"` ingests every Markdown file with metadata captured for Neo4j and Qdrant payloads (relative paths, git commit, chunk checksums).
-   - The ingestion step emits a QA report (`ingestion-qa-report/v1`) under `artifacts/ingestion/<timestamp>/quality_report.{json,md}` and enforces thresholds for missing embeddings, orphaned chunks, and checksum mismatches. Override limits with `--qa-max-missing-embeddings`, `--qa-max-orphan-chunks`, or `--qa-max-checksum-mismatches` as needed.
-   - The QA section of the run log now records `duration_ms` alongside `metrics.qa_evaluation_ms`, giving a quick view into the overhead added by telemetry so you can track runtime against your baselines.
-6. **Tear down when finished**
-   ```bash
-   scripts/check_local_stack.sh --down --destroy-volumes
-   ```
+# Launch Neo4j and the MCP server on the rag-net bridge
+make up
 
-Each script emits sanitized JSON logs under `artifacts/local_stack/`, making the flow automation-friendly.
+# Populate indexes and ingest a sample document
+make index
+make fulltext-index
+printf 'Alice founded Acme Corp in 2012. Bob joined in 2015.' > sample.txt
+make ingest f=sample.txt
 
-## Adaptive Chunking & Metadata
+# Inspect graph counts
+make counts
+```
 
-- Chunking presets (`text`, `markdown`, `code`) apply tuned splitter defaults; override via `--chunk-size` / `--chunk-overlap` when needed.
-- Directory ingestion (`--source-dir` + `--include-pattern`) walks files deterministically, skips binary inputs, and records per-chunk metadata (relative path, git commit, checksum, indices) in Neo4j and Qdrant payloads to simplify traceability.
-- Structured logs now expose `files`/`chunks` arrays so operators can diff runs and monitor ingestion quality over time.
+Stop the stack with `make down`. Follow service logs with `make logs`.
 
-## Refactor Roadmap — Epic 4
-- Focus: Break the `kg_build.py` monolith into composable modules under `src/fancyrag/` while keeping the CLI entrypoint stable.
-- Planning Artifacts: [Project Brief](docs/prd/projects/fancyrag-kg-build-refactor/project-brief.md), [PRD Shard](docs/prd/projects/fancyrag-kg-build-refactor/prd.md), [Architecture Addendum](docs/architecture/projects/fancyrag-kg-build-refactor.md), [Epic 4](docs/bmad/focused-epics/kg-build-refactor/epic.md).
-- Status: Planned for kick-off following Epics 1–3; tests and CLI smoke will gate completion.
+To publish an image, tag and push the compose-built artifact with the Git SHA digest:
 
-## Documentation Map
-- [Architecture Overview](docs/architecture/overview.md) – workflow sequencing, environmental guardrails, and change history.
-- [Source Tree Blueprint](docs/architecture/source-tree.md) – file locations for scripts, CLI modules, and tests.
-- [PRD Shards](docs/prd/) – goals, requirements, and epic catalog.
-- [FancyRAG Refactor Artifacts](docs/prd/projects/fancyrag-kg-build-refactor/) – project brief, PRD shard, and architecture addendum for the upcoming modularization.
-- [GraphRAG Quickstart](docs/graphrag/QUICKSTART.md) – condensed setup checklist for newcomers.
-- Story close-outs live in `docs/stories/` with QA evidence under `docs/qa/`.
+```bash
+docker tag fancryrag-mcp:local ghcr.io/<org>/fancryrag-mcp:$(git rev-parse --short HEAD)
+docker push ghcr.io/<org>/fancryrag-mcp:$(git rev-parse --short HEAD)
+```
 
-This project is maintained for personal, local usage; managed-service deployment is out-of-scope.
+If the default host bindings (Neo4j HTTP 22010, Neo4j Bolt 22011, MCP 22012) collide
+with other services, override them before starting the stack:
+
+```bash
+NEO4J_HTTP_PORT=17474 NEO4J_BOLT_PORT=17687 MCP_PUBLISHED_PORT=18080 make up
+```
+
+Configure secrets in `.env.local` before running ingestion. When targeting a local
+OpenAI-compatible embedding server (e.g., `localhost:20010`), set:
+
+```
+EMBEDDING_API_BASE_URL=http://localhost:20010/v1
+EMBEDDING_API_KEY=<token or dummy if not required>
+```
+
+If you are using OpenAI project-scoped keys (`sk-proj-...`), also capture the project
+identifier issued by OpenAI:
+
+```
+OPENAI_API_KEY=sk-proj-...
+OPENAI_PROJECT=proj_...
+```
+
+Project keys require the `project` field so the Python SDK can route requests to the
+correct workspace.
+
+For hybrid search, set the index configuration variables (sensible defaults shown):
+
+```ini
+INDEX_NAME=text_embeddings
+FULLTEXT_INDEX_NAME=chunk_text_fulltext
+FULLTEXT_LABEL=Chunk
+FULLTEXT_PROPERTY=text
+FULLTEXT_READY_ATTEMPTS=10
+FULLTEXT_READY_DELAY=3
+```
+
+The full-text index script is idempotent; rerun `make fulltext-index` after ingestion
+jobs or schema changes to keep lexical search synchronized with vector metadata.
+
+`FULLTEXT_READY_ATTEMPTS` and `FULLTEXT_READY_DELAY` tune how long the provisioning
+script waits for Neo4j to accept connections before failing. Defaults cover local
+Docker startup, but tighten them for pre-warmed environments or extend for slower
+clusters.
+
+### Container health & readiness
+
+Once `make up` completes, confirm the MCP container is healthy and emitting
+structured logs:
+
+```bash
+curl http://localhost:8080/mcp/health
+make logs  # tail Neo4j + MCP output, Ctrl+C to exit
+```
+
+The Docker healthcheck mirrors the `/mcp/health` endpoint, so `docker compose ps`
+will report the `mcp` service as `healthy` when this check passes.
+
+### Authorization for local automation
+
+Production deployments must supply Google OAuth tokens. For deterministic local or
+CI smoke tests you can set `MCP_STATIC_TOKEN` in the Compose environment file (for
+example `.env.local`) and call the API with a bearer token:
+
+```
+MCP_STATIC_TOKEN=dev-smoke-token
+GOOGLE_OAUTH_CLIENT_ID=dummy
+GOOGLE_OAUTH_CLIENT_SECRET=dummy
+GOOGLE_OAUTH_REQUIRED_SCOPES=openid
+```
+
+```
+curl -H 'Authorization: Bearer dev-smoke-token' \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"container","top_k":3}' \
+     http://localhost:8080/mcp/search
+```
+
+Leave `MCP_STATIC_TOKEN` unset outside controlled testing so Google OAuth remains
+enforced.
+
+### End-to-end container smoke test
+
+An automated pytest scenario exercises the full container workflow (image build,
+Compose startup, Neo4j seeding, `/mcp/health`, and `POST /mcp/search`). Run it
+inside the dedicated smoke Compose definition so the check stays isolated from
+your developer containers:
+
+```bash
+make smoke
+```
+
+The smoke stack spins up a stub embeddings service on the internal Compose
+network, provisions Neo4j indexes, and issues a hybrid search using a static MCP
+token. Logs are captured automatically, and the environment is torn down with
+`docker compose down --volumes` when the run completes.
+
+### Image hygiene & secret scanning
+
+Run `make scan-image` whenever Docker inputs change to rebuild `fancryrag-mcp:local`,
+emit the resulting image digest, and execute a Trivy secret scan. The repository
+also runs this check automatically via `.github/workflows/container-scan.yml` for
+pull requests that touch container or Compose assets.
+
+## FastMCP Hybrid Server
+
+Story 1.2 introduces a Google OAuth-protected FastMCP server that fronts the
+`HybridCypherRetriever`. Configure the additional environment variables (see
+`.env.example` for defaults):
+
+- `MCP_BASE_URL`: Public base URL used during OAuth callbacks (`https://...`).
+- `MCP_SERVER_HOST`, `MCP_SERVER_PORT`, `MCP_SERVER_PATH`: Local binding for the
+  HTTP transport; defaults to `0.0.0.0:8080` and `/mcp`.
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`: Credentials issued via
+  Google Cloud Console.
+- `GOOGLE_OAUTH_REQUIRED_SCOPES`: Comma-separated scopes. The baseline requests
+  `openid` and `userinfo.email`.
+- `HYBRID_RETRIEVAL_QUERY_PATH`: Path to the Cypher projection appended after the
+  hybrid search prelude. The default file `queries/hybrid_retrieval.cypher` returns
+  the node, its text, and the combined score.
+- `EMBEDDING_MODEL`, `EMBEDDING_TIMEOUT_SECONDS`, `EMBEDDING_MAX_RETRIES`: Tuning
+  knobs for the OpenAI-compatible embedding client that powers query embeddings.
+
+After populating `.env.local`, use `make up` to run the containerized server (the
+Dockerfile installs the project with `uv sync --frozen`). For local debugging you
+can still execute the entrypoint directly:
+
+```bash
+uv run python servers/mcp_hybrid_google.py
+```
+
+Structured JSON logs announce startup, incoming tool invocations, embedding
+latencies, and retries. The `/mcp/search` tool returns both normalized vector and
+full-text scores so downstream clients (e.g., ChatGPT) can reason about result
+ranking. Use the `/mcp/fetch` tool to retrieve a specific node by `elementId` and
+see its metadata.
+
+## Neo4j Container Layout
+
+`docker-compose.yml` now provisions both Neo4j and the FastMCP service on the
+shared `rag-net` bridge. Neo4j exposes the existing volumes (`/data`, `/logs`,
+`/plugins`) and a healthcheck so the MCP container only starts once Bolt is
+reachable. The `mcp` service builds from the local `Dockerfile`, injects secrets
+via `env_file`, performs a `/mcp/health` probe, and publishes port 8080. Use
+`make up` / `make down` for lifecycle management, and re-run `make index` whenever
+the embedding dimension changes (default: 768 for the local model).

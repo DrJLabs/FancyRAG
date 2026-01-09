@@ -1,0 +1,24 @@
+# Versioned sources only; prune local artifacts and secrets
+.git
+.gitignore
+.bmad-core/
+AGENTS.md
+*.sed-tmp
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+.venv/
+.env
+.env.*
+!.env.example
+fancryrag.egg-info/
+node_modules/
+pipelines/
+tests/
+docs/qa/
+docs/stories/
+docs/epics/
+docs/architecture.md
+sample.txt
+*.log

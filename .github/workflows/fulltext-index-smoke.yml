@@ -1,0 +1,59 @@
+name: Full-Text Index Smoke
+
+on:
+  push:
+    paths:
+      - 'Makefile'
+      - 'scripts/create_fulltext_index.py'
+      - 'tests/scripts/**'
+      - '.github/workflows/fulltext-index-smoke.yml'
+      - 'docker-compose.yml'
+      - 'README.md'
+      - '.env.example'
+  pull_request:
+    paths:
+      - 'Makefile'
+      - 'scripts/create_fulltext_index.py'
+      - 'tests/scripts/**'
+      - '.github/workflows/fulltext-index-smoke.yml'
+      - 'docker-compose.yml'
+      - 'README.md'
+      - '.env.example'
+
+jobs:
+  smoke:
+    name: Neo4j Full-Text Index Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: password
+      NEO4J_DATABASE: neo4j
+      FULLTEXT_READY_ATTEMPTS: 30
+      FULLTEXT_READY_DELAY: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Start Neo4j container
+        run: docker compose up -d neo4j
+
+      - name: Wait for Neo4j port
+        run: |
+          timeout 120 bash -c 'until nc -z localhost 7687; do sleep 2; done'
+
+      - name: Run full-text index provisioning twice
+        run: |
+          make fulltext-index
+          make fulltext-index
+
+      - name: Teardown
+        if: always()
+        run: docker compose down

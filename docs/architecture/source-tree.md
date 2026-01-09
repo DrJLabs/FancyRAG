@@ -1,81 +1,43 @@
-# Source Tree Blueprint
+# Fancryrag Source Tree Blueprint
 
-```text
-neo4j-graphrag/
-├── AGENTS.md
-├── README.md
-├── docs/
-│   ├── architecture.md
-│   ├── prd.md
-│   ├── architecture/
-│   │   ├── coding-standards.md
-│   │   ├── overview.md
-│   │   ├── source-tree.md
-│   │   └── tech-stack.md
-│   ├── bmad/
-│   │   └── focused-epics/
-│   └── prd/
-│       ├── epics.md
-│       ├── overview.md
-│       ├── requirements.md
-│       └── technical-assumptions.md
-├── requirements.lock
-├── scripts/
-│   ├── audit_openai_allowlist.py
-│   ├── bootstrap.sh
-│   ├── check_docs.py
-│   └── kg_build.py
-├── src/
-│   ├── __init__.py
-│   ├── _compat/
-│   │   ├── __init__.py
-│   │   ├── structlog.py
-│   │   └── structlog_shim.py
-│   ├── cli/
-│   │   ├── __init__.py
-│   │   ├── diagnostics.py
-│   │   ├── openai_client.py
-│   │   ├── sanitizer.py
-│   │   ├── stories.py
-│   │   ├── telemetry.py
-│   │   └── utils.py
-│   ├── fancyrag/
-│   │   ├── __init__.py
-│   │   ├── cli/
-│   │   │   ├── __init__.py
-│   │   │   └── kg_build_main.py
-│   │   ├── kg/
-│   │   │   ├── __init__.py
-│   │   │   └── pipeline.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       └── env.py
-│   └── config/
-│       ├── __init__.py
-│       └── settings.py
-├── tests/
-│   ├── conftest.py
-│   ├── fixtures/
-│   │   └── openai_probe/
-│   ├── integration/
-│   │   └── cli/
-│   └── unit/
-│       ├── cli/
-│       └── config/
-└── .github/workflows/
-    └── openai-allowlist-audit.yml
+This layout describes the expected structure of the repository. New files should follow these conventions unless a story specifies otherwise.
 
-`scripts/check_docs.py` provides the documentation lint guard referenced in the architecture overview and CI workflows.
 ```
-## Upcoming Module Layout
-The FancyRAG `kg_build.py` refactor is gradually introducing a structured package under `src/fancyrag/`:
-- ✅ `cli/kg_build_main.py` — CLI wiring for arguments and entrypoint (`scripts/kg_build.py` now delegates here).
-- ✅ `kg/pipeline.py` — Orchestration entrypoint exposing `PipelineOptions` and `run_pipeline()` for reuse.
-- ✅ `splitters/caching_fixed_size.py` — Standalone splitter implementation exposing caching factories.
-- ✅ `qa/evaluator.py` — QA thresholds, metrics aggregation, and report generation helpers extracted from the pipeline.
-- ✅ `qa/report.py` — Markdown/JSON formatting helpers shared by evaluator and pipeline.
-- ✅ `utils/paths.py` — Shared repository path helpers consumed by pipeline and QA modules.
-- ✅ `db/neo4j_queries.py` — Cypher query catalog and wrappers.
-- `config/schema.py` plus `utils/env.py` — Schema loading and environment utilities.
+/
+├── AGENTS.md                     # Project-wide agent instructions
+├── docker-compose.yml            # Container orchestration for Neo4j and MCP server
+├── Makefile                      # Operational targets (indexing, ingest, counts)
+├── pyproject.toml                # Python package metadata and dependencies
+├── uv.lock                       # Resolved dependency lockfile
+├── README.md                     # Quick start guide for the baseline
+├── .env.example                  # Sample environment configuration
+├── docs/
+│   ├── prd.md                    # Product Requirements Document
+│   ├── architecture.md           # System architecture blueprint
+│   └── architecture/
+│       ├── coding-standards.md   # Code quality and style conventions
+│       ├── tech-stack.md         # Approved technologies and versions
+│       └── source-tree.md        # (This file) repository layout guidance
+├── pipelines/
+│   └── kg_ingest.yaml            # GraphRAG pipeline configuration for ingestion
+├── scripts/                      # (Planned) Helper scripts (e.g., index creation)
+├── servers/                      # (Planned) FastMCP server implementations
+├── src/
+│   └── fancryrag/                # Python package root (add modules under here)
+├── tools/
+│   ├── run_pipeline.py           # CLI entrypoint for running ingestion
+│   └── discover_classes.py       # Utility helpers invoked by the pipeline
+├── tests/                        # (Planned) Pytest suites mirroring src structure
+├── .github/                      # (Recommended) Issue/PR templates and workflows
+└── .ai/
+    └── debug-log.md              # Dev agent operational log
+```
 
-Keep this source tree file in sync as modules land; the authoritative breakdown lives in [projects/fancyrag-kg-build-refactor.md](projects/fancyrag-kg-build-refactor.md).
+## Directory Guidelines
+- Place application logic in `src/fancryrag/`. Subpackages should reflect bounded contexts (e.g., `retrieval`, `ingest`, `config`).
+- Scripts intended for direct execution belong under `tools/` or `scripts/` with CLI argument parsing and docstrings.
+- Infrastructure automation (Terraform, Helm, etc.) should live under `infra/` or `.bmad-infrastructure-devops/` when added.
+- All tests mirror the `src/` hierarchy within `tests/`, using identical module names with `test_` prefixes.
+- Static assets (diagrams, fixture data) belong under `docs/assets/` or `tests/fixtures/` depending on usage.
+
+Keep this document updated as new directories or patterns emerge.

@@ -1,151 +1,225 @@
-# Neo4j GraphRAG Architecture Document
+# Fancryrag Hybrid NeoRAG Upgrade Architecture Document
 
 ## Introduction
-This document outlines the overall project architecture for Neo4j GraphRAG, including backend systems, shared services, and non-UI specific concerns. Its primary goal is to guide AI-assisted development and ensure consistency with the product definition.
-
-**Relationship to Frontend Architecture:** The initial release is CLI-only; no separate frontend architecture document is required. If a UI emerges, it must adopt the technology choices recorded here.
+This document outlines the overall system architecture for Fancryrag Hybrid NeoRAG Upgrade, covering backend services, shared infrastructure, and cross-cutting concerns. It serves as the architectural blueprint guiding AI-driven development, ensuring alignment with the Product Requirements Document (PRD) and consistent implementation practices.
 
 ### Starter Template or Existing Project
-Greenfield implementation grounded in the official `neo4j-graphrag` Python package. Version 1 operates entirely on a local Docker Compose stack (Neo4j + Qdrant) so teams can validate the workflow without managed services. Connection variables allow promotion to hosted deployments later.
+Existing NeoRAG baseline repository using Python 3.12 with Astral `uv`, Neo4j 5.18, and GraphRAG ingestion pipeline. No external starter template required; we extend the current codebase.
 
 ### Change Log
-| Date       | Version | Description                                                                   | Author     |
-|------------|---------|-------------------------------------------------------------------------------|------------|
-| 2025-09-24 | 0.1     | Recast architecture document into BMAD structure; added diagrams and workflows | Codex CLI  |
-| 2025-09-28 | 0.2     | Shifted scope to local Docker stack and scripted minimal path                 | Codex CLI  |
-| 2025-10-02 | 0.3     | Documented upcoming `kg_build.py` modular refactor and linked addendum        | Codex CLI  |
-| 2025-10-06 | 0.4     | Reflected delivered FancyRAG modules, telemetry/automation scope, and managed-endpoint readiness | Codex CLI  |
+| Date       | Version | Description                                   | Author  |
+|------------|---------|-----------------------------------------------|---------|
+| 2025-10-08 | 0.1     | Initial architecture draft for hybrid upgrade | Winston |
 
 ## High Level Architecture
+
 ### Technical Summary
-The solution is a Python 3.12 CLI that orchestrates knowledge-graph ingestion and retrieval using the official `neo4j-graphrag` package. Docker Compose (`docker-compose.neo4j-qdrant.yml`) launches Neo4j 5.26.12 with APOC Core and Qdrant 1.15.4 on the developer host. FancyRAG modules under `src/fancyrag/` wrap `SimpleKGPipeline`, Neo4j/Qdrant helpers, caching splitters, and QA evaluators. Python scripts (`scripts/*.py`) expose operable commands that create the Neo4j vector index, run ingestion, export embeddings to Qdrant, and execute retrieval with `QdrantNeo4jRetriever` and OpenAI GPT models.
+The system is a containerized backend platform centered on Neo4j graph storage with both vector and full-text indexes, ingesting documents via a Python GraphRAG pipeline and exposing retrieval through a FastMCP server secured with Google OAuth. Key components include the ingestion pipeline, Neo4j database with dual indexes, a HybridCypherRetriever-based MCP service, and integration with an external OpenAI-compatible embedding service. This architecture supports PRD goals by enabling hybrid semantic + lexical search, maintaining existing ingestion workflows, and providing secure MCP access for ChatGPT connectors.
 
 ### High Level Overview
-- **Architectural style:** Monolithic CLI orchestrator with modular FancyRAG subsystems and local containerized dependencies.
-- **Repository structure:** Single repository containing CLI code, scripts, Compose files, and documentation.
-- **Services:** Neo4j database (default DB `neo4j`), Qdrant collection (`chunks_main`), OpenAI APIs.
-- **Data Flow:** Text/PDF sources → KG builder → Neo4j (Document/Chunk nodes) → export embeddings → Qdrant → retrieval joins vector hits with Neo4j context → OpenAI generates grounded answers.
-- **Rationale:** Enables reproducible experimentation on a laptop, keeps compatibility with production endpoints via configuration, and exercises first-party GraphRAG APIs end-to-end.
+1. **Architecture Style**: Modular monolith of containerized services (Neo4j + MCP server) orchestrated via Docker Compose on a shared bridge network.  
+2. **Repository Structure**: Single repo housing Python sources (`tools/`, `servers/`, `scripts/`), configuration, and infrastructure-as-code.  
+3. **Service Layout**: Core services are the Neo4j database and the MCP hybrid retriever; supporting services include an external embedding API and ChatGPT connector clients.  
+4. **Primary Flow**: Text documents ingest through the GraphRAG pipeline, creating `Chunk` nodes and embeddings in Neo4j. Retrieval requests from ChatGPT hit the MCP server, which authenticates via Google OAuth, embeds the query using the external API, and executes a hybrid Cypher search combining vector and full-text scores.  
+5. **Key Decisions**:  
+   - Retain Python stack with GraphRAG helpers for index creation.  
+   - Use FastMCP for rapid MCP server scaffolding with OAuth support.  
+   - Run services locally via Docker Compose for parity with production deployments.  
+   - Keep configuration environment-driven via `.env.local`/`.env.example`.
 
 ### High Level Project Diagram
 ```mermaid
 graph TD
-    Operator[Operator CLI]
-    Compose[Docker Compose]
-    CLI[Python CLI (venv)]
-    KGB[GraphRAG Scripts]
-    Neo4j[(Neo4j 5.26.12)]
-    Qdrant[(Qdrant)]
-    OpenAI[(OpenAI APIs)]
+    subgraph Client
+        A[ChatGPT Connector]
+    end
 
-    Operator --> Compose
-    Operator --> CLI --> KGB
-    Compose --> Neo4j
-    Compose --> Qdrant
-    KGB --> Neo4j
-    KGB --> Qdrant
-    KGB --> OpenAI
-    Qdrant <-->|neo4j_id| Neo4j
+    subgraph Auth
+        B[Google OAuth]
+    end
+
+    subgraph Services
+        C[FastMCP Hybrid Server]
+        D[Neo4j 5.18]
+    end
+
+    subgraph External
+        E[Local Embedding API]
+    end
+
+    subgraph Pipeline
+        F[GraphRAG Ingestion Runner]
+        G[Source Documents]
+    end
+
+    A -->|MCP Requests| C
+    C -->|OAuth Redirect| B
+    C -->|Cypher Queries| D
+    C -->|Query Embeddings| E
+    F -->|Chunk Nodes + Embeddings| D
+    G -->|make ingest| F
+    D -->|Hybrid Results| C
+    C -->|OAuth Protected Responses| A
 ```
 
-### Architectural and Design Patterns
-- **Monolithic CLI Orchestrator:** A single Python entrypoint plus helper scripts coordinate ingestion, vector sync, and retrieval.
-- **Dependency Injection:** Scripts accept drivers/clients (Neo4j, Qdrant, OpenAI) via configuration helpers for easy swapping.
-- **Structured Telemetry Artifacts:** Ingestion emits sanitized JSON/Markdown bundles (run logs, QA reports, upcoming manifest schema) to `artifacts/local_stack/` for downstream QA and PM automation.
-- **Vector-Graph Join Pattern:** Store Neo4j identifiers in Qdrant payloads and hydrate graph context post-search to preserve grounded responses.
-- **Idempotent Pipelines:** Each script is safe to rerun; Neo4j writes use `MERGE` and Qdrant upserts replace existing vectors.
+## Domain & Data Architecture
+- **Domain Overview**: Processes unstructured documents into graph-based knowledge (Chunk nodes, relationships) to support retrieval augmented generation.  
+- **Aggregate Roots**:  
+  - `Chunk`: stores text, embedding vector, metadata.  
+  - Relationship entities (e.g., `(:Entity)-[:MENTIONS]->(:Chunk)`) created by GraphRAG resolvers.  
+- **Key Properties**:  
+  - `Chunk.text`: raw text content.  
+  - `Chunk.embedding`: 768-d vector representing semantics.  
+  - Index metadata (vector index `text_embeddings`, full-text index `chunk_text_fulltext`).  
+- **Data Sources**: Operator-supplied documents, local embedding service for embeddings, OpenAI LLM for extraction.  
+- **Data Flow**: Ingestion pipeline splits text → embeds chunks → extracts entities/relations → writes to Neo4j → index scripts ensure vector + full-text indexes. Hybrid retriever reads data combining vector and full-text scoring.
 
-## Delivered FancyRAG Modules
-- Status: Stories 4.3–4.6 migrated the ingestion pipeline into `src/fancyrag/` with dedicated packages for splitters, QA evaluation/reporting, Neo4j Cypher helpers, schema loading, and CLI orchestration. `scripts/kg_build.py` now delegates to `fancyrag.cli.kg_build_main.main`.
-- Guardrails: Modules remain within 200–400 LOC, fully typed, and covered by unit test suites (`tests/unit/fancyrag/...`). Integration smoke (`tests/integration/local_stack/test_minimal_path_smoke.py`) ensures parity with the original monolith.
-- Documentation: Source tree shards, refactor addendum, and Epic 4 entries have been updated to reflect the delivered modules.
+## Application Architecture
 
-## Upcoming Service Hardening (Epic 5: FancyRAG Service Hardening)
-- Objective: Address maintainability gaps highlighted in the Oct 2025 refactor report—decomposing the ingestion pipeline, centralising configuration, adding pluggable adapters, caching expensive operations, introducing automated RAG evaluation, and instrumenting observability.
-- Key Deliverables:
-  - Composable pipeline helpers for settings, source discovery, client construction, ingestion, semantic enrichment, and QA.
-  - Typed settings surface (`FancyRAGSettings`) replacing ad-hoc environment lookups across CLI and pipeline entry points.
-  - Adapter interfaces (`Embedder`, `VectorStore`, `KGWriter`, `LLM`, etc.) with GraphRAG/OpenAI implementations to enable future swapping and easier testing.
-  - Embedding and generation caching with configurable TTL/versioning and telemetry on hit ratios.
-  - RAG evaluation harness (e.g., RAGAS) producing scorecards and CI gating on retrieval/faithfulness metrics.
-  - OpenTelemetry-based tracing and metrics covering every ingestion stage with OTLP export support.
-- Planning Artifacts: See `docs/prd.md` (v0.4), `docs/brownfield-architecture.md`, and the maintainability roadmap (`docs/Refactoring for maintainability.pdf`).
+### Components
+1. **GraphRAG Ingestion Runner (`tools/run_pipeline.py`)**  
+   - Loads `.env.local`, executes `pipelines/kg_ingest.yaml`.  
+   - Depends on `neo4j_graphrag.experimental` components (splitter, embedder, extractor, writer).  
+   - Writes nodes/edges to Neo4j using configured credentials.
 
-## Tech Stack
-See `docs/architecture/tech-stack.md` for the authoritative table. Highlights:
-- Python 3.12 with `neo4j-graphrag[experimental,openai,qdrant]`.
-- Neo4j 5.26.12 (Docker) with APOC Core.
-- Qdrant 1.15.4 (Docker) accessed via `qdrant-client` ≥ 1.8.
-- OpenAI GPT-4.1 models (`gpt-4.1-mini`, fallback `gpt-4o-mini`) and `text-embedding-3-small`.
-- Structured logging through `structlog` or JSON `logging` handlers.
+2. **Neo4j Graph Database**  
+   - Hosted via `neo4j:5.18` container with APOC plugin.  
+   - Maintains vector index (`text_embeddings`) and full-text index (`chunk_text_fulltext`).  
+   - Stores ingestion results and supports hybrid search queries.
 
-## Environments
-- **Local (default):** Docker Compose stack listening on localhost (`7474`, `7687`, `6333`). Data persisted under `./.data/{neo4j,qdrant}`.
-- **Managed (future):** Override `.env` to point at hosted Neo4j/Qdrant once the workflow is productionized.
+3. **Index Management Scripts**  
+   - Existing Makefile `index` target for vector index.  
+   - New `scripts/create_fulltext_index.py` executed via `make fulltext-index` to ensure lexical support (per PRD FR1/FR2).  
+   - All scripts idempotent to permit re-runs.
 
-Promotion path: `local → managed sandbox → managed prod` (future work).
+4. **FastMCP Hybrid Server (`servers/mcp_hybrid_google.py`)**  
+   - Instantiates Neo4j driver and `HybridCypherRetriever`.  
+   - Defines MCP tools `search` (hybrid query) and `fetch` (node lookup).  
+   - Uses environment variables for DB connectivity, index names, query template, embedding API, and OAuth credentials.  
+   - Runs with `stateless_http` transport on port 8080.
 
-## Core Workflows
-```mermaid
-sequenceDiagram
-    participant Op as Operator
-    participant Compose as docker compose
-    participant Script as GraphRAG Scripts
-    participant Neo4j as Neo4j DB
-    participant Qdrant as Qdrant DB
-    participant OpenAI as OpenAI API
+5. **OAuth Layer**  
+   - `fastmcp.server.auth.providers.google.GoogleProvider` protecting endpoints.  
+   - Requires `BASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.  
+   - Publishes discovery metadata for ChatGPT dynamic client registration.
 
-    Op->>Compose: up -d (neo4j, qdrant)
-    Op->>Script: create_vector_index.py
-    Script->>Neo4j: create vector index (chunks_vec)
-    Op->>Script: kg_build.py --text sample
-    Script->>OpenAI: embeddings for chunks
-    Script->>Neo4j: write Document/Chunk graph
-    Op->>Script: export_to_qdrant.py
-    Script->>Neo4j: stream chunks + embeddings
-    Script->>Qdrant: upsert vectors w/ payload
-    Op->>Script: ask_qdrant.py --question …
-    Script->>OpenAI: generate grounded answer
-    Script->>Qdrant: vector search top_k
-    Script->>Neo4j: hydrate context
-    Script-->>Op: formatted answer + context
-```
+6. **ChatGPT Connector**  
+   - External consumer authenticating via Google OAuth.  
+   - Issues MCP `search`/`fetch` calls once authorized.  
+   - Provides necessary bearer tokens in Authorization header.
 
-## Database & Collection Schema
-- **Neo4j:**
-  - Nodes: `Document{id, title, source}`, `Chunk{id, text, embedding, doc_id}`.
-  - Relationships: `Document`-`HAS_CHUNK`→`Chunk`; entity/relationship nodes created by `SimpleKGPipeline`.
-  - Index: Vector index `chunks_vec` on `Chunk(embedding)` (dimensions default 1536, cosine similarity).
-- **Qdrant:**
-  - Collection: `chunks_main` (vectors size 1536, cosine distance).
-  - Payload: `{neo4j_id: string, doc_id: string, chunk: string, source: string}`.
-  - Filters: allow doc-based filtering for targeted questions.
+7. **External Embedding API**  
+   - OpenAI-compatible endpoint (e.g., `http://localhost:20010/v1`).  
+  - Supplies embeddings for ingestion and query-time retrieval.  
+  - Access controlled via `EMBEDDING_API_KEY` if required.
 
-## Source Tree
-See `docs/architecture/source-tree.md` for the up-to-date tree including Compose and script artifacts.
+### API & Integration Contracts
+- **MCP Tools**:  
+  - `POST /mcp/search`: `{ "query": str, "top_k": int }` → list of `{ text, score, metadata }`.  
+  - `POST /mcp/fetch`: `{ "node_id": int }` → `{ found, text, labels }`.  
+- **Neo4j Queries**: Hybrid query template returns `text`, metadata, vector (`score_vector`) and full-text (`score_fulltext`) scores.  
+- **OAuth Endpoints**: `.well-known/oauth-protected-resource`, `/auth/callback` per FastMCP defaults.
 
-## Infrastructure and Deployment
-- **Infrastructure as Code:** Docker Compose defines local services; Terraform references retained for future managed environments but out of scope for v1.
-- **Deployment Strategy:** CLI distributed via git tags; operators clone repository, run `scripts/bootstrap.sh`, and bring up Compose stack locally.
-- **Rollback Strategy:** Shut down Compose (`docker compose down --volumes`) to reset data. For managed deployments, plan to restore from snapshots (future work).
+### Configuration & Environment
+- `.env.example` extended with `INDEX_NAME`, `FULLTEXT_INDEX_NAME`, embedding and OAuth variables.  
+- `.env.local` consumed by ingestion runner and MCP container via `env_file`.  
+- Default ports: Neo4j bolt `7687`, HTTP console `7474`, MCP `8080`.
 
-## Error Handling
-- **General Approach:** Wrap external client errors (`neo4j`, `qdrant_client`, `openai`) with custom exceptions and exit codes; log remediation hints.
-- **Retries:** Exponential backoff (max 5) for OpenAI 429/503; retry Neo4j/Qdrant network errors with jittered delays.
-- **Observability:** Structured logs include `operation`, `duration_ms`, `status`, `index_name`/`collection`, and counts of processed chunks.
+## Infrastructure Architecture
 
-## Coding Standards
-Refer to `docs/architecture/coding-standards.md` for detailed guidance. Key highlights for this architecture:
-- Scripts must honour `.env` and CLI overrides.
-- Ensure idempotent writes to Neo4j/Qdrant.
-- Provide integration smoke tests that run against the Compose stack before release.
+### Runtime Environments
+- **Local / Dev**: `uv sync`, `docker compose up -d neo4j mcp`, indexes via Makefile, local embedding API or remote service.  
+- **Staging/Prod**: Same containers deployed on managed hosts (e.g., ECS, GKE, bare-metal) behind HTTPS load balancer pointing to FastMCP `BASE_URL`.
 
-## Security Considerations
-- Secrets loaded from `.env`; never commit real keys.
-- Compose stack is bound to localhost only; use Docker profiles or firewalls to restrict exposure.
-- Optional API keys (Qdrant) stored locally for parity with hosted environments.
+### Networking
+- All services share `rag-net` Docker bridge network.  
+- MCP server accesses Neo4j via `bolt://neo4j:7687`.  
+- External embedding and OAuth endpoints accessed over HTTPS.  
+- Production requires TLS termination at ingress to enforce HTTPS.
+
+### Deployment Pipeline
+**Local workflow**
+1. Install dependencies with `uv sync`.  
+2. Run `make index` and `make fulltext-index` once per environment.  
+3. Execute `make ingest f=<file>` to load sample data.  
+4. Launch Neo4j and MCP locally via `docker compose up -d neo4j mcp`.
+
+**CI/CD workflow (GitHub Actions example)**
+1. Trigger on pull requests to `main` and pushes to release branches.  
+2. Jobs: (a) lint (`ruff check` / `ruff format --check`), (b) unit tests (`pytest`), (c) integration smoke (spin up Neo4j via Testcontainers, seed fixture, invoke hybrid search).  
+3. On successful main build, publish MCP image to container registry (`ghcr.io/drjlabs/neorag-mcp`).  
+4. Deploy staging via IaC (Terraform/CDK) pointing to the new image; run post-deploy script to call `/mcp/health` and sample `search`.  
+5. Require manual approval before promoting to production. Production deploy executes the same IaC module with prod variables, followed by `docker compose` or orchestration rollout.  
+6. Record deployment artifacts (image digest, commit SHA) in release notes.
+
+### Observability
+- **Logging**: All services log to stdout in JSON/object form. MCP server should adopt structured logging (e.g., `structlog` or Python `logging` JSON formatter). Neo4j logs stored under mounted volumes. Forward both streams to centralized log storage (e.g., CloudWatch Logs) for staging/production.  
+- **Metrics**: Capture Neo4j metrics (`dbms/queryLatency`, `db/index/sampledNodes`) via Prometheus or Aura dashboards, and expose FastMCP HTTP metrics (latency, auth failures) using an OpenTelemetry exporter.  
+- **Alerting**: Configure alerts for Neo4j query latency > 1s, MCP 5xx rate > 2% over 5 minutes, and OAuth handshake failures > 5/min.  
+- **Tracing**: Optional; integrate FastMCP with OpenTelemetry to trace query execution when diagnosing latency spikes.
+
+## Non-Functional Architecture
+- **Scalability**: Neo4j vertical scaling (memory/cpu). MCP server stateless and horizontally scalable behind load balancer.  
+- **Performance Targets**: Search latency ≤ 1.5s for `top_k=5`; ingestion throughput dependent on embedding API.  
+- **Reliability**: Docker Compose ensures restart-on-failure; production should use managed orchestrator (ECS/Kubernetes) with health checks.  
+- **Maintainability**: Python code structured in `tools/`, `scripts/`, `servers/`; documentation in `docs/`.  
+- **Cost Considerations**: Favor local embedding service to avoid external API costs; use single Neo4j instance initially.
+
+## Security Architecture
+- **Input Validation**:  
+  - Use `pydantic` or lightweight schema validation inside MCP server endpoints for request bodies.  
+  - Sanitize/validate query strings before executing Cypher (Hybrid retriever handles parameterization).  
+- **Authentication & Authorization**:  
+  - Google OAuth (OpenID Connect) via FastMCP; tokens validated per provider.  
+  - Bearer tokens required for all MCP calls; unauthorized requests return 401/403.  
+- **Secrets Management**:  
+  - Development: `.env.local` (excluded from VCS).  
+  - Production: inject via secret store (AWS Secrets Manager, GCP Secret Manager, etc.). Never log credentials.  
+  - **Ownership & Rotation**: Platform engineering provisions Google OAuth client credentials and embedding API keys; Product Owner confirms scopes. Secrets are stored in the secret manager and rotated quarterly. During rotation, deploy MCP with new secrets while keeping the old secret active until verification succeeds, then revoke the previous secret. Document the workflow in operations runbook.  
+- **API Security**:  
+  - Rate limit MCP endpoints at reverse proxy (e.g., Cloudflare/NGINX) to mitigate abuse.  
+  - Enforce strict CORS allowing only trusted origins if exposing browser clients.  
+  - Ensure HTTPS via managed TLS; redirect HTTP→HTTPS.  
+- **Data Protection**:  
+  - Neo4j volumes encrypted (filesystem or managed storage).  
+  - All network traffic uses TLS (embedding API, OAuth).  
+  - Avoid logging raw document text in application logs.  
+- **Dependency Security**:  
+  - Use `uv pip list --outdated` or `pip-audit` in CI.  
+  - Review/approve new dependencies via PR checks.  
+- **Security Testing**:  
+  - Static analysis (e.g., `bandit`) on Python code.  
+  - Periodic DAST using OWASP ZAP against MCP endpoints.  
+  - Annual penetration tests when exposed publicly.
+
+## Testing Strategy
+- **Unit Tests**:  
+  - Focus on ingestion helpers, MCP utility functions, and configuration loaders. Use `pytest` with dependency injection/mocking.  
+- **Integration Tests**:  
+  - Spin up ephemeral Neo4j (Testcontainers) and run hybrid retrieval queries with seeded data.  
+  - Validate OAuth flow using mocked Google endpoints in local tests.  
+- **End-to-End Tests**:  
+  - Use smoke scripts to ingest data, execute `make fulltext-index`, then call MCP search verifying lexical + semantic results. Include regression suite in CI (nightly) that runs against staging Neo4j to catch index drift.  
+- **Continuous Testing**:  
+  - Integrate tests into CI pipeline triggered on PRs; add nightly job to run ingestion + retrieval regression suite.  
+- **Test Data Management**:  
+  - Store fixtures under `tests/fixtures`. Use synthetic corpora with known keywords for deterministic assertions.
+
+## Operational Runbook (Summary)
+1. Provision `.env.local` with Neo4j, index names, embedding API, and Google OAuth credentials.  
+2. `uv sync` then `docker compose up -d neo4j mcp`.  
+3. Run `make index` and `make fulltext-index`.  
+4. Ingest content via `make ingest f=<file>`.  
+5. Confirm OAuth metadata and MCP search endpoints.  
+6. Monitor logs for errors; re-run index scripts as needed after schema changes.
+
+## Risks & Mitigations
+- **Index Drift**: Documented re-run process for index scripts; consider scheduled jobs.  
+- **OAuth Misconfiguration**: Add startup assertions verifying required env vars; provide troubleshooting guide.  
+- **Embedding Service Latency**: Implement retries and timeouts; allow configurable fallback provider.  
+- **Neo4j Scaling Limitations**: Plan for read replicas or Aura upgrade if dataset grows beyond single instance capacity.
 
 ## Next Steps
-- Implement the scripted workflow described above.
-- Extend diagnostics to validate Compose service health (bolt + HTTP probes).
-- Plan migration path for pointing scripts at managed services once v1 succeeds.
+- Review architecture with Product Owner and DevOps to confirm environment alignment.  
+- Story 1.1 (index automation) completed 2025-10-09; apply this architecture to Story 1.2 implementation planning.  
+- Prepare staging environment with HTTPS and OAuth credentials to validate hybrid retrieval ahead of production rollout.

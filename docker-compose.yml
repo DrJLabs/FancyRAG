@@ -1,0 +1,60 @@
+services:
+  neo4j:
+    image: neo4j:5.18
+    environment:
+      NEO4J_AUTH: "${NEO4J_AUTH:-neo4j/password}"
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "${NEO4J_HTTP_PORT:-22010}:7474"
+      - "${NEO4J_BOLT_PORT:-22011}:7687"
+    networks:
+      - rag-net
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-plugins:/plugins
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7474/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mcp:
+    build:
+      context: .
+    image: fancryrag-mcp:local
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    env_file:
+      - '${MCP_ENV_FILE:-.env.local}'
+    environment:
+      HYBRID_RETRIEVAL_QUERY_PATH: /app/queries/hybrid_retrieval.cypher
+    ports:
+      - "${MCP_PUBLISHED_PORT:-22012}:8080"
+    networks:
+      - rag-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://localhost:8080/mcp/health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  rag-net:
+    name: rag-net
+    driver: bridge
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-plugins:

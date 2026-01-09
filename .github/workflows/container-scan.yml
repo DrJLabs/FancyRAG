@@ -1,0 +1,48 @@
+name: Container Scan
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'docker-compose.smoke.yml'
+      - '.dockerignore'
+      - 'Makefile'
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/container-scan.yml'
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'docker-compose.smoke.yml'
+      - '.dockerignore'
+      - 'Makefile'
+      - 'tests/**'
+      - 'scripts/**'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build MCP image
+        run: docker compose build mcp
+
+      - name: Record image digest
+        run: docker image inspect fancryrag-mcp:local --format '{{.Id}}'
+
+      - name: Trivy secret scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: image
+          image-ref: fancryrag-mcp:local
+          scanners: secret
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH,MEDIUM
+          hide-progress: true
