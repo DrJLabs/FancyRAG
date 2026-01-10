@@ -195,6 +195,8 @@ def search_sync(
         text_value = record.get("text")
         if not text_value and node is not None:
             text_value = node.get("text")
+        semantic_nodes = record.get("semantic_nodes") or []
+        semantic_relationships = record.get("semantic_relationships") or []
 
         items.append(
             {
@@ -207,6 +209,8 @@ def search_sync(
                 "score_fulltext": float(fulltext_scores.get(element_id, 0.0))
                 if element_id
                 else 0.0,
+                "semantic_nodes": semantic_nodes,
+                "semantic_relationships": semantic_relationships,
             }
         )
 
@@ -267,12 +271,14 @@ def fetch_sync(state: ServerState, element_id: str) -> Dict[str, Any]:
 def build_server(
     state: ServerState, auth_provider: AuthProvider | None = None
 ) -> FastMCP:
-    provider = auth_provider or GoogleProvider(
-        client_id=state.config.oauth.client_id,
-        client_secret=state.config.oauth.client_secret,
-        base_url=state.config.server.base_url,
-        required_scopes=state.config.oauth.required_scopes,
-    )
+    provider = None
+    if state.config.server.auth_required:
+        provider = auth_provider or GoogleProvider(
+            client_id=state.config.oauth.client_id,
+            client_secret=state.config.oauth.client_secret,
+            base_url=state.config.server.base_url,
+            required_scopes=state.config.oauth.required_scopes,
+        )
 
     server = FastMCP(name="FancyRAG Hybrid MCP", auth=provider)
 

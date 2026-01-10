@@ -69,7 +69,7 @@ graph TD
   - Relationship entities (e.g., `(:Entity)-[:MENTIONS]->(:Chunk)`) created by GraphRAG resolvers.  
 - **Key Properties**:  
   - `Chunk.text`: raw text content.  
-  - `Chunk.embedding`: 768-d vector representing semantics.  
+  - `Chunk.embedding`: vector representing semantics (default 1024 dims for local embeddings; configurable).  
   - Index metadata (vector index `text_embeddings`, full-text index `chunk_text_fulltext`).  
 - **Data Sources**: Operator-supplied documents, local embedding service for embeddings, OpenAI LLM for extraction.  
 - **Data Flow**: Ingestion pipeline splits text → embeds chunks → extracts entities/relations → writes to Neo4j → index scripts ensure vector + full-text indexes. Hybrid retriever reads data combining vector and full-text scoring.

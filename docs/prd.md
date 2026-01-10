@@ -42,14 +42,14 @@ The current project stands up a Neo4j 5.18 instance with a vector index (`text_e
 - **Languages & Runtime**: Python 3.12 managed via Astral `uv`.
 - **Core Libraries**: `neo4j-graphrag[experimental,openai]` for pipeline and retrievers, `fastmcp` for MCP server, `neo4j` Python driver, `python-dotenv` for environment loading.
 - **Neo4j Deployment**: Single container (`neo4j:5.18`) with APOC enabled, connected to the `rag-net` bridge network, default database `neo4j`.
-- **Embedding Service**: External OpenAI-compatible API reachable at `EMBEDDING_API_BASE_URL`, providing the `local-embedding-768` model with cosine similarity (768 dimensions).
+- **Embedding Service**: External OpenAI-compatible API reachable at `EMBEDDING_API_BASE_URL`, providing a local embedding model with cosine similarity (default 1024 dimensions; align `EMBEDDING_DIMENSIONS` to the model).
 - **Authentication**: Google OAuth Web Application credentials stored in `.env.local`; FastMCP handles token verification and metadata exposure.
 - **Hosting Expectations**: Production deployment fronted by HTTPS at `https://neo.mcp.drjlabs.com`; local development uses port-forwarded `http://localhost:8080`.
 - **MCP Integration**: ChatGPT connectors consume the MCP server via `streamable-http` transport; tokens are obtained through the Google OAuth flow.
 
 ## Data & Indexing Considerations
 - **Graph Schema**: Ingestion pipeline writes `Chunk` nodes with properties including `text`, `embedding`, and relationships produced by the entity extractor.
-- **Vector Index**: Already established as `text_embeddings` (cosine, 768 dim) using `createNodeIndex`.
+- **Vector Index**: Already established as `text_embeddings` (cosine, 1024 dim by default) using `createNodeIndex`; match the embedding dimension used by the local model.
 - **Full-Text Index**: New `chunk_text_fulltext` index over `Chunk.text`, enabling lexical recall; environment variables allow alternative label/property overrides.
 - **Retrieval Query**: Default query returns text content, node metadata, vector score, and full-text score; configurable via `RETRIEVAL_QUERY`.
 - **Data Volume**: Designed for small-to-medium corpora (< 50k chunks) with ingestion performed through existing pipeline (`make ingest f=<file>`).

@@ -25,7 +25,7 @@ The table below defines the approved technologies for the hybrid NeoRAG upgrade.
 
 ## External Services
 - **Embedding API**: Custom OpenAI-compatible endpoint (`EMBEDDING_API_BASE_URL`, default `http://localhost:20010/v1`).
-- **LLM Provider**: OpenAI `gpt-4o-mini` for extraction (configurable via environment).
+- **LLM Provider**: OpenAI `gpt-5-mini` for extraction (configurable via environment).
 - **OAuth Provider**: Google OAuth 2.0 web application credentials.
 - **ChatGPT Connector**: Consumes MCP server over HTTPS (`BASE_URL`).
 

@@ -6,6 +6,7 @@ from _compat.structlog import capture_logs
 from pydantic import ValidationError
 
 from config.settings import (
+    ALLOWED_CHAT_MODELS,
     DEFAULT_CHAT_MODEL,
     DEFAULT_BACKOFF_SECONDS,
     DEFAULT_EMBEDDING_DIMENSIONS,
@@ -20,7 +21,7 @@ from config.settings import (
     "env,expected_model,is_override",
     [
         ({}, DEFAULT_CHAT_MODEL, False),
-        ({"OPENAI_MODEL": "gpt-4.1-mini"}, "gpt-4.1-mini", False),
+        ({"OPENAI_MODEL": "gpt-5-mini"}, "gpt-5-mini", False),
         ({"OPENAI_MODEL": "gpt-4o-mini"}, "gpt-4o-mini", True),
     ],
 )
@@ -81,7 +82,7 @@ def test_actor_fallback_uses_getpass(monkeypatch):
 
 def test_allowed_chat_models_exposed():
     settings = OpenAISettings.load({}, actor="pytest")
-    assert settings.allowed_chat_models == FALLBACK_CHAT_MODELS | {DEFAULT_CHAT_MODEL}
+    assert settings.allowed_chat_models == ALLOWED_CHAT_MODELS
 
 
 def test_max_attempts_override_logs_and_applies():
@@ -98,6 +99,20 @@ def test_backoff_override_validation():
         settings = OpenAISettings.load(env, actor="pytest")
     assert settings.backoff_seconds == pytest.approx(0.75)
     assert any(entry["event"] == "openai.settings.backoff_override" for entry in logs)
+
+
+def test_temperature_defaults_and_overrides():
+    settings = OpenAISettings.load({}, actor="pytest")
+    assert settings.temperature == pytest.approx(0.3)
+
+    settings = OpenAISettings.load({"OPENAI_TEMPERATURE": "0.15"}, actor="pytest")
+    assert settings.temperature == pytest.approx(0.15)
+
+
+def test_invalid_temperature_raises():
+    env = {"OPENAI_TEMPERATURE": "cold"}
+    with pytest.raises(ValueError):
+        OpenAISettings.load(env, actor="pytest")
 
 
 def test_invalid_backoff_raises():
@@ -162,6 +177,45 @@ def test_http_base_url_allowed_with_flag():
     assert any(entry["event"] == "openai.settings.insecure_base_url_override" for entry in logs)
 
 
+def test_embedding_base_url_override_logs_and_applies():
+    env = {
+        "EMBEDDING_API_BASE_URL": "http://localhost:20010/v1",
+        "OPENAI_ALLOW_INSECURE_BASE_URL": "true",
+    }
+    with capture_logs() as logs:
+        settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.embedding_api_base_url == "http://localhost:20010/v1"
+    assert any(
+        entry["event"] == "openai.settings.embedding_base_url_override"
+        and entry.get("base_url") == "http://***/v1"
+        for entry in logs
+    )
+
+
+def test_embedding_api_key_loaded():
+    env = {"EMBEDDING_API_KEY": "embed-key"}
+    settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.embedding_api_key is not None
+    assert settings.embedding_api_key.get_secret_value() == "embed-key"
+
+
+def test_embedding_http_base_url_requires_explicit_opt_in():
+    env = {"EMBEDDING_API_BASE_URL": "http://localhost:20010/v1"}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.insecure_embedding_base_url" for entry in logs)
+
+
+@pytest.mark.parametrize("value", ["ftp://example.com", "https://"])
+def test_invalid_embedding_base_url_raises(value):
+    env = {"EMBEDDING_API_BASE_URL": value}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.invalid_embedding_base_url" for entry in logs)
+
+
 def test_invalid_insecure_flag_value_logs_and_raises():
     env = {
         "OPENAI_BASE_URL": "https://gateway.example.com/v1",
@@ -216,6 +270,8 @@ def test_settings_load_with_all_defaults():
     assert settings.embedding_model == DEFAULT_EMBEDDING_MODEL
     assert settings.embedding_dimensions == DEFAULT_EMBEDDING_DIMENSIONS
     assert settings.embedding_dimensions_override is None
+    assert settings.embedding_api_base_url is None
+    assert settings.embedding_api_key is None
     assert settings.actor == "test-actor"
     assert settings.max_attempts == DEFAULT_MAX_RETRY_ATTEMPTS
     assert settings.backoff_seconds == DEFAULT_BACKOFF_SECONDS
@@ -316,6 +372,15 @@ def test_settings_embedding_model_override():
     assert settings.embedding_model == "text-embedding-ada-002"
 
 
+def test_settings_embedding_model_prefers_embedding_env():
+    env = {
+        "EMBEDDING_MODEL": "local-embed",
+        "OPENAI_EMBEDDING_MODEL": "fallback-embed",
+    }
+    settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.embedding_model == "local-embed"
+
+
 def test_settings_embedding_model_strips_whitespace():
     """Test embedding model value is stripped of whitespace."""
     env = {"OPENAI_EMBEDDING_MODEL": "  text-embedding-3-large  "}
@@ -325,9 +390,9 @@ def test_settings_embedding_model_strips_whitespace():
 
 def test_settings_chat_model_strips_whitespace():
     """Test chat model value is stripped of whitespace."""
-    env = {"OPENAI_MODEL": "  gpt-4.1-mini  "}
+    env = {"OPENAI_MODEL": "  gpt-5-mini  "}
     settings = OpenAISettings.load(env, actor="pytest")
-    assert settings.chat_model == "gpt-4.1-mini"
+    assert settings.chat_model == "gpt-5-mini"
 
 
 def test_settings_actor_from_env_variable():

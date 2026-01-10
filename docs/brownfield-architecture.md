@@ -59,7 +59,7 @@
    - Single-file mode reads `options.source` (default `docs/samples/pilot.txt`). Directory mode (`--source-dir`) expands include globs per preset and skips binary/empty files.
    - Every source is assigned a checksum and stored relative to repo root for downstream logging.
 3. **Client Construction**
-   - Loads `OpenAISettings` (actor `kg_build`) which restricts chat models to `gpt-4.1-mini` with optional fallback to `gpt-4o-mini`; embedding model defaults to `text-embedding-3-small`.
+   - Loads `OpenAISettings` (actor `kg_build`) which restricts chat models to `gpt-5-mini` with optional fallback to `gpt-4o-mini`; embedding model defaults to `text-embedding-3-small`.
    - Instantiates `SharedOpenAIClient`, `SharedOpenAIEmbedder`, and `SharedOpenAILLM` for consistent telemetry and retry handling.
    - Builds a scoped `CachingFixedSizeSplitter` with chunk size/overlap derived from presets.
 4. **Neo4j Execution Loop**
@@ -87,7 +87,7 @@
 
 ## Configuration and Secrets
 - `.env` (developer-local) supplies OpenAI, Neo4j, and Qdrant credentials. `FancyRAGSettings` (defined in `src/config/settings.py`) loads these values via Pydantic, emitting actionable `ValueError` messages when required keys are missing or malformed before any network calls execute. Legacy helpers such as `fancyrag.utils.env.ensure_env` now delegate to the typed surface and fall back to raw environment reads only when validation cannot run (e.g., partial test fixtures).
-- `FancyRAGSettings.openai` enforces the chat-model allowlist (`gpt-4.1-mini` baseline, optional `gpt-4o-mini` fallback), validates embedding overrides, and records base URL overrides with masked logging. Override knobs remain the same (`OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_MAX_ATTEMPTS`, etc.) but are now typed and cached per actor.
+- `FancyRAGSettings.openai` enforces the chat-model allowlist (`gpt-5-mini` baseline, optional `gpt-4o-mini` fallback), validates embedding overrides, and records base URL overrides with masked logging. Override knobs remain the same (`OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_MAX_ATTEMPTS`, etc.) but are now typed and cached per actor.
 - `FancyRAGSettings.neo4j` and `FancyRAGSettings.qdrant` normalise connection details (URI validation, optional database names, API keys). Docker defaults still map to `bolt://localhost:7687` and `http://localhost:6333`; managed deployments must override the same environment keys, which are now surfaced through typed accessors.
 
 ## Observability and Telemetry
@@ -98,7 +98,7 @@
 
 ## Technical Debt and Constraints (Current Reality)
 - **Dependency sensitivity:** `neo4j_graphrag` optional modules (semantic extractor, writer) must be installed; otherwise the pipeline raises explicit RuntimeErrors. This is acceptable for local smoke but blocks semantic enrichment until dependencies are satisfied.
-- **Hard-coded model allowlist:** Adding new OpenAI models requires code changes plus policy review; short term workaround is limited to gpt-4.1-mini ↔ gpt-4o-mini fallback.
+- **Hard-coded model allowlist:** Adding new OpenAI models requires code changes plus policy review; short term workaround is limited to gpt-5-mini ↔ gpt-4o-mini fallback.
 - **Manual data cleanup:** `.data/neo4j` and `.data/qdrant` can accumulate gigabytes across runs. Developers must use `check_local_stack.sh --down --destroy-volumes` or delete directories manually.
 - **Retry surfaces:** Vector index creation retries up to three times with fixed backoff but does not yet randomize jitter; repeated cluster contention could still fail CI runs.
 - **Semantic QA gaps:** When semantic enrichment is enabled the evaluator only checks counts, not content accuracy. Future work may need richer validation or human-in-the-loop review.

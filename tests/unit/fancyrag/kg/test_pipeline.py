@@ -15,6 +15,9 @@ from fancyrag.splitters import CachingFixedSizeSplitter
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("EMBEDDING_API_BASE_URL", "http://localhost:20010/v1")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "test-embed-key")
+    monkeypatch.setenv("OPENAI_ALLOW_INSECURE_BASE_URL", "true")
     monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "secret")
@@ -26,9 +29,10 @@ def _stub_settings(monkeypatch):
         "OpenAISettings",
         types.SimpleNamespace(
             load=lambda actor: types.SimpleNamespace(
-                chat_model="gpt-4.1-mini",
+                chat_model="gpt-5-mini",
                 embedding_model="text-embedding-3-small",
                 embedding_dimensions=1536,
+                temperature=0.3,
                 max_attempts=3,
             )
         ),
@@ -216,6 +220,20 @@ def test_run_pipeline_validates_chunk_size(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError):
         pipeline.run_pipeline(options)
+
+
+def test_extract_content_prefers_responses_output_text():
+    raw_response = types.SimpleNamespace(output_text="hello from responses")
+    assert pipeline._extract_content(raw_response) == "hello from responses"
+
+
+def test_extract_content_reads_responses_output_list():
+    payload = {
+        "output": [
+            {"content": [{"type": "output_text", "text": "chunked response"}]},
+        ]
+    }
+    assert pipeline._extract_content(payload) == "chunked response"
 
 
 def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):

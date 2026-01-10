@@ -119,8 +119,39 @@ def test_missing_oauth_client_id_raises(monkeypatch: pytest.MonkeyPatch, query_f
 def test_missing_oauth_client_secret_raises(monkeypatch: pytest.MonkeyPatch, query_file: Path) -> None:
     _set_required_env(monkeypatch, query_file)
     monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET")
-    
+
     with pytest.raises(ConfigurationError, match="GOOGLE_OAUTH_CLIENT_SECRET"):
+        load_config()
+
+
+def test_auth_disabled_skips_oauth_requirements(
+    monkeypatch: pytest.MonkeyPatch, query_file: Path
+) -> None:
+    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
+    monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
+    monkeypatch.setenv("NEO4J_PASSWORD", "password")
+    monkeypatch.setenv("NEO4J_DATABASE", "neo4j")
+    monkeypatch.setenv("INDEX_NAME", "text_embeddings")
+    monkeypatch.setenv("FULLTEXT_INDEX_NAME", "chunk_text_fulltext")
+    monkeypatch.setenv("EMBEDDING_API_BASE_URL", "http://localhost:20010/v1")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "dummy")
+    monkeypatch.setenv("MCP_BASE_URL", "http://localhost:8080")
+    monkeypatch.setenv("HYBRID_RETRIEVAL_QUERY_PATH", str(query_file))
+    monkeypatch.setenv("MCP_AUTH_REQUIRED", "false")
+
+    config = load_config()
+
+    assert config.server.auth_required is False
+    assert config.oauth is None
+
+
+def test_auth_required_invalid_value_raises(
+    monkeypatch: pytest.MonkeyPatch, query_file: Path
+) -> None:
+    _set_required_env(monkeypatch, query_file)
+    monkeypatch.setenv("MCP_AUTH_REQUIRED", "maybe")
+
+    with pytest.raises(ConfigurationError, match="MCP_AUTH_REQUIRED"):
         load_config()
 
 

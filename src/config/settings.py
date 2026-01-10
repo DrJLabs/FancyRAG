@@ -11,51 +11,102 @@ from _compat.structlog import get_logger
 from cli.sanitizer import mask_base_url
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
+from config.utils import format_allowed_boolean_values, parse_boolean
+
 logger = get_logger(__name__)
 
-DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+DEFAULT_CHAT_MODEL = "gpt-5-mini"
 FALLBACK_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4o-mini"})
-ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({DEFAULT_CHAT_MODEL, *FALLBACK_CHAT_MODELS})
+EXTRA_ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4.1-mini"})
+ALLOWED_CHAT_MODELS: frozenset[str] = frozenset(
+    {DEFAULT_CHAT_MODEL, *FALLBACK_CHAT_MODELS, *EXTRA_ALLOWED_CHAT_MODELS}
+)
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSIONS = 1536
 DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 0.5
 DEFAULT_FALLBACK_ENABLED = True
+DEFAULT_TEMPERATURE = 0.3
 
 _ENV_OPENAI_MODEL = "OPENAI_MODEL"
 _ENV_OPENAI_EMBEDDING_MODEL = "OPENAI_EMBEDDING_MODEL"
 _ENV_OPENAI_EMBEDDING_DIMENSIONS = "OPENAI_EMBEDDING_DIMENSIONS"
+_ENV_EMBEDDING_MODEL = "EMBEDDING_MODEL"
+_ENV_EMBEDDING_DIMENSIONS = "EMBEDDING_DIMENSIONS"
+_ENV_EMBEDDING_BASE_URL = "EMBEDDING_API_BASE_URL"
+_ENV_EMBEDDING_API_KEY = "EMBEDDING_API_KEY"
 _ENV_ACTOR_HINT = "GRAPH_RAG_ACTOR"
 _ENV_OPENAI_MAX_ATTEMPTS = "OPENAI_MAX_ATTEMPTS"
 _ENV_OPENAI_BACKOFF_SECONDS = "OPENAI_BACKOFF_SECONDS"
+_ENV_OPENAI_TEMPERATURE = "OPENAI_TEMPERATURE"
 _ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
 _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
 
 _VALID_BASE_SCHEMES = frozenset({"http", "https"})
-_TRUE_BOOL_VALUES = frozenset({"1", "true", "yes", "on"})
-_FALSE_BOOL_VALUES = frozenset({"0", "false", "no", "off"})
 _ALLOWED_NEO4J_SCHEMES = frozenset({"bolt", "bolt+s", "neo4j", "neo4j+s"})
 _ALLOWED_QDRANT_SCHEMES = frozenset({"http", "https"})
 
 
 def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_event: str) -> bool:
-    normalized = raw_value.lower()
-    if normalized in _TRUE_BOOL_VALUES:
-        return True
-    if normalized in _FALSE_BOOL_VALUES:
-        return False
-    allowed_values = ", ".join(sorted(_TRUE_BOOL_VALUES | _FALSE_BOOL_VALUES))
-    logger.error(
-        error_event,
+    try:
+        return parse_boolean(raw_value)
+    except ValueError:
+        allowed_values = format_allowed_boolean_values()
+        logger.error(
+            error_event,
+            actor=actor_name,
+            supplied=raw_value,
+            allowed_values=allowed_values,
+        )
+        raise ValueError(
+            f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
+        )
+
+
+def _validate_base_url(
+    raw_url: str,
+    *,
+    env_key: str,
+    actor_name: str,
+    allow_insecure: bool,
+    invalid_event: str,
+    insecure_event: str,
+    insecure_override_event: str,
+    override_event: str,
+) -> str:
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in _VALID_BASE_SCHEMES or not parsed.netloc:
+        logger.error(
+            invalid_event,
+            actor=actor_name,
+            supplied=mask_base_url(raw_url),
+        )
+        raise ValueError(
+            f"Invalid {env_key} value '{raw_url}'. Provide an absolute http(s) URL."
+        )
+    if parsed.scheme != "https":
+        if not allow_insecure:
+            logger.error(
+                insecure_event,
+                actor=actor_name,
+                supplied=mask_base_url(raw_url),
+            )
+            raise ValueError(
+                f"{env_key} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
+            )
+        logger.warning(
+            insecure_override_event,
+            actor=actor_name,
+            base_url=mask_base_url(raw_url),
+        )
+    logger.info(
+        override_event,
         actor=actor_name,
-        supplied=raw_value,
-        allowed_values=allowed_values,
+        base_url=mask_base_url(raw_url),
     )
-    raise ValueError(
-        f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
-    )
+    return raw_url
 
 
 class OpenAISettings(BaseModel):
@@ -68,9 +119,12 @@ class OpenAISettings(BaseModel):
     embedding_model: str = Field(default=DEFAULT_EMBEDDING_MODEL)
     embedding_dimensions: int = Field(default=DEFAULT_EMBEDDING_DIMENSIONS, gt=0)
     embedding_dimensions_override: int | None = Field(default=None, gt=0)
+    embedding_api_base_url: str | None = None
+    embedding_api_key: SecretStr | None = None
     actor: str
     max_attempts: int = Field(default=DEFAULT_MAX_RETRY_ATTEMPTS, gt=0)
     backoff_seconds: float = Field(default=DEFAULT_BACKOFF_SECONDS, gt=0)
+    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0)
     enable_fallback: bool = Field(default=DEFAULT_FALLBACK_ENABLED)
     api_base_url: str | None = None
     allow_insecure_base_url: bool = False
@@ -106,7 +160,7 @@ class OpenAISettings(BaseModel):
     ) -> OpenAISettings:
         """Load OpenAI configuration from environment values with validation."""
 
-        source = env or os.environ
+        source = os.environ if env is None else env
         actor_name = actor or source.get(_ENV_ACTOR_HINT) or getpass.getuser() or "unknown"
 
         requested_chat_model = (source.get(_ENV_OPENAI_MODEL) or "").strip() or DEFAULT_CHAT_MODEL
@@ -130,8 +184,20 @@ class OpenAISettings(BaseModel):
                 default_model=DEFAULT_CHAT_MODEL,
             )
 
-        embedding_model = (source.get(_ENV_OPENAI_EMBEDDING_MODEL) or DEFAULT_EMBEDDING_MODEL).strip()
-        override_raw = (source.get(_ENV_OPENAI_EMBEDDING_DIMENSIONS) or "").strip()
+        embedding_model = (
+            source.get(_ENV_EMBEDDING_MODEL)
+            or source.get(_ENV_OPENAI_EMBEDDING_MODEL)
+            or DEFAULT_EMBEDDING_MODEL
+        ).strip()
+        embedding_dimensions_source = (
+            _ENV_EMBEDDING_DIMENSIONS
+            if source.get(_ENV_EMBEDDING_DIMENSIONS)
+            else _ENV_OPENAI_EMBEDDING_DIMENSIONS
+        )
+        override_raw = (
+            source.get(embedding_dimensions_source)
+            or ""
+        ).strip()
         override_dimensions: int | None = None
         if override_raw:
             try:
@@ -143,7 +209,7 @@ class OpenAISettings(BaseModel):
                     override_value=override_raw,
                 )
                 raise ValueError(
-                    f"Invalid {_ENV_OPENAI_EMBEDDING_DIMENSIONS} value '{override_raw}'. Provide a positive integer."
+                    f"Invalid {embedding_dimensions_source} value '{override_raw}'. Provide a positive integer."
                 ) from exc
             if override_dimensions <= 0:
                 logger.error(
@@ -152,7 +218,7 @@ class OpenAISettings(BaseModel):
                     override_value=override_raw,
                 )
                 raise ValueError(
-                    f"{_ENV_OPENAI_EMBEDDING_DIMENSIONS} must be a positive integer when set; received {override_dimensions}."
+                    f"{embedding_dimensions_source} must be a positive integer when set; received {override_dimensions}."
                 )
             logger.info(
                 "openai.embedding.override",
@@ -221,6 +287,36 @@ class OpenAISettings(BaseModel):
                 default_seconds=DEFAULT_BACKOFF_SECONDS,
             )
 
+        temperature_raw = (source.get(_ENV_OPENAI_TEMPERATURE) or "").strip()
+        temperature = DEFAULT_TEMPERATURE
+        if temperature_raw:
+            try:
+                temperature = float(temperature_raw)
+            except ValueError as exc:  # pragma: no cover - invalid atof path
+                logger.error(
+                    "openai.settings.invalid_temperature",
+                    actor=actor_name,
+                    supplied=temperature_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_TEMPERATURE} value '{temperature_raw}'. Provide a non-negative number."
+                ) from exc
+            if temperature < 0:
+                logger.error(
+                    "openai.settings.non_positive_temperature",
+                    actor=actor_name,
+                    supplied=temperature_raw,
+                )
+                raise ValueError(
+                    f"{_ENV_OPENAI_TEMPERATURE} must be non-negative when set; received {temperature}."
+                )
+            logger.info(
+                "openai.settings.temperature_override",
+                actor=actor_name,
+                temperature=temperature,
+                default_temperature=DEFAULT_TEMPERATURE,
+            )
+
         fallback_raw = (source.get(_ENV_OPENAI_ENABLE_FALLBACK) or "").strip()
         enable_fallback = DEFAULT_FALLBACK_ENABLED
         if fallback_raw:
@@ -269,47 +365,49 @@ class OpenAISettings(BaseModel):
         base_url_raw = (source.get(_ENV_OPENAI_BASE_URL) or "").strip()
         api_base_url: Optional[str] = None
         if base_url_raw:
-            parsed = urlparse(base_url_raw)
-            if parsed.scheme not in _VALID_BASE_SCHEMES or not parsed.netloc:
-                logger.error(
-                    "openai.settings.invalid_base_url",
-                    actor=actor_name,
-                    supplied=mask_base_url(base_url_raw),
-                )
-                raise ValueError(
-                    f"Invalid {_ENV_OPENAI_BASE_URL} value '{base_url_raw}'. Provide an absolute http(s) URL."
-                )
-            if parsed.scheme != "https":
-                if not allow_insecure:
-                    logger.error(
-                        "openai.settings.insecure_base_url",
-                        actor=actor_name,
-                        supplied=mask_base_url(base_url_raw),
-                    )
-                    raise ValueError(
-                        f"{_ENV_OPENAI_BASE_URL} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
-                    )
-                logger.warning(
-                    "openai.settings.insecure_base_url_override",
-                    actor=actor_name,
-                    base_url=mask_base_url(base_url_raw),
-                )
-            api_base_url = base_url_raw
-            logger.info(
-                "openai.settings.base_url_override",
-                actor=actor_name,
-                base_url=mask_base_url(api_base_url),
+            api_base_url = _validate_base_url(
+                base_url_raw,
+                env_key=_ENV_OPENAI_BASE_URL,
+                actor_name=actor_name,
+                allow_insecure=allow_insecure,
+                invalid_event="openai.settings.invalid_base_url",
+                insecure_event="openai.settings.insecure_base_url",
+                insecure_override_event="openai.settings.insecure_base_url_override",
+                override_event="openai.settings.base_url_override",
             )
 
+        embedding_base_raw = (source.get(_ENV_EMBEDDING_BASE_URL) or "").strip()
+        embedding_api_base_url: Optional[str] = None
+        if embedding_base_raw:
+            embedding_api_base_url = _validate_base_url(
+                embedding_base_raw,
+                env_key=_ENV_EMBEDDING_BASE_URL,
+                actor_name=actor_name,
+                allow_insecure=allow_insecure,
+                invalid_event="openai.settings.invalid_embedding_base_url",
+                insecure_event="openai.settings.insecure_embedding_base_url",
+                insecure_override_event="openai.settings.insecure_embedding_base_url_override",
+                override_event="openai.settings.embedding_base_url_override",
+            )
+
+        api_key_raw = (source.get("OPENAI_API_KEY") or "").strip()
+        api_key = SecretStr(api_key_raw) if api_key_raw else None
+
+        embedding_api_key_raw = (source.get(_ENV_EMBEDDING_API_KEY) or "").strip()
+        embedding_api_key = SecretStr(embedding_api_key_raw) if embedding_api_key_raw else None
+
         return cls(
-            api_key=None,
+            api_key=api_key,
             chat_model=requested_chat_model,
             embedding_model=embedding_model,
             embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
             embedding_dimensions_override=override_dimensions,
+            embedding_api_base_url=embedding_api_base_url,
+            embedding_api_key=embedding_api_key,
             actor=actor_name,
             max_attempts=max_attempts,
             backoff_seconds=backoff_seconds,
+            temperature=temperature,
             enable_fallback=enable_fallback,
             api_base_url=api_base_url,
             allow_insecure_base_url=allow_insecure,
@@ -400,12 +498,17 @@ class FancyRAGSettings(BaseModel):
         """
 
         required = {item.lower() for item in (require or set())}
+        require_embeddings = bool({"embedding", "embeddings"} & required)
 
         def _ensure_requirements(settings: "FancyRAGSettings") -> None:
             if "openai" in required and settings.openai.api_key is None:
                 raise ValueError("Missing required environment variable: OPENAI_API_KEY")
             if "qdrant" in required and settings.qdrant is None:
                 raise ValueError("Missing required environment variable: QDRANT_URL")
+            if require_embeddings and settings.openai.embedding_api_base_url is None:
+                raise ValueError(
+                    "Missing required environment variable: EMBEDDING_API_BASE_URL"
+                )
 
         if env is None and not refresh and cls._CACHE is not None:
             cached = cls._CACHE
@@ -441,6 +544,12 @@ class FancyRAGSettings(BaseModel):
             )
         elif require_openai:
             raise ValueError("Missing required environment variable: OPENAI_API_KEY")
+
+        embedding_api_key_raw = _optional("EMBEDDING_API_KEY")
+        if embedding_api_key_raw:
+            openai_settings = openai_settings.model_copy(
+                update={"embedding_api_key": SecretStr(embedding_api_key_raw)}
+            )
 
         try:
             neo4j_settings = Neo4jSettings(
@@ -491,15 +600,23 @@ class FancyRAGSettings(BaseModel):
             "OPENAI_API_KEY": self.openai.api_key.get_secret_value() if self.openai.api_key else "",
             "OPENAI_MODEL": self.openai.chat_model,
             "OPENAI_EMBEDDING_MODEL": self.openai.embedding_model,
+            "EMBEDDING_MODEL": self.openai.embedding_model,
             "OPENAI_MAX_ATTEMPTS": str(self.openai.max_attempts),
             "OPENAI_BACKOFF_SECONDS": str(self.openai.backoff_seconds),
+            "OPENAI_TEMPERATURE": str(self.openai.temperature),
             "OPENAI_ENABLE_FALLBACK": "true" if self.openai.enable_fallback else "false",
         }
         if self.openai.embedding_dimensions_override is not None:
             env["OPENAI_EMBEDDING_DIMENSIONS"] = str(self.openai.embedding_dimensions_override)
+            env["EMBEDDING_DIMENSIONS"] = str(self.openai.embedding_dimensions_override)
         if self.openai.api_base_url:
             env["OPENAI_BASE_URL"] = self.openai.api_base_url
+        if self.openai.embedding_api_base_url:
+            env["EMBEDDING_API_BASE_URL"] = self.openai.embedding_api_base_url
+        if self.openai.api_base_url or self.openai.embedding_api_base_url:
             env["OPENAI_ALLOW_INSECURE_BASE_URL"] = "true" if self.openai.allow_insecure_base_url else "false"
+        if self.openai.embedding_api_key:
+            env["EMBEDDING_API_KEY"] = self.openai.embedding_api_key.get_secret_value()
 
         env.update(
             {
@@ -538,4 +655,5 @@ __all__ = [
     "DEFAULT_MAX_RETRY_ATTEMPTS",
     "DEFAULT_BACKOFF_SECONDS",
     "DEFAULT_FALLBACK_ENABLED",
+    "DEFAULT_TEMPERATURE",
 ]

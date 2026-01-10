@@ -140,6 +140,33 @@ def test_search_sync_returns_scores(base_config):
     assert second["score_fulltext"] == pytest.approx(0.0)
 
 
+def test_search_sync_surfaces_semantic_metadata(base_config):
+    records = [
+        {
+            "node": FakeNode("1", text="Doc 1", embedding=[0.1]),
+            "score": 0.9,
+            "text": "Doc 1",
+            "semantic_nodes": [{"id": "n1"}],
+            "semantic_relationships": [{"type": "REL"}],
+        }
+    ]
+    metadata = {"query_vector": [0.11, 0.22]}
+
+    driver = StubDriver(
+        {
+            runtime.VECTOR_SCORE_QUERY: ([{"element_id": "1", "score": 0.5}], None, None),
+            runtime.FULLTEXT_SCORE_QUERY: ([{"element_id": "1", "score": 2.0}], None, None),
+        }
+    )
+    state = _state_with(driver, FakeRetriever(records, metadata), base_config)
+
+    response = runtime.search_sync(state, "graph", top_k=1, effective_ratio=1)
+
+    result = response["results"][0]
+    assert result["semantic_nodes"] == [{"id": "n1"}]
+    assert result["semantic_relationships"] == [{"type": "REL"}]
+
+
 def test_fetch_sync_found(base_config):
     node = FakeNode("42", text="Doc", embedding=[0.2])
     driver = StubDriver({runtime.FETCH_NODE_QUERY: ([{"node": node, "labels": ["Chunk"]}], None, None)})
@@ -267,6 +294,25 @@ def test_stateless_http_enforces_authentication(base_config):
         assert authorized.status_code == 200
         body = authorized.json()
         assert body["result"] == {}
+
+
+def test_stateless_http_allows_requests_when_auth_disabled(base_config):
+    config = base_config.model_copy(deep=True)
+    config.server.auth_required = False
+    config.oauth = None
+
+    state = _state_with(StubDriver({}), FakeRetriever([], {}), config)
+    server = runtime.build_server(state)
+    app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
+
+    headers = {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/mcp", headers=headers, json=_ping_payload("unauth"))
+        assert response.status_code == 200
 
 
 def test_search_latency_within_budget(base_config):

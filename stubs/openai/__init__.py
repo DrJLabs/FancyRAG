@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 _DEFAULT_EMBEDDING_DIMENSIONS = 1536
+
+
+def _resolve_embedding_dimensions() -> int:
+    raw = os.getenv("EMBEDDING_DIMENSIONS") or os.getenv("OPENAI_EMBEDDING_DIMENSIONS")
+    if raw:
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            return _DEFAULT_EMBEDDING_DIMENSIONS
+        if value > 0:
+            return value
+    return _DEFAULT_EMBEDDING_DIMENSIONS
 
 
 class APIError(Exception):
@@ -98,11 +111,40 @@ class _Chat:
         self.completions = _ChatCompletions()
 
 
+class _Responses:
+    """Stubbed responses API interface."""
+
+    def create(
+        self,
+        *,
+        model: str,
+        input: Sequence[Mapping[str, str]],
+        max_output_tokens: int,
+        **_: Any,
+    ) -> Any:
+        last = input[-1].get("content", "") if input else ""
+        content = f"Stubbed response for: {last}".strip()
+        usage = _ChatUsage(prompt_tokens=max(len(input) * 10, 5), completion_tokens=min(max_output_tokens, 12))
+        return SimpleNamespace(
+            id="stub-response",
+            model=model,
+            usage=usage,
+            output_text=content,
+            output=[SimpleNamespace(content=[SimpleNamespace(text=content)])],
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                )
+            ],
+        )
+
+
 class _Embeddings:
     """Stubbed embeddings interface."""
 
     def create(self, *, model: str, input: str, **_: Any) -> Any:
-        vector = [float((i % 17) - 8) for i in range(_DEFAULT_EMBEDDING_DIMENSIONS)]
+        dimensions = _resolve_embedding_dimensions()
+        vector = [float((i % 17) - 8) for i in range(dimensions)]
         usage = _EmbeddingUsage(total_tokens=max(len(input.split()), 1))
         return SimpleNamespace(
             model=model,
@@ -117,6 +159,7 @@ class OpenAI:
     def __init__(self, *, base_url: str | None = None, **_: Any) -> None:
         self.base_url = base_url
         self.chat = _Chat()
+        self.responses = _Responses()
         self.embeddings = _Embeddings()
 
 
