@@ -8,3 +8,8 @@ __pycache__/
 
 # Tooling lockfiles generated during local runs
 uv.lock
+
+# Local scratch outputs
+.serena/
+artifacts/
+reports/

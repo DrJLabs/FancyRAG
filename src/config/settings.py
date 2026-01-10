@@ -15,7 +15,10 @@ logger = get_logger(__name__)
 
 DEFAULT_CHAT_MODEL = "gpt-5-mini"
 FALLBACK_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4o-mini"})
-ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({DEFAULT_CHAT_MODEL, *FALLBACK_CHAT_MODELS})
+EXTRA_ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4.1-mini"})
+ALLOWED_CHAT_MODELS: frozenset[str] = frozenset(
+    {DEFAULT_CHAT_MODEL, *FALLBACK_CHAT_MODELS, *EXTRA_ALLOWED_CHAT_MODELS}
+)
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSIONS = 1536

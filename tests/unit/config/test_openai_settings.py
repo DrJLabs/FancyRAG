@@ -6,6 +6,7 @@ from _compat.structlog import capture_logs
 from pydantic import ValidationError
 
 from config.settings import (
+    ALLOWED_CHAT_MODELS,
     DEFAULT_CHAT_MODEL,
     DEFAULT_BACKOFF_SECONDS,
     DEFAULT_EMBEDDING_DIMENSIONS,
@@ -81,7 +82,7 @@ def test_actor_fallback_uses_getpass(monkeypatch):
 
 def test_allowed_chat_models_exposed():
     settings = OpenAISettings.load({}, actor="pytest")
-    assert settings.allowed_chat_models == FALLBACK_CHAT_MODELS | {DEFAULT_CHAT_MODEL}
+    assert settings.allowed_chat_models == ALLOWED_CHAT_MODELS
 
 
 def test_max_attempts_override_logs_and_applies():
