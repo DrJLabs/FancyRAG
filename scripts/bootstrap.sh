@@ -174,6 +174,24 @@ activate_venv() {
   source "$venv_path/bin/activate"
 }
 
+# create_venv creates a virtual environment using python -m venv or falls back to uv venv.
+create_venv() {
+  local venv_path="$1"
+  local python_bin="$2"
+
+  if "$python_bin" -m venv "$venv_path"; then
+    return 0
+  fi
+
+  log WARN "python -m venv failed; attempting uv venv instead"
+  if ! command -v uv >/dev/null 2>&1; then
+    log ERROR "uv is not installed; cannot create virtual environment."
+    return 1
+  fi
+
+  uv venv "$venv_path" --python "$python_bin" --seed --clear
+}
+
 # main orchestrates bootstrapping of a Python 3.12 virtual environment for the repository: it resolves a suitable Python interpreter, creates or reuses the venv (optionally recreating it), activates the environment, installs runtime dependencies (unless skipped), generates a requirements.lock, and validates package import before printing next-step instructions.
 main() {
   parse_args "$@"
@@ -196,14 +214,14 @@ main() {
     if [[ $FORCE_RECREATE -eq 1 ]]; then
       log INFO "--force supplied; removing existing virtual environment at $venv_display"
       rm -rf "$VENV_PATH"
-      "$python_bin" -m venv "$VENV_PATH"
+      create_venv "$VENV_PATH" "$python_bin"
     else
       log INFO "Virtual environment already exists at $venv_display; reusing"
     fi
   else
     log INFO "Creating virtual environment at $venv_display"
     mkdir -p "$(dirname "$VENV_PATH")"
-    "$python_bin" -m venv "$VENV_PATH"
+    create_venv "$VENV_PATH" "$python_bin"
   fi
 
   activate_venv "$VENV_PATH"
@@ -264,7 +282,15 @@ PY
       fi
       rm -f "$req_in"
     else
-      python -m pip freeze --exclude-editable > "$lockfile"
+      if command -v uv >/dev/null 2>&1; then
+        log INFO "uv detected; generating lockfile via uv pip freeze"
+        if ! uv pip freeze --exclude-editable -p "$VENV_PATH/bin/python" > "$lockfile"; then
+          log WARN "uv pip freeze failed; falling back to pip freeze."
+          python -m pip freeze --exclude-editable > "$lockfile"
+        fi
+      else
+        python -m pip freeze --exclude-editable > "$lockfile"
+      fi
     fi
 
     log INFO "Running import validation"
