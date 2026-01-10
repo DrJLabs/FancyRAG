@@ -7,6 +7,8 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, PositiveFloat, PositiveInt, ValidationError
 
+from config.utils import parse_boolean
+
 
 class ConfigurationError(RuntimeError):
     """Raised when application configuration is invalid."""
@@ -87,12 +89,10 @@ def _parse_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
     raw = env.get(key)
     if raw is None:
         return default
-    value = raw.strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    raise ConfigurationError(f"{key} must be a boolean")
+    try:
+        return parse_boolean(raw)
+    except ValueError as exc:
+        raise ConfigurationError(f"{key} must be a boolean") from exc
 
 
 def load_config(env: Mapping[str, str] | None = None) -> AppConfig:

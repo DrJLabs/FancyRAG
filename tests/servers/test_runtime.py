@@ -140,6 +140,33 @@ def test_search_sync_returns_scores(base_config):
     assert second["score_fulltext"] == pytest.approx(0.0)
 
 
+def test_search_sync_surfaces_semantic_metadata(base_config):
+    records = [
+        {
+            "node": FakeNode("1", text="Doc 1", embedding=[0.1]),
+            "score": 0.9,
+            "text": "Doc 1",
+            "semantic_nodes": [{"id": "n1"}],
+            "semantic_relationships": [{"type": "REL"}],
+        }
+    ]
+    metadata = {"query_vector": [0.11, 0.22]}
+
+    driver = StubDriver(
+        {
+            runtime.VECTOR_SCORE_QUERY: ([{"element_id": "1", "score": 0.5}], None, None),
+            runtime.FULLTEXT_SCORE_QUERY: ([{"element_id": "1", "score": 2.0}], None, None),
+        }
+    )
+    state = _state_with(driver, FakeRetriever(records, metadata), base_config)
+
+    response = runtime.search_sync(state, "graph", top_k=1, effective_ratio=1)
+
+    result = response["results"][0]
+    assert result["semantic_nodes"] == [{"id": "n1"}]
+    assert result["semantic_relationships"] == [{"type": "REL"}]
+
+
 def test_fetch_sync_found(base_config):
     node = FakeNode("42", text="Doc", embedding=[0.2])
     driver = StubDriver({runtime.FETCH_NODE_QUERY: ([{"node": node, "labels": ["Chunk"]}], None, None)})

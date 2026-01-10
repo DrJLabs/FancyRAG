@@ -195,6 +195,8 @@ def search_sync(
         text_value = record.get("text")
         if not text_value and node is not None:
             text_value = node.get("text")
+        semantic_nodes = record.get("semantic_nodes") or []
+        semantic_relationships = record.get("semantic_relationships") or []
 
         items.append(
             {
@@ -207,6 +209,8 @@ def search_sync(
                 "score_fulltext": float(fulltext_scores.get(element_id, 0.0))
                 if element_id
                 else 0.0,
+                "semantic_nodes": semantic_nodes,
+                "semantic_relationships": semantic_relationships,
             }
         )
 

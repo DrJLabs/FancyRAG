@@ -12,14 +12,14 @@ WITH
 RETURN
     node,
     score,
-    [sem IN semantic_nodes WHERE sem IS NOT NULL |
+    [sem IN semantic_nodes |
         {
             id: elementId(sem),
             labels: labels(sem),
             properties: properties(sem)
         }
     ] AS semantic_nodes,
-    [rel IN semantic_relationships WHERE rel IS NOT NULL |
+    [rel IN semantic_relationships |
         {
             type: type(rel),
             from: elementId(startNode(rel)),

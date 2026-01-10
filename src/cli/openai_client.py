@@ -151,7 +151,10 @@ class SharedOpenAIClient:
         max_tokens: int = 256,
         **extra_params: Any,
     ) -> ChatResult:
-        """Execute a responses API request with retry and fallback guardrails."""
+        """Execute a responses API request with retry and fallback guardrails.
+
+        Defaults `reasoning` to minimal effort when not explicitly provided.
+        """
 
         model = self._settings.chat_model
         fallback_used = model in FALLBACK_CHAT_MODELS

@@ -192,6 +192,13 @@ def test_embedding_base_url_override_logs_and_applies():
     )
 
 
+def test_embedding_api_key_loaded():
+    env = {"EMBEDDING_API_KEY": "embed-key"}
+    settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.embedding_api_key is not None
+    assert settings.embedding_api_key.get_secret_value() == "embed-key"
+
+
 def test_embedding_http_base_url_requires_explicit_opt_in():
     env = {"EMBEDDING_API_BASE_URL": "http://localhost:20010/v1"}
     with capture_logs() as logs:

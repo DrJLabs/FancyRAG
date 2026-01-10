@@ -11,6 +11,8 @@ from _compat.structlog import get_logger
 from cli.sanitizer import mask_base_url
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
+from config.utils import format_allowed_boolean_values, parse_boolean
+
 logger = get_logger(__name__)
 
 DEFAULT_CHAT_MODEL = "gpt-5-mini"
@@ -43,28 +45,24 @@ _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
 
 _VALID_BASE_SCHEMES = frozenset({"http", "https"})
-_TRUE_BOOL_VALUES = frozenset({"1", "true", "yes", "on"})
-_FALSE_BOOL_VALUES = frozenset({"0", "false", "no", "off"})
 _ALLOWED_NEO4J_SCHEMES = frozenset({"bolt", "bolt+s", "neo4j", "neo4j+s"})
 _ALLOWED_QDRANT_SCHEMES = frozenset({"http", "https"})
 
 
 def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_event: str) -> bool:
-    normalized = raw_value.lower()
-    if normalized in _TRUE_BOOL_VALUES:
-        return True
-    if normalized in _FALSE_BOOL_VALUES:
-        return False
-    allowed_values = ", ".join(sorted(_TRUE_BOOL_VALUES | _FALSE_BOOL_VALUES))
-    logger.error(
-        error_event,
-        actor=actor_name,
-        supplied=raw_value,
-        allowed_values=allowed_values,
-    )
-    raise ValueError(
-        f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
-    )
+    try:
+        return parse_boolean(raw_value)
+    except ValueError:
+        allowed_values = format_allowed_boolean_values()
+        logger.error(
+            error_event,
+            actor=actor_name,
+            supplied=raw_value,
+            allowed_values=allowed_values,
+        )
+        raise ValueError(
+            f"Invalid {env_key} value '{raw_value}'. Use one of: {allowed_values}."
+        )
 
 
 def _validate_base_url(
@@ -392,14 +390,20 @@ class OpenAISettings(BaseModel):
                 override_event="openai.settings.embedding_base_url_override",
             )
 
+        api_key_raw = (source.get("OPENAI_API_KEY") or "").strip()
+        api_key = SecretStr(api_key_raw) if api_key_raw else None
+
+        embedding_api_key_raw = (source.get(_ENV_EMBEDDING_API_KEY) or "").strip()
+        embedding_api_key = SecretStr(embedding_api_key_raw) if embedding_api_key_raw else None
+
         return cls(
-            api_key=None,
+            api_key=api_key,
             chat_model=requested_chat_model,
             embedding_model=embedding_model,
             embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
             embedding_dimensions_override=override_dimensions,
             embedding_api_base_url=embedding_api_base_url,
-            embedding_api_key=None,
+            embedding_api_key=embedding_api_key,
             actor=actor_name,
             max_attempts=max_attempts,
             backoff_seconds=backoff_seconds,
