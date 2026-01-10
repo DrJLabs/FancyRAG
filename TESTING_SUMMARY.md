@@ -198,6 +198,10 @@ This document summarizes the comprehensive unit tests generated for the FancyRAG
 - **Total Test Functions**: ~150+
 
 ### Test Distribution by Module
+
+## Manual Verification Notes
+
+- Semantic retrieval end-to-end validation not run locally (requires Neo4j + embedding backend + MCP server).
 - Configuration: ~50 tests
 - Embeddings: ~15 tests
 - Logging: ~18 tests

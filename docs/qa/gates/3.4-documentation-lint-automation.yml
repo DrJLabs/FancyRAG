@@ -12,7 +12,7 @@ evidence:
     - "PYTHONPATH=src pytest tests/unit/scripts/test_check_docs.py"
     - "PYTHONPATH=src pytest tests/integration/cli/test_check_docs_cli.py"
     - "PYTHONPATH=src pytest tests/unit/fancyrag/test_env_utils.py"
-    - "PYTHONPATH=stubs:src python3 scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1536 --similarity cosine"
+    - "PYTHONPATH=stubs:src python3 scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1024 --similarity cosine"
     - "PYTHONPATH=stubs:src python3 scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100"
     - "PYTHONPATH=stubs:src python3 scripts/export_to_qdrant.py --collection chunks_main"
     - "PYTHONPATH=stubs:src python3 scripts/ask_qdrant.py --question 'What did Acme launch?' --top-k 3"

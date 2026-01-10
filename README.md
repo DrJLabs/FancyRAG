@@ -48,13 +48,18 @@ with other services, override them before starting the stack:
 NEO4J_HTTP_PORT=17474 NEO4J_BOLT_PORT=110247 MCP_PUBLISHED_PORT=18080 make up
 ```
 
-Configure secrets in `.env.local` before running ingestion. When targeting a local
-OpenAI-compatible embedding server (e.g., `localhost:20010`), set:
+Configure secrets in `.env.local` before running ingestion. Chat/semantic extraction
+uses OpenAI, while embeddings are routed to the local OpenAI-compatible server. For
+local embeddings (e.g., `localhost:20010`), set:
 
 ```
 EMBEDDING_API_BASE_URL=http://localhost:20010/v1
 EMBEDDING_API_KEY=<token or dummy if not required>
+EMBEDDING_MODEL=<local embedding model name>
 ```
+
+Local embeddings require `EMBEDDING_API_BASE_URL`; the pipeline fails fast if it is
+missing. If the local endpoint uses HTTP, set `OPENAI_ALLOW_INSECURE_BASE_URL=true`.
 
 If you are using OpenAI project-scoped keys (`sk-proj-...`), also capture the project
 identifier issued by OpenAI:
@@ -101,9 +106,10 @@ will report the `mcp` service as `healthy` when this check passes.
 
 ### Authorization for local automation
 
-Production deployments must supply Google OAuth tokens. For deterministic local or
-CI smoke tests you can set `MCP_STATIC_TOKEN` in the Compose environment file (for
-example `.env.local`) and call the API with a bearer token:
+Production deployments must supply Google OAuth tokens. For local-only runs you can
+disable auth by setting `MCP_AUTH_REQUIRED=false` in `.env.local`, which skips the
+OAuth requirements entirely. If you still want auth for local/CI smoke tests, set
+`MCP_STATIC_TOKEN` and keep OAuth enabled:
 
 ```
 MCP_STATIC_TOKEN=dev-smoke-token
