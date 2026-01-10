@@ -43,7 +43,7 @@
   - Relationships: `(:Document)-[:HAS_CHUNK]->(:Chunk)` created for every chunk. The ingestion pipeline ensures orphan chunks are deleted during rollback.
   - Semantic enrichment (optional) writes additional entity/relationship nodes tagged with `ingest_run_key`; QA thresholds default to zero to fail the run on any anomaly.
 - **Vector Index**
-  - `scripts/create_vector_index.py` targets label `Chunk`, property `embedding`, similarity `cosine`, with default 1536 dimensions. Validation mismatches raise `VectorIndexMismatchError` prompting manual remediation.
+  - `scripts/create_vector_index.py` targets label `Chunk`, property `embedding`, similarity `cosine`, with default 1024 dimensions. Validation mismatches raise `VectorIndexMismatchError` prompting manual remediation.
 - **Qdrant Collection**
   - Export script ensures `chunks_main` collection exists (or recreates it with `--recreate-collection`). Point IDs default to the chunk's numeric index, falling back to UID strings when absent.
   - Payload mirrors Neo4j provenance fields (source path, git commit, checksum) for cross-store validation.
@@ -88,7 +88,7 @@
 ## Configuration and Secrets
 - `.env` (developer-local) supplies OpenAI, Neo4j, and Qdrant credentials. `FancyRAGSettings` (defined in `src/config/settings.py`) loads these values via Pydantic, emitting actionable `ValueError` messages when required keys are missing or malformed before any network calls execute. Legacy helpers such as `fancyrag.utils.env.ensure_env` now delegate to the typed surface and fall back to raw environment reads only when validation cannot run (e.g., partial test fixtures).
 - `FancyRAGSettings.openai` enforces the chat-model allowlist (`gpt-4.1-mini` baseline, optional `gpt-4o-mini` fallback), validates embedding overrides, and records base URL overrides with masked logging. Override knobs remain the same (`OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_MAX_ATTEMPTS`, etc.) but are now typed and cached per actor.
-- `FancyRAGSettings.neo4j` and `FancyRAGSettings.qdrant` normalise connection details (URI validation, optional database names, API keys). Docker defaults still map to `bolt://localhost:7687` and `http://localhost:6333`; managed deployments must override the same environment keys, which are now surfaced through typed accessors.
+- `FancyRAGSettings.neo4j` and `FancyRAGSettings.qdrant` normalise connection details (URI validation, optional database names, API keys). Docker defaults still map to `bolt://localhost:10247` and `http://localhost:6333`; managed deployments must override the same environment keys, which are now surfaced through typed accessors.
 
 ## Observability and Telemetry
 - Structlog instrumentation (backed by `_compat.structlog`) standardizes log fields across scripts. JSON artifacts are scrubbed via `cli.sanitizer.scrub_object` to remove credentials.

@@ -91,6 +91,7 @@ def test_export_environment_round_trip(base_env):
     exported = settings.export_environment()
 
     assert exported["OPENAI_API_KEY"] == "sk-test"
+    assert exported["OPENAI_TEMPERATURE"] == "0.3"
     assert exported["NEO4J_URI"] == "bolt://localhost:7687"
     assert exported["QDRANT_URL"] == "http://localhost:6333"
     assert exported["OPENAI_ENABLE_FALLBACK"] == "true"

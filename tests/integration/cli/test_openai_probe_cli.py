@@ -16,7 +16,7 @@ def _create_stub_openai(dest: Path) -> None:
     """
     Create an on-disk stub of the `openai` package at the given destination.
     
-    The stub exposes a minimal public surface used by tests: exception types (APIError, APIConnectionError, APIStatusError, RateLimitError), lightweight usage/result containers, a chat completions helper that yields a single choice with a `finish_reason` of `"stop"` and usage counts, an embeddings helper that returns a 1536-dimensional embedding and usage, and an `OpenAI` class exposing `chat.completions`, `embeddings`, and a `responses` list.
+    The stub exposes a minimal public surface used by tests: exception types (APIError, APIConnectionError, APIStatusError, RateLimitError), lightweight usage/result containers, a responses helper that yields output text and usage counts, an embeddings helper that returns a 1024-dimensional embedding and usage, and an `OpenAI` class exposing `responses.create` and `embeddings`.
     
     Parameters:
         dest (Path): Directory in which an `openai` package directory (with `__init__.py`) will be created.
@@ -51,14 +51,14 @@ class _Usage:
         self.__dict__.update(values)
 
 
-class _ChatCompletions:
+class _Responses:
     def create(self, **_):
         return type(
-            "ChatResponse",
+            "Response",
             (),
             {
-                "usage": _Usage(prompt_tokens=9, completion_tokens=3),
-                "choices": [type("Choice", (), {"finish_reason": "stop"})()],
+                "usage": _Usage(input_tokens=9, output_tokens=3),
+                "output_text": "Probe acknowledgement",
             },
         )()
 
@@ -70,16 +70,15 @@ class _Embeddings:
             (),
             {
                 "usage": _Usage(total_tokens=7),
-                "data": [type("Embed", (), {"embedding": [0.0] * 1536})()],
+                "data": [type("Embed", (), {"embedding": [0.0] * 1024})()],
             },
         )()
 
 
 class OpenAI:
     def __init__(self, *_, **__):
-        self.chat = type("Chat", (), {"completions": _ChatCompletions()})()
         self.embeddings = _Embeddings()
-        self.responses = []
+        self.responses = type("Responses", (), {"create": _Responses().create})()
 
 """,
         encoding="utf-8",
@@ -165,7 +164,7 @@ def test_openai_probe_cli_generates_artifacts(tmp_path):
     assert report["status"] == "success"
     assert report["settings"]["chat_override"] is True
     assert report["chat"]["fallback_used"] is True
-    assert report["embedding"]["vector_length"] == 1536
+    assert report["embedding"]["vector_length"] == 1024
     assert "sk-" not in report_text
 
     metrics = metrics_path.read_text(encoding="utf-8")

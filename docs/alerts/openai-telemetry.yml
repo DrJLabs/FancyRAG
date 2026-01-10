@@ -4,10 +4,10 @@ metadata:
   last_reviewed: 2025-09-25
   grafana_dashboard_uid: openai-telemetry
   notes: >-
-    Thresholds cover chat latency and token consumption for baseline (gpt-4.1-mini)
+    Thresholds cover chat latency and token consumption for baseline (gpt-5-mini)
     and fallback (gpt-4o-mini) models.
 models:
-  gpt-4.1-mini:
+  gpt-5-mini:
     latency_ms_p95: 1200
     token_prompt_per_minute: 60000
     token_completion_per_minute: 15000
@@ -24,7 +24,7 @@ alerts:
     panel_uid: openai-latency
     severity: warning
     threshold_ms:
-      gpt-4.1-mini: 1200
+      gpt-5-mini: 1200
       gpt-4o-mini: 800
   token_usage_spike:
     panel_uid: openai-tokens

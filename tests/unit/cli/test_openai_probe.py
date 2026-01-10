@@ -1,4 +1,5 @@
 import json
+import httpx
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,27 +19,27 @@ class HappyClient:
         """
         Initialize a simulated OpenAI-like client used by tests.
         
-        Creates a `chat` namespace exposing `completions.create` and an `embeddings` namespace exposing `create`, both bound to the instance's internal handlers, and initializes call counters under `self.calls` for "chat" and "embedding".
+        Creates a `responses` namespace exposing `create` and an `embeddings` namespace exposing `create`, both bound to the instance's internal handlers, and initializes call counters under `self.calls` for "responses" and "embedding".
         """
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
+        self.responses = SimpleNamespace(create=self._response)
         self.embeddings = SimpleNamespace(create=self._embedding)
-        self.calls = {"chat": 0, "embedding": 0}
+        self.calls = {"responses": 0, "embedding": 0}
 
-    def _chat(self, **kwargs):
+    def _response(self, **kwargs):
         """
-        Simulate a chat API call: increments the chat call counter and returns a canned successful chat response.
+        Simulate a responses API call: increments the responses call counter and returns a canned successful response.
         
         Parameters:
             kwargs: Must include a 'model' key identifying the model to use; other keys are ignored.
         
         Returns:
-            FakeChatResponse: A mock response with `usage` (prompt_tokens=12, completion_tokens=3) and a single choice whose `finish_reason` is `"stop"`.
+            FakeChatResponse: A mock response with `usage` (input_tokens=12, output_tokens=3) and an `output_text` payload.
         """
-        self.calls["chat"] += 1
+        self.calls["responses"] += 1
         assert kwargs["model"]
         return FakeChatResponse(
-            usage=SimpleNamespace(prompt_tokens=12, completion_tokens=3),
-            choices=[SimpleNamespace(finish_reason="stop")],
+            usage=SimpleNamespace(input_tokens=12, output_tokens=3),
+            output_text="Probe acknowledgement",
         )
 
     def _embedding(self, **kwargs):
@@ -49,12 +50,12 @@ class HappyClient:
             kwargs: Must include a "model" key; an AssertionError is raised if it is missing.
         
         Returns:
-            FakeEmbeddingResponse: Contains `data` with one embedding vector of length 1536 and `usage.total_tokens` equal to 8.
+            FakeEmbeddingResponse: Contains `data` with one embedding vector of length 1024 and `usage.total_tokens` equal to 8.
         """
         self.calls["embedding"] += 1
         assert kwargs["model"]
         return FakeEmbeddingResponse(
-            data=[SimpleNamespace(embedding=[0.0] * 1536)],
+            data=[SimpleNamespace(embedding=[0.0] * 1024)],
             usage=SimpleNamespace(total_tokens=8),
         )
 
@@ -70,6 +71,14 @@ def _read_json(path: Path) -> dict:
         dict: Parsed JSON content.
     """
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _make_httpx_response(*, status_code: int = 429, headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(
+        status_code=status_code,
+        headers=headers or {},
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+    )
 
 
 def test_openai_probe_success(tmp_path, monkeypatch):
@@ -95,8 +104,8 @@ def test_openai_probe_success(tmp_path, monkeypatch):
     metrics_text = (artifacts_dir / "metrics.prom").read_text(encoding="utf-8")
 
     assert report["status"] == "success"
-    assert report["chat"]["finish_reason"] == "stop"
-    assert report["embedding"]["vector_length"] == 1536
+    assert report["chat"]["finish_reason"] is None
+    assert report["embedding"]["vector_length"] == 1024
     assert report["settings"]["chat_override"] is False
     assert 'graphrag_openai_chat_latency_ms_bucket' in metrics_text
     assert 'le="100.0"' in metrics_text
@@ -211,11 +220,11 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
             super().__init__()
             self.chat_attempts = 0
 
-        def _chat(self, **kwargs):
+        def _response(self, **kwargs):
             """
             Simulates intermittent rate limiting for tests by raising a RateLimitError on the first two calls.
             
-            On the first two invocations this method raises openai_client.RateLimitError configured to mimic an HTTP 429 response (including a Retry-After header). On subsequent invocations it delegates to and returns the superclass `_chat` result.
+            On the first two invocations this method raises openai_client.RateLimitError configured to mimic an HTTP 429 response (including a Retry-After header). On subsequent invocations it delegates to and returns the superclass `_response` result.
             
             Returns:
                 The chat response returned by the superclass `_chat`.
@@ -225,13 +234,9 @@ def test_openai_probe_rate_limit_retries(tmp_path, monkeypatch):
             """
             self.chat_attempts += 1
             if self.chat_attempts < 3:
-                response = SimpleNamespace(
-                    request=SimpleNamespace(),
-                    status_code=429,
-                    headers={"Retry-After": "1", "retry-after": "1"},
-                )
+                response = _make_httpx_response(headers={"Retry-After": "1", "retry-after": "1"})
                 raise openai_client.RateLimitError("slow down", response=response, body={})
-            return super()._chat(**kwargs)
+            return super()._response(**kwargs)
 
     sleeps: list[float] = []
     root = tmp_path / "repo"
@@ -262,7 +267,7 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("GRAPH_RAG_ACTOR", "pytest-actor")
 
     class AlwaysRateLimited(HappyClient):
-        def _chat(self, **kwargs):
+        def _response(self, **kwargs):
             """
             Simulate a chat API call that always raises an OpenAI rate-limit error.
             
@@ -271,11 +276,7 @@ def test_openai_probe_rate_limit_failure(tmp_path, monkeypatch):
             Raises:
                 openai_client.RateLimitError: Raised with message "token budget exceeded"; the attached response has status_code 429 and empty headers, and an empty `body` dict.
             """
-            response = SimpleNamespace(
-                request=SimpleNamespace(),
-                status_code=429,
-                headers={},
-            )
+            response = _make_httpx_response(headers={})
             raise openai_client.RateLimitError("token budget exceeded", response=response, body={})
 
     root = tmp_path / "repo"

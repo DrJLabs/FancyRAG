@@ -12,7 +12,7 @@ from fastmcp.server.auth import AuthProvider
 from fastmcp.server.auth.providers.google import GoogleProvider
 from neo4j import GraphDatabase, RoutingControl
 from neo4j import Driver
-from neo4j.exceptions import Neo4jError
+from neo4j.exceptions import DriverError, Neo4jError
 from neo4j.graph import Node
 from neo4j_graphrag.retrievers import HybridCypherRetriever
 
@@ -122,7 +122,7 @@ def _vector_scores(
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Neo4jError as error:
+    except (Neo4jError, DriverError) as error:
         logger.warning(
             "scores.vector.failed",
             extra={"error": type(error).__name__},
@@ -151,7 +151,7 @@ def _fulltext_scores(
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Neo4jError as error:
+    except (Neo4jError, DriverError) as error:
         logger.warning(
             "scores.fulltext.failed",
             extra={"error": type(error).__name__},
@@ -195,12 +195,18 @@ def search_sync(
         text_value = record.get("text")
         if not text_value and node is not None:
             text_value = node.get("text")
+        semantic_nodes = record.get("semantic_nodes", [])
+        semantic_relationships = record.get("semantic_relationships", [])
 
         items.append(
             {
                 "text": text_value or "",
                 "metadata": metadata,
                 "score": float(record.get("score", 0.0)),
+                "semantic_nodes": list(semantic_nodes) if semantic_nodes else [],
+                "semantic_relationships": list(semantic_relationships)
+                if semantic_relationships
+                else [],
                 "score_vector": float(vector_scores.get(element_id, 0.0))
                 if element_id
                 else 0.0,

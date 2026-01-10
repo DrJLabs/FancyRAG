@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
-_DEFAULT_EMBEDDING_DIMENSIONS = 1536
+_DEFAULT_EMBEDDING_DIMENSIONS = 1024
 
 
 class APIError(Exception):
@@ -65,6 +65,16 @@ class _EmbeddingUsage:
     total_tokens: int
 
 
+@dataclass
+class _ResponseUsage:
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
 class _ChatCompletions:
     """Stubbed chat completions interface."""
 
@@ -98,6 +108,39 @@ class _Chat:
         self.completions = _ChatCompletions()
 
 
+class _Responses:
+    """Stubbed responses interface."""
+
+    def create(
+        self,
+        *,
+        model: str,
+        input: Any,
+        temperature: float,
+        max_output_tokens: int,
+        **_: Any,
+    ) -> Any:
+        if isinstance(input, Sequence) and not isinstance(input, str):
+            last = input[-1]
+            if isinstance(last, Mapping):
+                last_content = last.get("content", "")
+            else:
+                last_content = getattr(last, "content", "")
+        else:
+            last_content = str(input)
+        content = f"Stubbed response for: {last_content}".strip()
+        usage = _ResponseUsage(
+            input_tokens=max(len(str(input).split()), 1),
+            output_tokens=min(max_output_tokens, 12),
+        )
+        return SimpleNamespace(
+            id="stub-response",
+            model=model,
+            usage=usage,
+            output_text=content,
+        )
+
+
 class _Embeddings:
     """Stubbed embeddings interface."""
 
@@ -117,6 +160,7 @@ class OpenAI:
     def __init__(self, *, base_url: str | None = None, **_: Any) -> None:
         self.base_url = base_url
         self.chat = _Chat()
+        self.responses = _Responses()
         self.embeddings = _Embeddings()
 
 

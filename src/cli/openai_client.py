@@ -131,25 +131,29 @@ class SharedOpenAIClient:
         self,
         *,
         messages: Sequence[Mapping[str, str]],
-        temperature: float = 0.0,
+        temperature: Optional[float] = None,
         max_tokens: int = 256,
         **extra_params: Any,
     ) -> ChatResult:
-        """Execute a chat completion with retry and fallback guardrails."""
+        """Execute a responses API request with retry and fallback guardrails."""
 
         model = self._settings.chat_model
         fallback_used = model in FALLBACK_CHAT_MODELS
 
         def _run(model_name: str) -> tuple[Any, float]:
+            params: Dict[str, Any] = {
+                "model": model_name,
+                "input": list(messages),
+                "max_output_tokens": max_tokens,
+            }
+            params.update(extra_params)
+            if temperature is not None and not model_name.startswith("gpt-5"):
+                params["temperature"] = temperature
+            if "reasoning" not in params:
+                params["reasoning"] = {"effort": "minimal"}
             return self._execute_with_backoff(
-                lambda: self._client.chat.completions.create(
-                    model=model_name,
-                    messages=list(messages),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **extra_params,
-                ),
-                description=f"chat completion ({model_name})",
+                lambda: self._client.responses.create(**params),
+                description=f"responses create ({model_name})",
             )
 
         try:
@@ -372,8 +376,18 @@ def _usage_value(usage: Any, attr: str) -> int:
         return 0
     if isinstance(usage, Mapping):
         value = usage.get(attr)
+        if value is None:
+            if attr == "prompt_tokens":
+                value = usage.get("input_tokens")
+            elif attr == "completion_tokens":
+                value = usage.get("output_tokens")
     else:
         value = getattr(usage, attr, None)
+        if value is None:
+            if attr == "prompt_tokens":
+                value = getattr(usage, "input_tokens", None)
+            elif attr == "completion_tokens":
+                value = getattr(usage, "output_tokens", None)
     return int(value or 0)
 
 

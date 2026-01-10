@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from types import SimpleNamespace
 
@@ -8,6 +9,14 @@ from cli.telemetry import create_metrics
 from config.settings import OpenAISettings
 
 SLOW_DOWN_MESSAGE = "slow down"
+
+
+def _make_httpx_response(*, status_code: int = 429, headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(
+        status_code=status_code,
+        headers=headers or {},
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+    )
 
 
 class FakeClock:
@@ -31,22 +40,32 @@ class StubEmbeddingResponse(SimpleNamespace):
 
 class StubOpenAIClient:
     def __init__(self) -> None:
-        self.chat_calls: list[dict] = []
+        self.response_calls: list[dict] = []
         self.embedding_calls: list[dict] = []
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
+        self.responses = SimpleNamespace(create=self._response)
         self.embeddings = SimpleNamespace(create=self._embedding)
 
-    def _chat(self, **kwargs):
-        self.chat_calls.append(kwargs)
+    def _response(self, **kwargs):
+        self.response_calls.append(kwargs)
+        input_payload = kwargs.get("input")
+        if isinstance(input_payload, list) and input_payload:
+            last_message = input_payload[-1]
+            if isinstance(last_message, dict):
+                last_content = last_message.get("content", "")
+            else:
+                last_content = getattr(last_message, "content", "")
+        else:
+            last_content = input_payload or ""
+        content = f"Stubbed response for: {last_content}".strip()
         return StubChatResponse(
-            usage=SimpleNamespace(prompt_tokens=4, completion_tokens=2),
-            choices=[SimpleNamespace(finish_reason="stop")],
+            usage=SimpleNamespace(input_tokens=4, output_tokens=2),
+            output_text=content,
         )
 
     def _embedding(self, **kwargs):
         self.embedding_calls.append(kwargs)
         return StubEmbeddingResponse(
-            data=[SimpleNamespace(embedding=[0.0] * 1536)],
+            data=[SimpleNamespace(embedding=[0.0] * 1024)],
             usage=SimpleNamespace(total_tokens=6),
         )
 
@@ -65,7 +84,7 @@ class FlakyChatClient(StubOpenAIClient):
         super().__init__()
         self._failures = failures
 
-    def _chat(self, **kwargs):
+    def _response(self, **kwargs):
         """
         Simulate a chat request that may fail with rate limiting for a configured number of initial calls.
 
@@ -80,9 +99,9 @@ class FlakyChatClient(StubOpenAIClient):
         if self._failures > 0:
             self._failures -= 1
             headers = {"Retry-After": "1", "retry-after": "1"}
-            response = SimpleNamespace(headers=headers, request=SimpleNamespace(), status_code=429)
+            response = _make_httpx_response(headers=headers)
             raise RateLimitError(SLOW_DOWN_MESSAGE, response=response, body={})
-        return super()._chat(**kwargs)
+        return super()._response(**kwargs)
 
 
 class SequencedRateLimitClient(StubOpenAIClient):
@@ -102,7 +121,7 @@ class SequencedRateLimitClient(StubOpenAIClient):
         self._always_fail = always_fail
         self._attempts = 0
 
-    def _chat(self, **kwargs):
+    def _response(self, **kwargs):
         """
         Simulate a chat call that enforces rate-limit responses based on a configured Retry-After sequence.
 
@@ -120,13 +139,11 @@ class SequencedRateLimitClient(StubOpenAIClient):
             header_value = self._retry_after[index]
         self._attempts += 1
         if self._always_fail or self._attempts <= len(self._retry_after):
-            response = SimpleNamespace(
+            response = _make_httpx_response(
                 headers={"Retry-After": header_value, "retry-after": header_value},
-                request=SimpleNamespace(),
-                status_code=429,
             )
             raise RateLimitError(SLOW_DOWN_MESSAGE, response=response, body={})
-        return super()._chat(**kwargs)
+        return super()._response(**kwargs)
 
 
 def _make_client(env: dict[str, str], *, client) -> SharedOpenAIClient:
@@ -200,7 +217,7 @@ def test_chat_completion_uses_default_model():
     assert result.fallback_used is False
     assert result.prompt_tokens == 4
     assert result.completion_tokens == 2
-    assert stub.chat_calls[0]["model"] == result.model
+    assert stub.response_calls[0]["model"] == result.model
 
 
 def test_chat_completion_marks_fallback_when_override():
@@ -210,7 +227,7 @@ def test_chat_completion_marks_fallback_when_override():
     result = client.chat_completion(messages=[{"role": "user", "content": "ping"}])
 
     assert result.fallback_used is True
-    assert stub.chat_calls[0]["model"] == "gpt-4o-mini"
+    assert stub.response_calls[0]["model"] == "gpt-4o-mini"
 
 
 def test_embedding_dimension_mismatch_raises():
@@ -318,7 +335,7 @@ def test_embedding_returns_expected_result_fields():
     
     assert result.model == "text-embedding-3-small"
     assert isinstance(result.latency_ms, float)
-    assert len(result.vector) == 1536
+    assert len(result.vector) == 1024
     assert result.tokens_consumed == 6
     assert result.raw_response is not None
 
@@ -329,8 +346,8 @@ def test_embedding_with_override_dimensions():
     client = _make_client({}, client=stub)
     
     # Should work with matching dimensions
-    result = client.embedding(input_text="test", override_dimensions=1536)
-    assert len(result.vector) == 1536
+    result = client.embedding(input_text="test", override_dimensions=1024)
+    assert len(result.vector) == 1024
 
 
 def test_embedding_dimension_mismatch_with_override():
@@ -338,7 +355,7 @@ def test_embedding_dimension_mismatch_with_override():
     client = _make_client({}, client=DimensionMismatchClient())
     
     with pytest.raises(OpenAIClientError) as exc:
-        client.embedding(input_text="test", override_dimensions=1536)
+        client.embedding(input_text="test", override_dimensions=1024)
     
     assert "Embedding length" in str(exc.value)
 
@@ -362,7 +379,7 @@ def test_embedding_no_data_raises_error():
 def test_chat_completion_passes_extra_params():
     """Test chat_completion forwards extra parameters."""
     stub = StubOpenAIClient()
-    client = _make_client({}, client=stub)
+    client = _make_client({"OPENAI_MODEL": "gpt-4o-mini"}, client=stub)
     
     client.chat_completion(
         messages=[{"role": "user", "content": "test"}],
@@ -372,10 +389,40 @@ def test_chat_completion_passes_extra_params():
         custom_param="value"
     )
     
-    assert stub.chat_calls[0]["temperature"] == 0.7
-    assert stub.chat_calls[0]["max_tokens"] == 100
-    assert stub.chat_calls[0]["top_p"] == 0.9
-    assert stub.chat_calls[0]["custom_param"] == "value"
+    assert stub.response_calls[0]["temperature"] == 0.7
+    assert stub.response_calls[0]["max_output_tokens"] == 100
+    assert stub.response_calls[0]["top_p"] == 0.9
+    assert stub.response_calls[0]["custom_param"] == "value"
+    assert stub.response_calls[0]["reasoning"] == {"effort": "minimal"}
+
+
+def test_chat_completion_omits_temperature_when_none():
+    """Test chat_completion does not include temperature when unset."""
+    stub = StubOpenAIClient()
+    client = _make_client({}, client=stub)
+
+    client.chat_completion(
+        messages=[{"role": "user", "content": "test"}],
+        temperature=None,
+        max_tokens=100,
+    )
+
+    assert "temperature" not in stub.response_calls[0]
+
+
+def test_chat_completion_omits_temperature_for_gpt5_models():
+    """Test chat_completion omits temperature for gpt-5* models."""
+    stub = StubOpenAIClient()
+    env = {"OPENAI_MODEL": "gpt-5-mini"}
+    client = _make_client(env, client=stub)
+
+    client.chat_completion(
+        messages=[{"role": "user", "content": "test"}],
+        temperature=0.7,
+        max_tokens=100,
+    )
+
+    assert "temperature" not in stub.response_calls[0]
 
 
 def test_embedding_passes_extra_params():
@@ -433,7 +480,7 @@ def test_is_retryable_recognizes_rate_limit():
     """Test _is_retryable identifies rate limit errors."""
     from cli.openai_client import SharedOpenAIClient
 
-    error = RateLimitError("rate limited", response=SimpleNamespace())
+    error = RateLimitError("rate limited", response=_make_httpx_response(), body={})
     assert SharedOpenAIClient._is_retryable(error) is True
 
 
@@ -442,7 +489,7 @@ def test_is_retryable_recognizes_retryable_status_codes():
     from cli.openai_client import APIStatusError, SharedOpenAIClient
 
     for code in [408, 409, 425, 429, 500, 502, 503, 504]:
-        error = APIStatusError("error", status_code=code, response=None)
+        error = APIStatusError("error", response=_make_httpx_response(status_code=code), body={})
         assert SharedOpenAIClient._is_retryable(error) is True
 
 
@@ -451,7 +498,7 @@ def test_is_retryable_rejects_non_retryable_codes():
     from cli.openai_client import APIStatusError, SharedOpenAIClient
 
     for code in [400, 401, 403, 404]:
-        error = APIStatusError("error", status_code=code, response=None)
+        error = APIStatusError("error", response=_make_httpx_response(status_code=code), body={})
         assert SharedOpenAIClient._is_retryable(error) is False
 
 
@@ -466,8 +513,8 @@ def test_next_delay_uses_retry_after_header():
         clock=FakeClock(),
     )
     
-    response = SimpleNamespace(headers={"retry-after": "5"})
-    error = RateLimitError("rate limited", response=response)
+    response = _make_httpx_response(headers={"retry-after": "5"})
+    error = RateLimitError("rate limited", response=response, body={})
     
     sleep_for, _ = client._next_delay(1.0, error)
     assert sleep_for == 5.0
@@ -482,8 +529,8 @@ def test_next_delay_with_http_date_header():
     future = datetime.now(timezone.utc) + timedelta(seconds=5)
     date_str = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-    response = SimpleNamespace(headers={"retry-after": date_str})
-    error = RateLimitError("rate limited", response=response)
+    response = _make_httpx_response(headers={"retry-after": date_str})
+    error = RateLimitError("rate limited", response=response, body={})
 
     seconds = _extract_retry_after_seconds(error)
     assert seconds is not None
@@ -501,7 +548,7 @@ def test_next_delay_doubles_when_no_retry_after():
         clock=FakeClock(),
     )
     
-    error = RateLimitError("rate limited", response=SimpleNamespace(headers={}))
+    error = RateLimitError("rate limited", response=_make_httpx_response(headers={}), body={})
 
     sleep_for, next_delay = client._next_delay(1.0, error)
     assert sleep_for == 1.0
@@ -574,8 +621,8 @@ def test_extract_retry_after_invalid_date():
     """Test _extract_retry_after_seconds handles invalid date strings."""
     from cli.openai_client import _extract_retry_after_seconds
 
-    response = SimpleNamespace(headers={"retry-after": "not a valid date"})
-    error = RateLimitError("error", response=response)
+    response = _make_httpx_response(headers={"retry-after": "not a valid date"})
+    error = RateLimitError("error", response=response, body={})
 
     result = _extract_retry_after_seconds(error)
     assert result is None
@@ -585,8 +632,8 @@ def test_extract_retry_after_missing_header():
     """Test _extract_retry_after_seconds returns None when header missing."""
     from cli.openai_client import _extract_retry_after_seconds
 
-    response = SimpleNamespace(headers={})
-    error = RateLimitError("error", response=response)
+    response = _make_httpx_response(headers={})
+    error = RateLimitError("error", response=response, body={})
 
     result = _extract_retry_after_seconds(error)
     assert result is None
@@ -596,8 +643,8 @@ def test_extract_retry_after_empty_value():
     """Test _extract_retry_after_seconds handles empty header value."""
     from cli.openai_client import _extract_retry_after_seconds
 
-    response = SimpleNamespace(headers={"retry-after": "   "})
-    error = RateLimitError("error", response=response)
+    response = _make_httpx_response(headers={"retry-after": "   "})
+    error = RateLimitError("error", response=response, body={})
 
     result = _extract_retry_after_seconds(error)
     assert result is None
@@ -611,8 +658,8 @@ def test_extract_retry_after_negative_seconds():
     past = datetime.now(timezone.utc) - timedelta(seconds=10)
     date_str = past.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-    response = SimpleNamespace(headers={"retry-after": date_str})
-    error = RateLimitError("error", response=response)
+    response = _make_httpx_response(headers={"retry-after": date_str})
+    error = RateLimitError("error", response=response, body={})
 
     result = _extract_retry_after_seconds(error)
     assert result == 0.0

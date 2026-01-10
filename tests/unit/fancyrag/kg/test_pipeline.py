@@ -15,7 +15,7 @@ from fancyrag.splitters import CachingFixedSizeSplitter
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
+    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:10247")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "secret")
 
@@ -26,9 +26,9 @@ def _stub_settings(monkeypatch):
         "OpenAISettings",
         types.SimpleNamespace(
             load=lambda actor: types.SimpleNamespace(
-                chat_model="gpt-4.1-mini",
+                chat_model="gpt-5-mini",
                 embedding_model="text-embedding-3-small",
-                embedding_dimensions=1536,
+                embedding_dimensions=1024,
                 max_attempts=3,
             )
         ),
@@ -103,6 +103,31 @@ def _stub_pipeline_dependencies(monkeypatch):
         "build_caching_splitter",
         lambda *_a, **_k: DummySplitter(),
     )
+
+
+def test_extract_content_uses_response_output_text():
+    response = types.SimpleNamespace(output_text="Hello from responses API")
+    assert pipeline._extract_content(response) == "Hello from responses API"
+
+
+def test_shared_openai_llm_omits_temperature_for_gpt5_models():
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def chat_completion(self, **kwargs):
+            calls.append(kwargs)
+            return types.SimpleNamespace(
+                raw_response=types.SimpleNamespace(output_text="ok"),
+            )
+
+    settings = types.SimpleNamespace(chat_model="gpt-5-mini", chat_temperature=0.3)
+    llm = pipeline.SharedOpenAILLM(StubClient(), settings)
+
+    response = llm.invoke("hello")
+
+    assert response.content == "ok"
+    assert calls
+    assert "temperature" not in calls[0]
 
 
 def test_shared_client_base_url(monkeypatch, tmp_path, capsys):

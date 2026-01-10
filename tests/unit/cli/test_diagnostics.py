@@ -394,7 +394,7 @@ def test_probe_failure_writes_error_report(tmp_path, monkeypatch):
 
 def test_probe_skip_live_writes_placeholder_report(tmp_path, monkeypatch):
     """Test --skip-live writes placeholder report."""
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5-mini")
     
     rc = diagnostics.run_openai_probe(
         tmp_path,
@@ -416,7 +416,7 @@ def test_probe_skip_live_writes_placeholder_report(tmp_path, monkeypatch):
 def test_chat_summary_from_result_extracts_fields():
     """Test _chat_summary_from_result extracts all ChatResult fields."""
     result = SimpleNamespace(
-        model="gpt-4.1-mini",
+        model="gpt-5-mini",
         fallback_used=False,
         latency_ms=123.45,
         prompt_tokens=10,
@@ -426,7 +426,7 @@ def test_chat_summary_from_result_extracts_fields():
     
     summary = diagnostics._chat_summary_from_result(result)
     
-    assert summary["model"] == "gpt-4.1-mini"
+    assert summary["model"] == "gpt-5-mini"
     assert summary["fallback_used"] is False
     assert summary["latency_ms"] == 123.45
     assert summary["prompt_tokens"] == 10
@@ -438,19 +438,19 @@ def test_embedding_summary_from_result_includes_dimensions():
     """Test _embedding_summary_from_result includes dimension checking."""
     result = SimpleNamespace(
         model="text-embedding-3-small",
-        vector=[0.1] * 1536,
+        vector=[0.1] * 1024,
         latency_ms=50.0,
         tokens_consumed=5
     )
     
     summary = diagnostics._embedding_summary_from_result(
         result,
-        expected_dimensions=1536
+        expected_dimensions=1024
     )
     
     assert summary["model"] == "text-embedding-3-small"
-    assert summary["expected_dimensions"] == 1536
-    assert summary["vector_length"] == 1536
+    assert summary["expected_dimensions"] == 1024
+    assert summary["vector_length"] == 1024
     assert summary["latency_ms"] == 50.0
     assert summary["tokens_consumed"] == 5
 

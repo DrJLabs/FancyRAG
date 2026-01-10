@@ -996,6 +996,28 @@ def _extract_content(raw_response: Any) -> str:
     elif hasattr(raw_response, "to_dict"):
         payload = raw_response.to_dict()
 
+    output_text = None
+    if hasattr(raw_response, "output_text"):
+        output_text = getattr(raw_response, "output_text")
+    if output_text is None and isinstance(payload, Mapping):
+        output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    output_items = payload.get("output") if isinstance(payload, Mapping) else None
+    if isinstance(output_items, list):
+        for item in output_items:
+            if isinstance(item, Mapping):
+                if isinstance(item.get("text"), str):
+                    return item["text"]
+                content = item.get("content")
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    for chunk in content:
+                        if isinstance(chunk, Mapping) and isinstance(chunk.get("text"), str):
+                            return chunk["text"]
+
     if OpenAIChatCompletion is not None:
         if isinstance(raw_response, OpenAIChatCompletion):
             text = _content_from_completion(raw_response)
@@ -1076,7 +1098,7 @@ class SharedOpenAILLM(LLMInterface):
         """
         super().__init__(
             model_name=settings.chat_model,
-            model_params={"temperature": 0.0, "max_tokens": 512},
+            model_params={"temperature": settings.chat_temperature, "max_tokens": 512},
         )
         self._client = client
 
@@ -1127,10 +1149,11 @@ class SharedOpenAILLM(LLMInterface):
         """
         messages = self._build_messages(input, message_history, system_instruction)
         try:
-            result = self._client.chat_completion(
-                messages=messages,
-                temperature=self.model_params.get("temperature", 0.0),
-            )
+            params = {"messages": messages}
+            temperature = self.model_params.get("temperature")
+            if temperature is not None and not self.model_name.startswith("gpt-5"):
+                params["temperature"] = temperature
+            result = self._client.chat_completion(**params)
         except OpenAIClientError as exc:
             raise LLMGenerationError(str(exc)) from exc
 

@@ -21,26 +21,39 @@ REQUIRED_KEYS = {
     "NEO4J_URI",
     "NEO4J_USERNAME",
     "NEO4J_PASSWORD",
-    "QDRANT_URL",
-    "QDRANT_API_KEY",
 }
 
 SAFE_PLACEHOLDER_PREFIX = "YOUR_"
 ALLOWED_NON_PLACEHOLDER_VALUES = {
-    "gpt-4.1-mini",
+    "gpt-5-mini",
     "gpt-4o-mini",
     "text-embedding-3-small",
+    "text-embedding-3-large",
     "neo4j",
     "local-neo4j",
     "bolt://localhost:7687",
     "localhost:7687",
     "localhost:7474",
+    "http://localhost:20010/v1",
     "http://localhost:6333",
+    "http://localhost:8080",
+    "0.0.0.0",
     "",
+    "0.3",
+    "10",
+    "3",
     "7474",
     "7687",
+    "8080",
     "6334",
     "6333",
+    "text_embeddings",
+    "chunk_text_fulltext",
+    "Chunk",
+    "text",
+    "/mcp",
+    "openid,https://www.googleapis.com/auth/userinfo.email",
+    "queries/hybrid_retrieval.cypher",
 }
 
 
@@ -89,11 +102,11 @@ def test_env_template_models_document_optional_upgrade():
     """
     Verify the environment template documents the expected default and optional fallback OpenAI models.
     
-    Asserts that the ENV_TEMPLATE's OPENAI_MODEL default includes "gpt-4.1-mini" and that the template mentions "gpt-4o-mini" as an optional fallback.
+    Asserts that the ENV_TEMPLATE's OPENAI_MODEL default includes "gpt-5-mini" and that the template mentions "gpt-4o-mini" as an optional fallback.
     """
     contents = ENV_TEMPLATE.read_text()
     model_line = next((line for line in contents.splitlines() if line.startswith("OPENAI_MODEL")), "")
-    assert "gpt-4.1-mini" in model_line, "Default model should be gpt-4.1-mini"
+    assert "gpt-5-mini" in model_line, "Default model should be gpt-5-mini"
     assert re.search(r"gpt-4o-mini", contents), "Template should document gpt-4o-mini fallback"
 
 
@@ -108,23 +121,34 @@ def test_env_template_endpoint_guidance():
     """
     keys = _load_template_dict()
     neo4j_uri = _sanitize_value(keys["NEO4J_URI"])
-    qdrant_url = _sanitize_value(keys["QDRANT_URL"])
     assert neo4j_uri.startswith((
         "bolt://",
         "bolt+s://",
         "neo4j://",
         "neo4j+s://",
     )), "NEO4J_URI should reference Bolt or Neo4j scheme"
-    assert qdrant_url.startswith("https://") or qdrant_url.startswith(
-        "http://localhost:"
-    ), "QDRANT_URL should reference HTTPS endpoint or explicit local override"
+    qdrant_url = keys.get("QDRANT_URL")
+    if qdrant_url:
+        qdrant_url = _sanitize_value(qdrant_url)
+        assert qdrant_url.startswith("https://") or qdrant_url.startswith(
+            "http://localhost:"
+        ), "QDRANT_URL should reference HTTPS endpoint or explicit local override"
+
+
+def test_env_template_includes_optional_qdrant_keys():
+    """
+    Ensure Qdrant keys are present but commented out as optional.
+    """
+    contents = ENV_TEMPLATE.read_text()
+    assert re.search(r"^#\s*QDRANT_URL=.*optional", contents, re.MULTILINE)
+    assert re.search(r"^#\s*QDRANT_API_KEY=.*optional", contents, re.MULTILINE)
 
 
 def test_documentation_references_env_template_workflow():
     """
     Verify the documentation describes the env template workflow, model guidance, and secret-commit warnings.
     
-    Asserts that the overview instructs copying the env template (contains "copy" or "cp " and both ".env.example" and ".env"), documents both "gpt-4o-mini" and "gpt-4.1-mini" as baseline/fallback models, and warns against committing secrets (contains "never commit" or "do not commit").
+    Asserts that the overview instructs copying the env template (contains "copy" or "cp " and both ".env.example" and ".env"), documents both "gpt-4o-mini" and "gpt-5-mini" as baseline/fallback models, and warns against committing secrets (contains "never commit" or "do not commit").
     """
     contents = DOC_OVERVIEW.read_text().lower()
     assert (
@@ -132,5 +156,5 @@ def test_documentation_references_env_template_workflow():
         and ".env.example" in contents
         and ".env" in contents
     ), "Overview must instruct copying env template"
-    assert "gpt-4o-mini" in contents and "gpt-4.1-mini" in contents, "Docs should document baseline and fallback models"
+    assert "gpt-4o-mini" in contents and "gpt-5-mini" in contents, "Docs should document baseline and fallback models"
     assert ("never commit" in contents) or ("do not commit" in contents), "Docs should warn against committing secrets"

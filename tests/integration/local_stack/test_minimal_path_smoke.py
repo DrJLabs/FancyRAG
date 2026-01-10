@@ -119,7 +119,7 @@ def test_minimal_path_smoke() -> None:
 
     neo4j_host = os.environ.get("NEO4J_HOST", "localhost")
     neo4j_http_host = os.environ.get("NEO4J_HTTP_HOST", neo4j_host)
-    neo4j_bolt_port = os.environ.get("NEO4J_BOLT_PORT", "7687")
+    neo4j_bolt_port = os.environ.get("NEO4J_BOLT_PORT", "10247")
     neo4j_http_port = os.environ.get("NEO4J_HTTP_PORT", "7474")
 
     env["NEO4J_HOST"] = neo4j_host
@@ -189,7 +189,7 @@ def test_minimal_path_smoke() -> None:
             "--embedding-property",
             "embedding",
             "--dimensions",
-            "1536",
+            "1024",
             "--similarity",
             "cosine",
             env=env,

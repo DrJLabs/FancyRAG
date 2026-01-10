@@ -19,7 +19,7 @@ The table below defines the approved technologies for the hybrid NeoRAG upgrade.
 
 ## Data & Storage
 - **Neo4j**: Version 5.18 with APOC plugin; hosted via Docker container `neo4j:5.18`.
-- **Vector Index**: `text_embeddings` (cosine, 768 dimensions) built with GraphRAG helper.
+- **Vector Index**: `text_embeddings` (cosine, 1024 dimensions) built with GraphRAG helper.
 - **Full-Text Index**: `chunk_text_fulltext` targeting `Chunk.text`.
 - **Volumes**: Docker volumes `neo4j-data`, `neo4j-logs`, `neo4j-plugins` for persistence.
 

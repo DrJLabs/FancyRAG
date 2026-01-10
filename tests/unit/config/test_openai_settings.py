@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from config.settings import (
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CHAT_TEMPERATURE,
     DEFAULT_BACKOFF_SECONDS,
     DEFAULT_EMBEDDING_DIMENSIONS,
     DEFAULT_EMBEDDING_MODEL,
@@ -20,7 +21,7 @@ from config.settings import (
     "env,expected_model,is_override",
     [
         ({}, DEFAULT_CHAT_MODEL, False),
-        ({"OPENAI_MODEL": "gpt-4.1-mini"}, "gpt-4.1-mini", False),
+        ({"OPENAI_MODEL": "gpt-5-mini"}, "gpt-5-mini", False),
         ({"OPENAI_MODEL": "gpt-4o-mini"}, "gpt-4o-mini", True),
     ],
 )
@@ -98,6 +99,27 @@ def test_backoff_override_validation():
         settings = OpenAISettings.load(env, actor="pytest")
     assert settings.backoff_seconds == pytest.approx(0.75)
     assert any(entry["event"] == "openai.settings.backoff_override" for entry in logs)
+
+
+def test_temperature_override_logs_and_applies():
+    env = {"OPENAI_TEMPERATURE": "0.7"}
+    with capture_logs() as logs:
+        settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.chat_temperature == pytest.approx(0.7)
+    assert any(entry["event"] == "openai.settings.temperature_override" for entry in logs)
+
+
+def test_invalid_temperature_raises():
+    env = {"OPENAI_TEMPERATURE": "hot"}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.invalid_temperature" for entry in logs)
+
+
+def test_temperature_default():
+    settings = OpenAISettings.load({}, actor="pytest")
+    assert settings.chat_temperature == pytest.approx(DEFAULT_CHAT_TEMPERATURE)
 
 
 def test_invalid_backoff_raises():
@@ -325,9 +347,9 @@ def test_settings_embedding_model_strips_whitespace():
 
 def test_settings_chat_model_strips_whitespace():
     """Test chat model value is stripped of whitespace."""
-    env = {"OPENAI_MODEL": "  gpt-4.1-mini  "}
+    env = {"OPENAI_MODEL": "  gpt-5-mini  "}
     settings = OpenAISettings.load(env, actor="pytest")
-    assert settings.chat_model == "gpt-4.1-mini"
+    assert settings.chat_model == "gpt-5-mini"
 
 
 def test_settings_actor_from_env_variable():

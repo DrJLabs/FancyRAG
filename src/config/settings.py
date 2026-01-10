@@ -13,15 +13,16 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 
 logger = get_logger(__name__)
 
-DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+DEFAULT_CHAT_MODEL = "gpt-5-mini"
 FALLBACK_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4o-mini"})
 ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({DEFAULT_CHAT_MODEL, *FALLBACK_CHAT_MODELS})
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-DEFAULT_EMBEDDING_DIMENSIONS = 1536
+DEFAULT_EMBEDDING_DIMENSIONS = 1024
 DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 0.5
 DEFAULT_FALLBACK_ENABLED = True
+DEFAULT_CHAT_TEMPERATURE = 0.3
 
 _ENV_OPENAI_MODEL = "OPENAI_MODEL"
 _ENV_OPENAI_EMBEDDING_MODEL = "OPENAI_EMBEDDING_MODEL"
@@ -30,6 +31,7 @@ _ENV_ACTOR_HINT = "GRAPH_RAG_ACTOR"
 _ENV_OPENAI_MAX_ATTEMPTS = "OPENAI_MAX_ATTEMPTS"
 _ENV_OPENAI_BACKOFF_SECONDS = "OPENAI_BACKOFF_SECONDS"
 _ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
+_ENV_OPENAI_TEMPERATURE = "OPENAI_TEMPERATURE"
 _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
 
@@ -72,6 +74,7 @@ class OpenAISettings(BaseModel):
     max_attempts: int = Field(default=DEFAULT_MAX_RETRY_ATTEMPTS, gt=0)
     backoff_seconds: float = Field(default=DEFAULT_BACKOFF_SECONDS, gt=0)
     enable_fallback: bool = Field(default=DEFAULT_FALLBACK_ENABLED)
+    chat_temperature: float = Field(default=DEFAULT_CHAT_TEMPERATURE, ge=0.0, le=2.0)
     api_base_url: str | None = None
     allow_insecure_base_url: bool = False
 
@@ -221,6 +224,36 @@ class OpenAISettings(BaseModel):
                 default_seconds=DEFAULT_BACKOFF_SECONDS,
             )
 
+        temperature_raw = (source.get(_ENV_OPENAI_TEMPERATURE) or "").strip()
+        chat_temperature = DEFAULT_CHAT_TEMPERATURE
+        if temperature_raw:
+            try:
+                chat_temperature = float(temperature_raw)
+            except ValueError as exc:  # pragma: no cover - invalid atof path
+                logger.error(
+                    "openai.settings.invalid_temperature",
+                    actor=actor_name,
+                    supplied=temperature_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_TEMPERATURE} value '{temperature_raw}'. Provide a number between 0 and 2."
+                ) from exc
+            if not 0.0 <= chat_temperature <= 2.0:
+                logger.error(
+                    "openai.settings.invalid_temperature",
+                    actor=actor_name,
+                    supplied=temperature_raw,
+                )
+                raise ValueError(
+                    f"{_ENV_OPENAI_TEMPERATURE} must be between 0 and 2; received {chat_temperature}."
+                )
+            logger.info(
+                "openai.settings.temperature_override",
+                actor=actor_name,
+                temperature=chat_temperature,
+                default_temperature=DEFAULT_CHAT_TEMPERATURE,
+            )
+
         fallback_raw = (source.get(_ENV_OPENAI_ENABLE_FALLBACK) or "").strip()
         enable_fallback = DEFAULT_FALLBACK_ENABLED
         if fallback_raw:
@@ -311,6 +344,7 @@ class OpenAISettings(BaseModel):
             max_attempts=max_attempts,
             backoff_seconds=backoff_seconds,
             enable_fallback=enable_fallback,
+            chat_temperature=chat_temperature,
             api_base_url=api_base_url,
             allow_insecure_base_url=allow_insecure,
         )
@@ -494,6 +528,7 @@ class FancyRAGSettings(BaseModel):
             "OPENAI_MAX_ATTEMPTS": str(self.openai.max_attempts),
             "OPENAI_BACKOFF_SECONDS": str(self.openai.backoff_seconds),
             "OPENAI_ENABLE_FALLBACK": "true" if self.openai.enable_fallback else "false",
+            "OPENAI_TEMPERATURE": str(self.openai.chat_temperature),
         }
         if self.openai.embedding_dimensions_override is not None:
             env["OPENAI_EMBEDDING_DIMENSIONS"] = str(self.openai.embedding_dimensions_override)
@@ -538,4 +573,5 @@ __all__ = [
     "DEFAULT_MAX_RETRY_ATTEMPTS",
     "DEFAULT_BACKOFF_SECONDS",
     "DEFAULT_FALLBACK_ENABLED",
+    "DEFAULT_CHAT_TEMPERATURE",
 ]

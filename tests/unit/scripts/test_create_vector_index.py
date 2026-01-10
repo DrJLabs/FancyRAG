@@ -116,12 +116,12 @@ def _ensure_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NEO4J_URI", "bolt://example:7687")
+    monkeypatch.setenv("NEO4J_URI", "bolt://example:10247")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
 
 
-def _match_record(name: str, label: str, prop: str, *, dimensions: int = 1536, similarity: str = "cosine") -> FakeRecord:
+def _match_record(name: str, label: str, prop: str, *, dimensions: int = 1024, similarity: str = "cosine") -> FakeRecord:
     return FakeRecord(
         {
             "name": name,
@@ -152,7 +152,7 @@ def test_creates_index_when_missing(tmp_path, monkeypatch: pytest.MonkeyPatch, e
         assert name == "chunks_vec"
         assert label == "Chunk"
         assert embedding_property == "embedding"
-        assert dimensions == 1536
+        assert dimensions == 1024
         assert similarity_fn == "cosine"
         assert neo4j_database is None
 
@@ -190,7 +190,7 @@ def test_skips_when_existing_matches(tmp_path, monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_mismatch_raises(monkeypatch: pytest.MonkeyPatch, env) -> None:
-    monkeypatch.setattr(civ, "retrieve_vector_index_info", lambda *_args, **_kwargs: _match_record("chunks_vec", "Chunk", "embedding", dimensions=1024))
+    monkeypatch.setattr(civ, "retrieve_vector_index_info", lambda *_args, **_kwargs: _match_record("chunks_vec", "Chunk", "embedding", dimensions=2048))
     monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
 
     with pytest.raises(civ.VectorIndexMismatchError):
@@ -219,7 +219,7 @@ def test_run_invokes_get_settings_once(monkeypatch: pytest.MonkeyPatch, env) -> 
     calls = {"count": 0}
 
     class Neo4jStub:
-        uri = "bolt://localhost:7687"
+        uri = "bolt://localhost:10247"
 
         @staticmethod
         def auth() -> tuple[str, str]:
@@ -295,17 +295,17 @@ def test_custom_dimensions(tmp_path, monkeypatch: pytest.MonkeyPatch, env) -> No
         calls["retrieve"] += 1
         if calls["retrieve"] == 1:
             return None
-        return _match_record("chunks_vec", "Chunk", "embedding", dimensions=768)
+        return _match_record("chunks_vec", "Chunk", "embedding", dimensions=2048)
 
     def fake_create(driver, name, label, embedding_property, dimensions, similarity_fn, neo4j_database=None):
         calls["create"] += 1
-        assert dimensions == 768
+        assert dimensions == 2048
 
     monkeypatch.setattr(civ, "retrieve_vector_index_info", fake_retrieve)
     monkeypatch.setattr(civ, "create_vector_index", fake_create)
     monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
 
-    log = civ.run(["--log-path", str(log_file), "--dimensions", "768"])
+    log = civ.run(["--log-path", str(log_file), "--dimensions", "2048"])
 
     assert log["status"] == "created"
 
@@ -346,7 +346,7 @@ def test_missing_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_partial_missing_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that partially missing environment variables raise appropriate errors."""
-    monkeypatch.setenv("NEO4J_URI", "bolt://example:7687")
+    monkeypatch.setenv("NEO4J_URI", "bolt://example:10247")
     monkeypatch.delenv("NEO4J_USERNAME", raising=False)
     monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
 
@@ -591,7 +591,7 @@ def test_match_record_default_parameters() -> None:
     assert data["name"] == "test_name"
     assert data["labelsOrTypes"] == ["test_label"]
     assert data["properties"] == ["test_prop"]
-    assert data["options"]["indexConfig"]["vector.dimensions"] == 1536
+    assert data["options"]["indexConfig"]["vector.dimensions"] == 1024
     assert data["options"]["indexConfig"]["vector.similarity_function"] == "cosine"
 
 
@@ -666,7 +666,7 @@ def test_invalid_uri_format(monkeypatch: pytest.MonkeyPatch, env) -> None:
 
 def test_empty_username(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test handling of empty username."""
-    monkeypatch.setenv("NEO4J_URI", "bolt://example:7687")
+    monkeypatch.setenv("NEO4J_URI", "bolt://example:10247")
     monkeypatch.setenv("NEO4J_USERNAME", "")
     monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
     monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
@@ -677,7 +677,7 @@ def test_empty_username(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_empty_password(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test handling of empty password."""
-    monkeypatch.setenv("NEO4J_URI", "bolt://example:7687")
+    monkeypatch.setenv("NEO4J_URI", "bolt://example:10247")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "")
     monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())

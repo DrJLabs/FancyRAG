@@ -12,7 +12,7 @@ import platform
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
@@ -103,7 +103,7 @@ def _compute_repo_root(explicit: Optional[Path] = None) -> Path:
     return Path.cwd().resolve()
 
 
-def _print(level: str, message: str, *, file = sys.stdout) -> None:
+def _print(level: str, message: str, *, file = None) -> None:
     """
     Prints a sanitized, level-prefixed log line to the given file-like object.
     
@@ -113,7 +113,13 @@ def _print(level: str, message: str, *, file = sys.stdout) -> None:
     	file: A file-like object with a write() method to receive the output (defaults to sys.stdout).
     """
     text = sanitize_text(message)
-    print(f"[{level}] {text}", file=file)
+    target = file or sys.stdout
+    print(f"[{level}] {text}", file=target, flush=True)
+
+
+def _mask_base_url(value: str | None) -> str | None:
+    """Compatibility wrapper for legacy diagnostics tests."""
+    return mask_base_url(value)
 
 
 def _load_requirements_versions(lock_path: Path) -> Dict[str, str]:
@@ -385,7 +391,9 @@ def run_openai_probe(
         )
         return _record_failure(failure)
 
-    settings = replace(settings, max_attempts=max_attempts, backoff_seconds=base_delay)
+    settings = settings.model_copy(
+        update={"max_attempts": max_attempts, "backoff_seconds": base_delay}
+    )
 
     if skip_live:
         report = {

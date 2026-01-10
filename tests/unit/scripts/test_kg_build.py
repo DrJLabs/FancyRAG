@@ -286,7 +286,7 @@ def test_run_pipeline_success(tmp_path, monkeypatch, env) -> None:  # noqa: ARG0
     created_drivers: list[FakeDriver] = []
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -423,7 +423,7 @@ def test_run_skips_reset_without_flag(tmp_path, monkeypatch, env) -> None:  # no
     created_drivers: list[FakeDriver] = []
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -505,7 +505,7 @@ def test_run_with_semantic_enrichment(tmp_path, monkeypatch, env) -> None:  # no
     created_drivers: list[FakeDriver] = []
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -639,7 +639,7 @@ def test_run_handles_openai_failure(tmp_path, monkeypatch, env):  # noqa: ARG001
             raise OpenAIClientError("boom", remediation="retry later")
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -683,7 +683,7 @@ def test_run_fails_on_qa_threshold(tmp_path, monkeypatch, env) -> None:  # noqa:
 
     fake_client = FakeSharedClient()
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -850,7 +850,7 @@ def test_run_directory_ingestion(tmp_path, monkeypatch, env) -> None:  # noqa: A
     created_drivers: list[FakeDriver] = []
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -949,7 +949,7 @@ def test_run_with_external_qa_report_dir(tmp_path, monkeypatch, env) -> None:  #
     created_drivers: list[FakeDriver] = []
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,
@@ -1086,7 +1086,7 @@ def test_run_empty_file(tmp_path, monkeypatch, env) -> None:  # noqa: ARG001
     created_drivers: list[FakeDriver] = []
 
     settings = kg_pipeline.OpenAISettings(
-        chat_model="gpt-4.1-mini",
+        chat_model="gpt-5-mini",
         embedding_model="text-embedding-3-small",
         embedding_dimensions=5,
         embedding_dimensions_override=None,

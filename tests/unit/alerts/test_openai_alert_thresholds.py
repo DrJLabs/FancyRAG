@@ -14,7 +14,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PLAYBOOK_PATH = PROJECT_ROOT / "docs" / "alerts" / "openai-telemetry.yml"
-BASELINE_MODEL = "gpt-4.1-mini"
+BASELINE_MODEL = "gpt-5-mini"
 FALLBACK_MODEL = "gpt-4o-mini"
 
 

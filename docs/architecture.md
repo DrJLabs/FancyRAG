@@ -69,7 +69,7 @@ graph TD
   - Relationship entities (e.g., `(:Entity)-[:MENTIONS]->(:Chunk)`) created by GraphRAG resolvers.  
 - **Key Properties**:  
   - `Chunk.text`: raw text content.  
-  - `Chunk.embedding`: 768-d vector representing semantics.  
+  - `Chunk.embedding`: 1024-d vector representing semantics.  
   - Index metadata (vector index `text_embeddings`, full-text index `chunk_text_fulltext`).  
 - **Data Sources**: Operator-supplied documents, local embedding service for embeddings, OpenAI LLM for extraction.  
 - **Data Flow**: Ingestion pipeline splits text → embeds chunks → extracts entities/relations → writes to Neo4j → index scripts ensure vector + full-text indexes. Hybrid retriever reads data combining vector and full-text scoring.
@@ -123,7 +123,7 @@ graph TD
 ### Configuration & Environment
 - `.env.example` extended with `INDEX_NAME`, `FULLTEXT_INDEX_NAME`, embedding and OAuth variables.  
 - `.env.local` consumed by ingestion runner and MCP container via `env_file`.  
-- Default ports: Neo4j bolt `7687`, HTTP console `7474`, MCP `8080`.
+- Default ports: Neo4j bolt `10247`, HTTP console `7474`, MCP `8080`.
 
 ## Infrastructure Architecture
 
@@ -133,7 +133,7 @@ graph TD
 
 ### Networking
 - All services share `rag-net` Docker bridge network.  
-- MCP server accesses Neo4j via `bolt://neo4j:7687`.  
+- MCP server accesses Neo4j via `bolt://neo4j:10247`.  
 - External embedding and OAuth endpoints accessed over HTTPS.  
 - Production requires TLS termination at ingress to enforce HTTPS.
 
