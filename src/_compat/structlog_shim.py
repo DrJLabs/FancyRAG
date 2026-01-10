@@ -54,8 +54,14 @@ class BoundLogger:
     def info(self, event: str, **kwargs: Any) -> None:
         self._log("info", event, **kwargs)
 
+    def debug(self, event: str, **kwargs: Any) -> None:
+        self._log("debug", event, **kwargs)
+
     def error(self, event: str, **kwargs: Any) -> None:
         self._log("error", event, **kwargs)
+
+    def exception(self, event: str, **kwargs: Any) -> None:
+        self._log("exception", event, **kwargs)
 
     def warning(self, event: str, **kwargs: Any) -> None:
         self._log("warning", event, **kwargs)
