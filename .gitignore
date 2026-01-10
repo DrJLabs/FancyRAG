@@ -13,3 +13,4 @@ uv.lock
 .serena/
 artifacts/
 reports/
+.worktrees/
