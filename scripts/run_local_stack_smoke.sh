@@ -23,7 +23,12 @@ USAGE
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env-output)
-      ENV_OUTPUT="${2:-}"
+      if [[ -z "${2:-}" || "${2:0:1}" == "-" ]]; then
+        echo "error: --env-output requires a value" >&2
+        usage
+        exit 1
+      fi
+      ENV_OUTPUT="$2"
       shift 2
       ;;
     -h|--help)

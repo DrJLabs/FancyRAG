@@ -83,7 +83,7 @@ def _write_env(
     neo4j_password = DEFAULT_NEO4J_PASSWORD
 
     for raw_line in input_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.rstrip("\n")
+        line = raw_line
         if line.startswith("OPENAI_API_KEY="):
             if openai_secret:
                 rendered = f'OPENAI_API_KEY="{openai_secret}"'
@@ -170,10 +170,8 @@ def _write_env(
 
     if github_env_path:
         github_env_path.parent.mkdir(parents=True, exist_ok=True)
-        github_env_path.write_text(
-            "\n".join(export_lines) + "\n",
-            encoding="utf-8",
-        )
+        with github_env_path.open("a", encoding="utf-8") as handle:
+            handle.write("\n".join(export_lines) + "\n")
 
 
 def _parse_args() -> argparse.Namespace:
