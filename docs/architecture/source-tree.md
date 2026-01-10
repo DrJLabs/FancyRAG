@@ -20,7 +20,8 @@ This layout describes the expected structure of the repository. New files should
 │       └── source-tree.md        # (This file) repository layout guidance
 ├── pipelines/
 │   └── kg_ingest.yaml            # GraphRAG pipeline configuration for ingestion
-├── scripts/                      # (Planned) Helper scripts (e.g., index creation)
+├── scripts/                      # Helper scripts (documentation lint, index creation)
+│   └── check_docs.py             # Documentation lint guard (scripts.check_docs)
 ├── servers/                      # (Planned) FastMCP server implementations
 ├── src/
 │   └── fancryrag/                # Python package root (add modules under here)
