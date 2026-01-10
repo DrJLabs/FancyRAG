@@ -267,12 +267,14 @@ def fetch_sync(state: ServerState, element_id: str) -> Dict[str, Any]:
 def build_server(
     state: ServerState, auth_provider: AuthProvider | None = None
 ) -> FastMCP:
-    provider = auth_provider or GoogleProvider(
-        client_id=state.config.oauth.client_id,
-        client_secret=state.config.oauth.client_secret,
-        base_url=state.config.server.base_url,
-        required_scopes=state.config.oauth.required_scopes,
-    )
+    provider = None
+    if state.config.server.auth_required:
+        provider = auth_provider or GoogleProvider(
+            client_id=state.config.oauth.client_id,
+            client_secret=state.config.oauth.client_secret,
+            base_url=state.config.server.base_url,
+            required_scopes=state.config.oauth.required_scopes,
+        )
 
     server = FastMCP(name="FancyRAG Hybrid MCP", auth=provider)
 

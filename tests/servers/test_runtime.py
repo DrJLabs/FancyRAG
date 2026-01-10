@@ -269,6 +269,25 @@ def test_stateless_http_enforces_authentication(base_config):
         assert body["result"] == {}
 
 
+def test_stateless_http_allows_requests_when_auth_disabled(base_config):
+    config = base_config.model_copy(deep=True)
+    config.server.auth_required = False
+    config.oauth = None
+
+    state = _state_with(StubDriver({}), FakeRetriever([], {}), config)
+    server = runtime.build_server(state)
+    app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
+
+    headers = {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/mcp", headers=headers, json=_ping_payload("unauth"))
+        assert response.status_code == 200
+
+
 def test_search_latency_within_budget(base_config):
     records = [
         {"node": FakeNode("1", text="Doc", embedding=[0.1]), "score": 0.9, "text": "Doc"},
