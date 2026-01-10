@@ -567,9 +567,9 @@ class FancyRAGSettings(BaseModel):
             env["EMBEDDING_DIMENSIONS"] = str(self.openai.embedding_dimensions_override)
         if self.openai.api_base_url:
             env["OPENAI_BASE_URL"] = self.openai.api_base_url
-            env["OPENAI_ALLOW_INSECURE_BASE_URL"] = "true" if self.openai.allow_insecure_base_url else "false"
         if self.openai.embedding_api_base_url:
             env["EMBEDDING_API_BASE_URL"] = self.openai.embedding_api_base_url
+        if self.openai.api_base_url or self.openai.embedding_api_base_url:
             env["OPENAI_ALLOW_INSECURE_BASE_URL"] = "true" if self.openai.allow_insecure_base_url else "false"
         if self.openai.embedding_api_key:
             env["EMBEDDING_API_KEY"] = self.openai.embedding_api_key.get_secret_value()

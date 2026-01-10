@@ -1,8 +1,8 @@
 WITH node, score
-OPTIONAL MATCH (sem)
+OPTIONAL MATCH (sem:__Entity__)
 WHERE sem.semantic_source = 'kg_build.semantic_enrichment.v1'
   AND sem.chunk_uid = node.uid
-OPTIONAL MATCH (sem)-[rel]->(other)
+OPTIONAL MATCH (sem)-[rel]->(other:__Entity__)
 WHERE rel.semantic_source = 'kg_build.semantic_enrichment.v1'
 WITH
     node,

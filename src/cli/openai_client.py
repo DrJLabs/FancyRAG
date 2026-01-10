@@ -396,21 +396,21 @@ class SharedOpenAIClient:
 def _usage_value(usage: Any, attr: str) -> int:
     if usage is None:
         return 0
+    fallback = {"prompt_tokens": "input_tokens", "completion_tokens": "output_tokens"}.get(attr)
+    value = _lookup_usage_attr(usage, attr, fallback=fallback)
+    return int(value or 0)
+
+
+def _lookup_usage_attr(usage: Any, attr: str, *, fallback: Optional[str] = None) -> Any:
     if isinstance(usage, Mapping):
         value = usage.get(attr)
-        if value is None:
-            if attr == "prompt_tokens":
-                value = usage.get("input_tokens")
-            elif attr == "completion_tokens":
-                value = usage.get("output_tokens")
-    else:
-        value = getattr(usage, attr, None)
-        if value is None:
-            if attr == "prompt_tokens":
-                value = getattr(usage, "input_tokens", None)
-            elif attr == "completion_tokens":
-                value = getattr(usage, "output_tokens", None)
-    return int(value or 0)
+        if value is None and fallback:
+            return usage.get(fallback)
+        return value
+    value = getattr(usage, attr, None)
+    if value is None and fallback:
+        return getattr(usage, fallback, None)
+    return value
 
 
 def _first_choice_value(response: Any, field: str) -> Optional[str]:
@@ -440,6 +440,12 @@ def _extract_embedding_vector(payload: Any) -> Sequence[float]:
 
 
 def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
+    def _calculate_delta(parsed: datetime) -> float:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+        return max(delta, 0.0)
+
     response = getattr(error, "response", None)
     if response is None:
         return None
@@ -459,10 +465,7 @@ def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
     except (TypeError, ValueError):
         parsed = None
     if parsed is not None:
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        delta = (parsed - datetime.now(timezone.utc)).total_seconds()
-        return max(delta, 0.0)
+        return _calculate_delta(parsed)
     candidates = [value.strip() for value in header_value.split(",") if value.strip()]
     for value in candidates:
         if value.isdigit():
@@ -471,10 +474,7 @@ def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
             parsed = parsedate_to_datetime(value)
         except (TypeError, ValueError):
             continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        delta = (parsed - datetime.now(timezone.utc)).total_seconds()
-        return max(delta, 0.0)
+        return _calculate_delta(parsed)
     return None
 
 

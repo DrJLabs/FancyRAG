@@ -45,14 +45,14 @@ If the default host bindings (Neo4j HTTP 22010, Neo4j Bolt 22011, MCP 22012) col
 with other services, override them before starting the stack:
 
 ```bash
-NEO4J_HTTP_PORT=17474 NEO4J_BOLT_PORT=110247 MCP_PUBLISHED_PORT=18080 make up
+NEO4J_HTTP_PORT=17474 NEO4J_BOLT_PORT=22011 MCP_PUBLISHED_PORT=18080 make up
 ```
 
 Configure secrets in `.env.local` before running ingestion. Chat/semantic extraction
 uses OpenAI, while embeddings are routed to the local OpenAI-compatible server. For
 local embeddings (e.g., `localhost:20010`), set:
 
-```
+```ini
 EMBEDDING_API_BASE_URL=http://localhost:20010/v1
 EMBEDDING_API_KEY=<token or dummy if not required>
 EMBEDDING_MODEL=<local embedding model name>
