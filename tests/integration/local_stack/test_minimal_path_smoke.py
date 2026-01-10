@@ -179,6 +179,11 @@ def test_minimal_path_smoke() -> None:
 
         # Execute minimal path scripts sequentially.
         python = sys.executable
+        embedding_dimensions = (
+            os.environ.get("EMBEDDING_DIMENSIONS")
+            or os.environ.get("OPENAI_EMBEDDING_DIMENSIONS")
+            or "1536"
+        )
         run_command(
             python,
             "scripts/create_vector_index.py",
@@ -189,7 +194,7 @@ def test_minimal_path_smoke() -> None:
             "--embedding-property",
             "embedding",
             "--dimensions",
-            "1536",
+            embedding_dimensions,
             "--similarity",
             "cosine",
             env=env,

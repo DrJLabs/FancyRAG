@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 _DEFAULT_EMBEDDING_DIMENSIONS = 1536
+
+
+def _resolve_embedding_dimensions() -> int:
+    raw = os.getenv("EMBEDDING_DIMENSIONS") or os.getenv("OPENAI_EMBEDDING_DIMENSIONS")
+    if raw:
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            return _DEFAULT_EMBEDDING_DIMENSIONS
+        if value > 0:
+            return value
+    return _DEFAULT_EMBEDDING_DIMENSIONS
 
 
 class APIError(Exception):
@@ -102,7 +115,8 @@ class _Embeddings:
     """Stubbed embeddings interface."""
 
     def create(self, *, model: str, input: str, **_: Any) -> Any:
-        vector = [float((i % 17) - 8) for i in range(_DEFAULT_EMBEDDING_DIMENSIONS)]
+        dimensions = _resolve_embedding_dimensions()
+        vector = [float((i % 17) - 8) for i in range(dimensions)]
         usage = _EmbeddingUsage(total_tokens=max(len(input.split()), 1))
         return SimpleNamespace(
             model=model,
