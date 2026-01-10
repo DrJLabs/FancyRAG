@@ -199,7 +199,7 @@ This document summarizes the comprehensive unit tests generated for the FancyRAG
 
 ### Test Distribution by Module
 
-## Manual Verification Notes
+### Manual Verification Notes
 
 - Semantic retrieval end-to-end validation not run locally (requires Neo4j + embedding backend + MCP server).
 - Configuration: ~50 tests
