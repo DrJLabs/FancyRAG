@@ -49,6 +49,31 @@ jobs:
           rendered_lines: list[str] = []
           export_lines: list[str] = []
           found = False
+          placeholder_keys = {
+              "EMBEDDING_API_BASE_URL",
+              "EMBEDDING_API_KEY",
+              "EMBEDDING_MODEL",
+          }
+
+          def _strip_quotes(value: str) -> str:
+              if (value.startswith('"') and value.endswith('"')) or (
+                  value.startswith("'") and value.endswith("'")
+              ):
+                  return value[1:-1]
+              return value
+
+          def _sanitize_placeholder(line: str) -> str:
+              stripped = line.strip()
+              if not stripped or stripped.startswith('#') or '=' not in stripped:
+                  return line
+              key, _, remainder = stripped.partition('=')
+              key = key.strip()
+              if key not in placeholder_keys:
+                  return line
+              value = _strip_quotes(remainder.split('#', 1)[0].strip())
+              if value.startswith('YOUR_'):
+                  return f"{key}="
+              return line
 
           for raw_line in env_path.read_text().splitlines():
               line = raw_line.rstrip('\n')
@@ -63,6 +88,8 @@ jobs:
                   rendered = 'OPENAI_ENABLE_FALLBACK=true  # set to true to enable fallback model selection'
               else:
                   rendered = line
+
+              rendered = _sanitize_placeholder(rendered)
 
               rendered_lines.append(rendered)
 
