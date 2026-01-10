@@ -62,6 +62,50 @@ def _parse_boolean_flag(*, raw_value: str, env_key: str, actor_name: str, error_
     )
 
 
+def _validate_base_url(
+    raw_url: str,
+    *,
+    env_key: str,
+    actor_name: str,
+    allow_insecure: bool,
+    invalid_event: str,
+    insecure_event: str,
+    insecure_override_event: str,
+    override_event: str,
+) -> str:
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in _VALID_BASE_SCHEMES or not parsed.netloc:
+        logger.error(
+            invalid_event,
+            actor=actor_name,
+            supplied=mask_base_url(raw_url),
+        )
+        raise ValueError(
+            f"Invalid {env_key} value '{raw_url}'. Provide an absolute http(s) URL."
+        )
+    if parsed.scheme != "https":
+        if not allow_insecure:
+            logger.error(
+                insecure_event,
+                actor=actor_name,
+                supplied=mask_base_url(raw_url),
+            )
+            raise ValueError(
+                f"{env_key} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
+            )
+        logger.warning(
+            insecure_override_event,
+            actor=actor_name,
+            base_url=mask_base_url(raw_url),
+        )
+    logger.info(
+        override_event,
+        actor=actor_name,
+        base_url=mask_base_url(raw_url),
+    )
+    return raw_url
+
+
 class OpenAISettings(BaseModel):
     """Resolved OpenAI settings with guardrails and audit metadata."""
 
@@ -287,71 +331,29 @@ class OpenAISettings(BaseModel):
         base_url_raw = (source.get(_ENV_OPENAI_BASE_URL) or "").strip()
         api_base_url: Optional[str] = None
         if base_url_raw:
-            parsed = urlparse(base_url_raw)
-            if parsed.scheme not in _VALID_BASE_SCHEMES or not parsed.netloc:
-                logger.error(
-                    "openai.settings.invalid_base_url",
-                    actor=actor_name,
-                    supplied=mask_base_url(base_url_raw),
-                )
-                raise ValueError(
-                    f"Invalid {_ENV_OPENAI_BASE_URL} value '{base_url_raw}'. Provide an absolute http(s) URL."
-                )
-            if parsed.scheme != "https":
-                if not allow_insecure:
-                    logger.error(
-                        "openai.settings.insecure_base_url",
-                        actor=actor_name,
-                        supplied=mask_base_url(base_url_raw),
-                    )
-                    raise ValueError(
-                        f"{_ENV_OPENAI_BASE_URL} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
-                    )
-                logger.warning(
-                    "openai.settings.insecure_base_url_override",
-                    actor=actor_name,
-                    base_url=mask_base_url(base_url_raw),
-                )
-            api_base_url = base_url_raw
-            logger.info(
-                "openai.settings.base_url_override",
-                actor=actor_name,
-                base_url=mask_base_url(api_base_url),
+            api_base_url = _validate_base_url(
+                base_url_raw,
+                env_key=_ENV_OPENAI_BASE_URL,
+                actor_name=actor_name,
+                allow_insecure=allow_insecure,
+                invalid_event="openai.settings.invalid_base_url",
+                insecure_event="openai.settings.insecure_base_url",
+                insecure_override_event="openai.settings.insecure_base_url_override",
+                override_event="openai.settings.base_url_override",
             )
 
         embedding_base_raw = (source.get(_ENV_EMBEDDING_BASE_URL) or "").strip()
         embedding_api_base_url: Optional[str] = None
         if embedding_base_raw:
-            parsed = urlparse(embedding_base_raw)
-            if parsed.scheme not in _VALID_BASE_SCHEMES or not parsed.netloc:
-                logger.error(
-                    "openai.settings.invalid_embedding_base_url",
-                    actor=actor_name,
-                    supplied=mask_base_url(embedding_base_raw),
-                )
-                raise ValueError(
-                    f"Invalid {_ENV_EMBEDDING_BASE_URL} value '{embedding_base_raw}'. Provide an absolute http(s) URL."
-                )
-            if parsed.scheme != "https":
-                if not allow_insecure:
-                    logger.error(
-                        "openai.settings.insecure_embedding_base_url",
-                        actor=actor_name,
-                        supplied=mask_base_url(embedding_base_raw),
-                    )
-                    raise ValueError(
-                        f"{_ENV_EMBEDDING_BASE_URL} must use https. Set {_ENV_OPENAI_ALLOW_INSECURE_BASE_URL}=true only for explicit testing scenarios."
-                    )
-                logger.warning(
-                    "openai.settings.insecure_embedding_base_url_override",
-                    actor=actor_name,
-                    base_url=mask_base_url(embedding_base_raw),
-                )
-            embedding_api_base_url = embedding_base_raw
-            logger.info(
-                "openai.settings.embedding_base_url_override",
-                actor=actor_name,
-                base_url=mask_base_url(embedding_api_base_url),
+            embedding_api_base_url = _validate_base_url(
+                embedding_base_raw,
+                env_key=_ENV_EMBEDDING_BASE_URL,
+                actor_name=actor_name,
+                allow_insecure=allow_insecure,
+                invalid_event="openai.settings.invalid_embedding_base_url",
+                insecure_event="openai.settings.insecure_embedding_base_url",
+                insecure_override_event="openai.settings.insecure_embedding_base_url_override",
+                override_event="openai.settings.embedding_base_url_override",
             )
 
         return cls(
