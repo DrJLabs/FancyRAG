@@ -189,7 +189,12 @@ create_venv() {
     return 1
   fi
 
-  uv venv "$venv_path" --python "$python_bin" --seed --clear
+  if [[ -e "$venv_path" ]]; then
+    log WARN "Removing existing virtual environment at $venv_path before uv venv."
+    rm -rf "$venv_path"
+  fi
+
+  uv venv "$venv_path" --python "$python_bin" --seed
 }
 
 # main orchestrates bootstrapping of a Python 3.12 virtual environment for the repository: it resolves a suitable Python interpreter, creates or reuses the venv (optionally recreating it), activates the environment, installs runtime dependencies (unless skipped), generates a requirements.lock, and validates package import before printing next-step instructions.
