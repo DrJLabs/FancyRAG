@@ -288,9 +288,15 @@ PY
       rm -f "$req_in"
     else
       local use_pip_freeze=true
-      if command -v uv >/dev/null 2>&1; then
+      local uv_bin=""
+      if [[ -x "$VENV_PATH/bin/uv" ]]; then
+        uv_bin="$VENV_PATH/bin/uv"
+      elif command -v uv >/dev/null 2>&1; then
+        uv_bin="$(command -v uv)"
+      fi
+      if [[ -n "$uv_bin" ]]; then
         log INFO "uv detected; generating lockfile via uv pip freeze"
-        if uv pip freeze --exclude-editable -p "$VENV_PATH/bin/python" > "$lockfile"; then
+        if "$uv_bin" pip freeze > "$lockfile"; then
           use_pip_freeze=false
         else
           log WARN "uv pip freeze failed; falling back to pip freeze."
