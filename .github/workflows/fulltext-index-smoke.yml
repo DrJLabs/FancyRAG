@@ -30,6 +30,8 @@ jobs:
       NEO4J_USERNAME: neo4j
       NEO4J_PASSWORD: password
       NEO4J_DATABASE: neo4j
+      NEO4J_BOLT_PORT: 7687
+      MCP_ENV_FILE: .env.example
       FULLTEXT_READY_ATTEMPTS: 30
       FULLTEXT_READY_DELAY: 2
     steps:
@@ -47,7 +49,7 @@ jobs:
 
       - name: Wait for Neo4j port
         run: |
-          timeout 120 bash -c 'until nc -z localhost 7687; do sleep 2; done'
+          timeout 120 bash -c 'until nc -z localhost "$NEO4J_BOLT_PORT"; do sleep 2; done'
 
       - name: Run full-text index provisioning twice
         run: |

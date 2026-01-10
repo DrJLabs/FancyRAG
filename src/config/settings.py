@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 logger = get_logger(__name__)
 
 DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
-FALLBACK_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4o-mini"})
+FALLBACK_CHAT_MODELS: frozenset[str] = frozenset({"gpt-4o-mini", "gpt-5-mini"})
 ALLOWED_CHAT_MODELS: frozenset[str] = frozenset({DEFAULT_CHAT_MODEL, *FALLBACK_CHAT_MODELS})
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
