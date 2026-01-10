@@ -2,6 +2,9 @@
 
 This file provides guidance and memory for Codex CLI.
 
+## PR Review Follow-ups
+- After the initial PR is opened, every subsequent push/update to a PR branch must be followed by two separate PR comments: "@codex review" and "/gemini review".
+
 <!-- BEGIN: BMAD-AGENTS -->
 # BMAD-METHOD Agents and Tasks
 
@@ -5747,4 +5750,3 @@ REPEAT by Asking the user if they would like to perform another Reflective, Elic
 ```
 
 <!-- END: BMAD-AGENTS -->
-
