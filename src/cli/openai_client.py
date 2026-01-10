@@ -100,6 +100,7 @@ class SharedOpenAIClient:
         settings: OpenAISettings,
         *,
         client: Optional[OpenAI] = None,
+        embedding_client: Optional[OpenAI] = None,
         metrics: Optional[OpenAIMetrics] = None,
         sleep_fn: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.perf_counter,
@@ -113,7 +114,22 @@ class SharedOpenAIClient:
                 actor=settings.actor,
                 base_url=mask_base_url(settings.api_base_url),
             )
-        self._client = client or OpenAI(**client_kwargs)
+        if settings.api_key is not None:
+            client_kwargs["api_key"] = settings.api_key.get_secret_value()
+        self._chat_client = client or OpenAI(**client_kwargs)
+        self._embedding_client = embedding_client
+        if self._embedding_client is None and settings.embedding_api_base_url:
+            embedding_kwargs: Dict[str, Any] = {
+                "base_url": settings.embedding_api_base_url,
+            }
+            if settings.embedding_api_key is not None:
+                embedding_kwargs["api_key"] = settings.embedding_api_key.get_secret_value()
+            self._embedding_client = OpenAI(**embedding_kwargs)
+            logger.info(
+                "openai.client.embedding_base_url_override",
+                actor=settings.actor,
+                base_url=mask_base_url(settings.embedding_api_base_url),
+            )
         self._metrics = metrics or get_metrics()
         self._sleep_fn = sleep_fn
         self._clock = clock
@@ -131,25 +147,29 @@ class SharedOpenAIClient:
         self,
         *,
         messages: Sequence[Mapping[str, str]],
-        temperature: float = 0.0,
+        temperature: Optional[float] = None,
         max_tokens: int = 256,
         **extra_params: Any,
     ) -> ChatResult:
-        """Execute a chat completion with retry and fallback guardrails."""
+        """Execute a responses API request with retry and fallback guardrails."""
 
         model = self._settings.chat_model
         fallback_used = model in FALLBACK_CHAT_MODELS
 
         def _run(model_name: str) -> tuple[Any, float]:
+            params: Dict[str, Any] = {
+                "model": model_name,
+                "input": list(messages),
+                "max_output_tokens": max_tokens,
+            }
+            params.update(extra_params)
+            if temperature is not None and not model_name.startswith("gpt-5"):
+                params["temperature"] = temperature
+            if "reasoning" not in params:
+                params["reasoning"] = {"effort": "minimal"}
             return self._execute_with_backoff(
-                lambda: self._client.chat.completions.create(
-                    model=model_name,
-                    messages=list(messages),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **extra_params,
-                ),
-                description=f"chat completion ({model_name})",
+                lambda: self._chat_client.responses.create(**params),
+                description=f"responses create ({model_name})",
             )
 
         try:
@@ -225,8 +245,14 @@ class SharedOpenAIClient:
         """Execute an embedding request enforcing dimension guardrails."""
 
         try:
+            if self._embedding_client is None:
+                raise OpenAIClientError(
+                    "Embedding client is not configured.",
+                    remediation="Set EMBEDDING_API_BASE_URL (and EMBEDDING_API_KEY if required) for local embeddings.",
+                    details={"reason": "embedding_base_url_missing"},
+                )
             response, latency_ms = self._execute_with_backoff(
-                lambda: self._client.embeddings.create(
+                lambda: self._embedding_client.embeddings.create(
                     model=self._settings.embedding_model,
                     input=input_text,
                     **extra_params,
@@ -372,8 +398,18 @@ def _usage_value(usage: Any, attr: str) -> int:
         return 0
     if isinstance(usage, Mapping):
         value = usage.get(attr)
+        if value is None:
+            if attr == "prompt_tokens":
+                value = usage.get("input_tokens")
+            elif attr == "completion_tokens":
+                value = usage.get("output_tokens")
     else:
         value = getattr(usage, attr, None)
+        if value is None:
+            if attr == "prompt_tokens":
+                value = getattr(usage, "input_tokens", None)
+            elif attr == "completion_tokens":
+                value = getattr(usage, "output_tokens", None)
     return int(value or 0)
 
 
@@ -421,11 +457,25 @@ def _extract_retry_after_seconds(error: Exception) -> Optional[float]:
     try:
         parsed = parsedate_to_datetime(header_value)
     except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    delta = (parsed - datetime.now(timezone.utc)).total_seconds()
-    return max(delta, 0.0)
+        parsed = None
+    if parsed is not None:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+        return max(delta, 0.0)
+    candidates = [value.strip() for value in header_value.split(",") if value.strip()]
+    for value in candidates:
+        if value.isdigit():
+            return float(value)
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+        return max(delta, 0.0)
+    return None
 
 
 __all__ = [

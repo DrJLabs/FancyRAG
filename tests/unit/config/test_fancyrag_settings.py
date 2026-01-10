@@ -86,11 +86,26 @@ def test_qdrant_optional_when_not_required(monkeypatch: pytest.MonkeyPatch, base
         FancyRAGSettings.load(require={"qdrant"})
 
 
+def test_embeddings_required_fail_without_base_url(monkeypatch: pytest.MonkeyPatch, base_env):
+    monkeypatch.delenv("EMBEDDING_API_BASE_URL", raising=False)
+    with pytest.raises(ValueError, match="EMBEDDING_API_BASE_URL"):
+        FancyRAGSettings.load(require={"embeddings"})
+
+
+def test_embeddings_required_with_base_url(monkeypatch: pytest.MonkeyPatch, base_env):
+    monkeypatch.setenv("EMBEDDING_API_BASE_URL", "http://localhost:20010/v1")
+    monkeypatch.setenv("OPENAI_ALLOW_INSECURE_BASE_URL", "true")
+    settings = FancyRAGSettings.load(require={"embeddings"})
+    assert settings.openai.embedding_api_base_url == "http://localhost:20010/v1"
+
+
 def test_export_environment_round_trip(base_env):
     settings = FancyRAGSettings.load()
     exported = settings.export_environment()
 
     assert exported["OPENAI_API_KEY"] == "sk-test"
+    assert exported["OPENAI_TEMPERATURE"] == "0.3"
+    assert exported["EMBEDDING_MODEL"]
     assert exported["NEO4J_URI"] == "bolt://localhost:7687"
     assert exported["QDRANT_URL"] == "http://localhost:6333"
     assert exported["OPENAI_ENABLE_FALLBACK"] == "true"

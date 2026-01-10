@@ -162,6 +162,38 @@ def test_http_base_url_allowed_with_flag():
     assert any(entry["event"] == "openai.settings.insecure_base_url_override" for entry in logs)
 
 
+def test_embedding_base_url_override_logs_and_applies():
+    env = {
+        "EMBEDDING_API_BASE_URL": "http://localhost:20010/v1",
+        "OPENAI_ALLOW_INSECURE_BASE_URL": "true",
+    }
+    with capture_logs() as logs:
+        settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.embedding_api_base_url == "http://localhost:20010/v1"
+    assert any(
+        entry["event"] == "openai.settings.embedding_base_url_override"
+        and entry.get("base_url") == "http://***/v1"
+        for entry in logs
+    )
+
+
+def test_embedding_http_base_url_requires_explicit_opt_in():
+    env = {"EMBEDDING_API_BASE_URL": "http://localhost:20010/v1"}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.insecure_embedding_base_url" for entry in logs)
+
+
+@pytest.mark.parametrize("value", ["ftp://example.com", "https://"])
+def test_invalid_embedding_base_url_raises(value):
+    env = {"EMBEDDING_API_BASE_URL": value}
+    with capture_logs() as logs:
+        with pytest.raises(ValueError):
+            OpenAISettings.load(env, actor="pytest")
+    assert any(entry["event"] == "openai.settings.invalid_embedding_base_url" for entry in logs)
+
+
 def test_invalid_insecure_flag_value_logs_and_raises():
     env = {
         "OPENAI_BASE_URL": "https://gateway.example.com/v1",
@@ -216,6 +248,8 @@ def test_settings_load_with_all_defaults():
     assert settings.embedding_model == DEFAULT_EMBEDDING_MODEL
     assert settings.embedding_dimensions == DEFAULT_EMBEDDING_DIMENSIONS
     assert settings.embedding_dimensions_override is None
+    assert settings.embedding_api_base_url is None
+    assert settings.embedding_api_key is None
     assert settings.actor == "test-actor"
     assert settings.max_attempts == DEFAULT_MAX_RETRY_ATTEMPTS
     assert settings.backoff_seconds == DEFAULT_BACKOFF_SECONDS
@@ -314,6 +348,15 @@ def test_settings_embedding_model_override():
     env = {"OPENAI_EMBEDDING_MODEL": "text-embedding-ada-002"}
     settings = OpenAISettings.load(env, actor="pytest")
     assert settings.embedding_model == "text-embedding-ada-002"
+
+
+def test_settings_embedding_model_prefers_embedding_env():
+    env = {
+        "EMBEDDING_MODEL": "local-embed",
+        "OPENAI_EMBEDDING_MODEL": "fallback-embed",
+    }
+    settings = OpenAISettings.load(env, actor="pytest")
+    assert settings.embedding_model == "local-embed"
 
 
 def test_settings_embedding_model_strips_whitespace():

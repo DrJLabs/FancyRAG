@@ -134,6 +134,7 @@ def _make_client(env: dict[str, str], *, client) -> SharedOpenAIClient:
     return SharedOpenAIClient(
         settings,
         client=client,
+        embedding_client=client,
         metrics=create_metrics(),
         sleep_fn=lambda *_: None,
         clock=FakeClock(),
@@ -161,7 +162,7 @@ def test_shared_client_initializes_openai_with_base_url(monkeypatch):
         )
 
     assert captured["base_url"] == "https://gateway.example.com/v1"
-    assert client._client is stub
+    assert client._chat_client is stub
     assert any(
         entry["event"] == "openai.client.base_url_override"
         and entry.get("base_url") == "https://***/v1"
@@ -219,6 +220,22 @@ def test_embedding_dimension_mismatch_raises():
     with pytest.raises(OpenAIClientError) as exc:
         client.embedding(input_text="check")
     assert "Embedding length" in str(exc.value)
+
+
+def test_embedding_requires_base_url_when_not_configured():
+    stub = StubOpenAIClient()
+    settings = OpenAISettings.load({}, actor="pytest")
+    client = SharedOpenAIClient(
+        settings,
+        client=stub,
+        metrics=create_metrics(),
+        sleep_fn=lambda *_: None,
+        clock=FakeClock(),
+    )
+
+    with pytest.raises(OpenAIClientError) as exc:
+        client.embedding(input_text="test")
+    assert exc.value.details["reason"] == "embedding_base_url_missing"
 
 
 def test_retry_after_header_controls_backoff():

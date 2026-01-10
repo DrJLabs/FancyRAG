@@ -15,6 +15,9 @@ from fancyrag.splitters import CachingFixedSizeSplitter
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("EMBEDDING_API_BASE_URL", "http://localhost:20010/v1")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "test-embed-key")
+    monkeypatch.setenv("OPENAI_ALLOW_INSECURE_BASE_URL", "true")
     monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "secret")

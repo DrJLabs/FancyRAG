@@ -799,6 +799,15 @@ class SanitizingNeo4jWriter(Neo4jWriter):
         """
         rows = super()._nodes_to_rows(nodes, lexical_graph_config)
         for row in rows:
+            labels = row.get("labels") or []
+            cleaned_labels = [
+                label.strip()
+                for label in labels
+                if isinstance(label, str) and label.strip()
+            ]
+            if not cleaned_labels:
+                cleaned_labels = ["__Entity__"]
+            row["labels"] = cleaned_labels
             properties = row.get("properties") or {}
             sanitized = self._sanitize_properties(properties)
             run_key = self._get_ingest_run_key()
@@ -1265,7 +1274,7 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
     include_patterns = resolved_settings.include_patterns
     semantic_max_concurrency = resolved_settings.semantic_max_concurrency
 
-    settings_bundle = _get_settings(require={"openai", "neo4j"})
+    settings_bundle = _get_settings(require={"openai", "neo4j", "embeddings"})
     openai_settings = settings_bundle.openai.for_actor("kg_build")
     neo4j_settings = settings_bundle.neo4j
 
