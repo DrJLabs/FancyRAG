@@ -16,7 +16,7 @@ def test_chat_metrics_record_and_export():
     metrics = telemetry.create_metrics(registry)
     with capture_logs() as logs:
         metrics.observe_chat(
-            model="gpt-4.1-mini",
+            model="gpt-5-mini",
             latency_ms=120.5,
             prompt_tokens=512,
             completion_tokens=256,
@@ -24,16 +24,16 @@ def test_chat_metrics_record_and_export():
         )
     count_value = registry.get_sample_value(
         "graphrag_openai_chat_latency_ms_count",
-        labels={"model": "gpt-4.1-mini"},
+        labels={"model": "gpt-5-mini"},
     )
     assert count_value == 1
     prompt_total = registry.get_sample_value(
         "graphrag_openai_chat_tokens_total",
-        labels={"model": "gpt-4.1-mini", "token_type": "prompt"},
+        labels={"model": "gpt-5-mini", "token_type": "prompt"},
     )
     completion_total = registry.get_sample_value(
         "graphrag_openai_chat_tokens_total",
-        labels={"model": "gpt-4.1-mini", "token_type": "completion"},
+        labels={"model": "gpt-5-mini", "token_type": "completion"},
     )
     assert prompt_total == 512
     assert completion_total == 256

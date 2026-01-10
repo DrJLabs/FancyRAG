@@ -29,7 +29,7 @@ def _stub_settings(monkeypatch):
         "OpenAISettings",
         types.SimpleNamespace(
             load=lambda actor: types.SimpleNamespace(
-                chat_model="gpt-4.1-mini",
+                chat_model="gpt-5-mini",
                 embedding_model="text-embedding-3-small",
                 embedding_dimensions=1536,
                 max_attempts=3,

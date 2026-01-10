@@ -20,7 +20,7 @@ from config.settings import (
     "env,expected_model,is_override",
     [
         ({}, DEFAULT_CHAT_MODEL, False),
-        ({"OPENAI_MODEL": "gpt-4.1-mini"}, "gpt-4.1-mini", False),
+        ({"OPENAI_MODEL": "gpt-5-mini"}, "gpt-5-mini", False),
         ({"OPENAI_MODEL": "gpt-4o-mini"}, "gpt-4o-mini", True),
     ],
 )
@@ -368,9 +368,9 @@ def test_settings_embedding_model_strips_whitespace():
 
 def test_settings_chat_model_strips_whitespace():
     """Test chat model value is stripped of whitespace."""
-    env = {"OPENAI_MODEL": "  gpt-4.1-mini  "}
+    env = {"OPENAI_MODEL": "  gpt-5-mini  "}
     settings = OpenAISettings.load(env, actor="pytest")
-    assert settings.chat_model == "gpt-4.1-mini"
+    assert settings.chat_model == "gpt-5-mini"
 
 
 def test_settings_actor_from_env_variable():

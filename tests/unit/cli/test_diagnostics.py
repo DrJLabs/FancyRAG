@@ -394,7 +394,7 @@ def test_probe_failure_writes_error_report(tmp_path, monkeypatch):
 
 def test_probe_skip_live_writes_placeholder_report(tmp_path, monkeypatch):
     """Test --skip-live writes placeholder report."""
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5-mini")
     
     rc = diagnostics.run_openai_probe(
         tmp_path,
@@ -416,7 +416,7 @@ def test_probe_skip_live_writes_placeholder_report(tmp_path, monkeypatch):
 def test_chat_summary_from_result_extracts_fields():
     """Test _chat_summary_from_result extracts all ChatResult fields."""
     result = SimpleNamespace(
-        model="gpt-4.1-mini",
+        model="gpt-5-mini",
         fallback_used=False,
         latency_ms=123.45,
         prompt_tokens=10,
@@ -426,7 +426,7 @@ def test_chat_summary_from_result_extracts_fields():
     
     summary = diagnostics._chat_summary_from_result(result)
     
-    assert summary["model"] == "gpt-4.1-mini"
+    assert summary["model"] == "gpt-5-mini"
     assert summary["fallback_used"] is False
     assert summary["latency_ms"] == 123.45
     assert summary["prompt_tokens"] == 10

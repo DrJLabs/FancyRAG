@@ -103,7 +103,7 @@ class TestFetchModels:
     def test_fetch_models_paginates(self, mock_request, mock_urlopen):
         first_page = {
             "data": [
-                {"id": "gpt-4.1-mini"},
+                {"id": "gpt-5-mini"},
             ],
             "has_more": True,
         }
@@ -122,7 +122,7 @@ class TestFetchModels:
         with patch('json.load', side_effect=[first_page, second_page]):
             models = _fetch_models("key")
 
-        assert models == {"gpt-4.1-mini", "gpt-4o-mini"}
+        assert models == {"gpt-5-mini", "gpt-4o-mini"}
         assert mock_request.call_count == 2
         first_call_url = mock_request.call_args_list[0].args[0]
         second_call_url = mock_request.call_args_list[1].args[0]
@@ -178,7 +178,7 @@ class TestFamilyOf:
     @pytest.mark.parametrize(
         "model,expected",
         [
-            ("gpt-4.1-mini", "gpt-4.1"),
+            ("gpt-5-mini", "gpt-5"),
             ("gpt-4o-mini-2024-07-18", "gpt-4o"),
             ("gpt-4o-mini-2024-07-18-preview", "gpt-4o"),
             ("gpt-4o", "gpt-4o"),
@@ -330,8 +330,8 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_success_all_models_available(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'other'}
-        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
+        mock_fetch.return_value = {'gpt-5-mini', 'gpt-4o-mini', 'other'}
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-5-mini', 'gpt-4o-mini'})):
             with patch('sys.stdout') as out:
                 rc = main()
         assert rc == 0
@@ -340,9 +340,9 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_missing_models(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini'}
+        mock_fetch.return_value = {'gpt-5-mini', 'gpt-4o-mini'}
         with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS',
-                   new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini', 'missing-model'})):
+                   new=frozenset({'gpt-5-mini', 'gpt-4o-mini', 'missing-model'})):
             with patch('sys.stderr') as err:
                 rc = main()
         assert rc == 3
@@ -351,8 +351,8 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_new_variants_detected(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-turbo', 'gpt-4o-latest'}
-        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
+        mock_fetch.return_value = {'gpt-5-mini', 'gpt-4o-mini', 'gpt-4.1-turbo', 'gpt-4o-latest'}
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-5-mini', 'gpt-4o-mini'})):
             with patch('sys.stderr') as err:
                 rc = main()
         assert rc == 4
@@ -377,8 +377,8 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_no_new_variants(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4-mini'}
-        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-4.1-mini', 'gpt-4o-mini'})):
+        mock_fetch.return_value = {'gpt-5-mini', 'gpt-4o-mini', 'gpt-4-mini'}
+        with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'gpt-5-mini', 'gpt-4o-mini'})):
             with patch('sys.stdout') as out:
                 rc = main()
         assert rc == 0
@@ -387,7 +387,7 @@ class TestMain:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
     @patch('scripts.audit_openai_allowlist._fetch_models')
     def test_main_missing_and_new_variants(self, mock_fetch):
-        mock_fetch.return_value = {'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-preview'}
+        mock_fetch.return_value = {'gpt-5-mini', 'gpt-4o-mini', 'gpt-4.1-preview'}
         with patch('scripts.audit_openai_allowlist.ALLOWED_CHAT_MODELS', new=frozenset({'missing-model'})):
             with patch('sys.stderr') as err:
                 rc = main()
@@ -625,7 +625,7 @@ class TestFetchModelsAdvanced:
         """Test models with special characters in their IDs."""
         mock_payload = {
             "data": [
-                {"id": "gpt-4.1-mini"},
+                {"id": "gpt-5-mini"},
                 {"id": "gpt-4o-mini-2024-07-18"},
                 {"id": "model_with_underscore"},
                 {"id": "model-with-multiple-dashes-v2"},
