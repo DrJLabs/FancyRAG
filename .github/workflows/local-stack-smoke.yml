@@ -101,15 +101,16 @@ jobs:
         run: scripts/check_local_stack.sh --config
 
       - name: Start local stack services
-        run: docker compose -f docker-compose.neo4j-qdrant.yml up -d --wait neo4j qdrant
+        run: docker compose -f docker-compose.neo4j-qdrant.yml up -d --wait neo4j
 
       - name: Run smoke tests inside compose
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          docker compose -f docker-compose.neo4j-qdrant.yml run --rm \
+          docker compose -f docker-compose.neo4j-qdrant.yml run --rm --no-deps \
             -e OPENAI_API_KEY="$OPENAI_API_KEY" \
             -e LOCAL_STACK_SKIP_DOCKER_CHECK=1 \
+            -e LOCAL_STACK_SKIP_QDRANT=1 \
             smoke-tests bash -lc "set -euo pipefail; pip install --upgrade pip >/dev/null; pip install --no-cache-dir -r requirements.lock; pytest tests/integration/local_stack/test_minimal_path_smoke.py"
 
       - name: Collect service logs

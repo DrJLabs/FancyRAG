@@ -138,15 +138,18 @@ def test_minimal_path_smoke() -> None:
         "NEO4J_HTTP_ADVERTISED_ADDRESS", f"{neo4j_http_host}:{neo4j_http_port}"
     )
 
-    qdrant_host = os.environ.get("QDRANT_HOST", "localhost")
-    qdrant_http_port = os.environ.get("QDRANT_HTTP_PORT", "6333")
-    qdrant_grpc_port = os.environ.get("QDRANT_GRPC_PORT", "6334")
+    qdrant_url = os.environ.get("QDRANT_URL")
+    skip_qdrant = _is_truthy(os.environ.get("LOCAL_STACK_SKIP_QDRANT")) or not qdrant_url
+    if not skip_qdrant:
+        qdrant_host = os.environ.get("QDRANT_HOST", "localhost")
+        qdrant_http_port = os.environ.get("QDRANT_HTTP_PORT", "6333")
+        qdrant_grpc_port = os.environ.get("QDRANT_GRPC_PORT", "6334")
 
-    env["QDRANT_HOST"] = qdrant_host
-    env["QDRANT_HTTP_PORT"] = qdrant_http_port
-    env["QDRANT_GRPC_PORT"] = qdrant_grpc_port
-    env["QDRANT_URL"] = os.environ.get("QDRANT_URL", f"http://{qdrant_host}:{qdrant_http_port}")
-    env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
+        env["QDRANT_HOST"] = qdrant_host
+        env["QDRANT_HTTP_PORT"] = qdrant_http_port
+        env["QDRANT_GRPC_PORT"] = qdrant_grpc_port
+        env["QDRANT_URL"] = qdrant_url
+        env["QDRANT_API_KEY"] = os.environ.get("QDRANT_API_KEY", "")
 
     try:
         api_key = ensure_env("OPENAI_API_KEY")
@@ -214,23 +217,24 @@ def test_minimal_path_smoke() -> None:
             "--reset-database",
             env=env,
         )
-        run_command(
-            python,
-            "scripts/export_to_qdrant.py",
-            "--collection",
-            "chunks_main",
-            "--recreate-collection",
-            env=env,
-        )
-        run_command(
-            python,
-            "scripts/ask_qdrant.py",
-            "--question",
-            "What did Acme launch?",
-            "--top-k",
-            "3",
-            env=env,
-        )
+        if not skip_qdrant:
+            run_command(
+                python,
+                "scripts/export_to_qdrant.py",
+                "--collection",
+                "chunks_main",
+                "--recreate-collection",
+                env=env,
+            )
+            run_command(
+                python,
+                "scripts/ask_qdrant.py",
+                "--question",
+                "What did Acme launch?",
+                "--top-k",
+                "3",
+                env=env,
+            )
 
         run_command(
             python,
