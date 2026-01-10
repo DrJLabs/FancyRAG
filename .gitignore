@@ -6,8 +6,6 @@
 *.egg-info/
 __pycache__/
 
-# Tooling lockfiles generated during local runs
-
 # Local scratch outputs
 .serena/
 .worktrees/
