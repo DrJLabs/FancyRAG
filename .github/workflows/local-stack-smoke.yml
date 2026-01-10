@@ -49,11 +49,14 @@ jobs:
           rendered_lines: list[str] = []
           export_lines: list[str] = []
           found = False
+          embedding_base_seen = False
+          embedding_base_set = False
           placeholder_keys = {
               "EMBEDDING_API_BASE_URL",
               "EMBEDDING_API_KEY",
               "EMBEDDING_MODEL",
           }
+          default_embedding_base_url = "https://api.openai.com/v1"
 
           def _strip_quotes(value: str) -> str:
               if (value.startswith('"') and value.endswith('"')) or (
@@ -90,6 +93,19 @@ jobs:
                   rendered = line
 
               rendered = _sanitize_placeholder(rendered)
+              stripped_line = rendered.strip()
+              if stripped_line.startswith("EMBEDDING_API_BASE_URL="):
+                  embedding_base_seen = True
+                  _, _, remainder = stripped_line.partition("=")
+                  value = _strip_quotes(remainder.split("#", 1)[0].strip())
+                  if not value:
+                      rendered = (
+                          'EMBEDDING_API_BASE_URL="https://api.openai.com/v1"'
+                          "  # CI fallback for OpenAI embeddings"
+                      )
+                      embedding_base_set = True
+                  else:
+                      embedding_base_set = True
 
               rendered_lines.append(rendered)
 
@@ -105,6 +121,11 @@ jobs:
           if not found:
               rendered_lines.append(f'OPENAI_API_KEY="{secret}"')
               export_lines.append(f'OPENAI_API_KEY={secret}')
+          if not embedding_base_seen:
+              rendered_lines.append(
+                  f'EMBEDDING_API_BASE_URL="{default_embedding_base_url}"  # CI fallback for OpenAI embeddings'
+              )
+              export_lines.append(f"EMBEDDING_API_BASE_URL={default_embedding_base_url}")
 
           env_path.write_text('\n'.join(rendered_lines) + '\n')
 
