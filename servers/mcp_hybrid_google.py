@@ -37,7 +37,7 @@ def main() -> int:
 
     static_token = os.getenv("MCP_STATIC_TOKEN")
     auth_provider = None
-    if static_token:
+    if config.server.auth_required and static_token:
         auth_provider = StaticTokenVerifier(
             tokens={
                 static_token: {

@@ -43,6 +43,7 @@ class ServerSettings(BaseModel):
     port: int = Field(default=8080, ge=1, le=65535)
     path: str = Field(default="/mcp")
     base_url: str
+    auth_required: bool = Field(default=True)
 
 
 class QuerySettings(BaseModel):
@@ -54,7 +55,7 @@ class AppConfig(BaseModel):
     neo4j: Neo4jSettings
     indexes: IndexSettings
     embedding: EmbeddingSettings
-    oauth: OAuthSettings
+    oauth: OAuthSettings | None
     server: ServerSettings
     query: QuerySettings
 
@@ -80,6 +81,18 @@ def _parse_scopes(raw: str) -> list[str]:
             "GOOGLE_OAUTH_REQUIRED_SCOPES must include at least one scope"
         )  # noqa
     return scopes
+
+
+def _parse_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
+    raw = env.get(key)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"{key} must be a boolean")
 
 
 def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
@@ -118,14 +131,17 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
         **embedding_kwargs,
     )
 
-    scopes_raw = _optional(env_map, "GOOGLE_OAUTH_REQUIRED_SCOPES")
-    oauth_settings = OAuthSettings(
-        client_id=_require(env_map, "GOOGLE_OAUTH_CLIENT_ID"),
-        client_secret=_require(env_map, "GOOGLE_OAUTH_CLIENT_SECRET"),
-        required_scopes=_parse_scopes(
-            scopes_raw or "openid,https://www.googleapis.com/auth/userinfo.email"
-        ),
-    )
+    auth_required = _parse_bool(env_map, "MCP_AUTH_REQUIRED", default=True)
+    oauth_settings: OAuthSettings | None = None
+    if auth_required:
+        scopes_raw = _optional(env_map, "GOOGLE_OAUTH_REQUIRED_SCOPES")
+        oauth_settings = OAuthSettings(
+            client_id=_require(env_map, "GOOGLE_OAUTH_CLIENT_ID"),
+            client_secret=_require(env_map, "GOOGLE_OAUTH_CLIENT_SECRET"),
+            required_scopes=_parse_scopes(
+                scopes_raw or "openid,https://www.googleapis.com/auth/userinfo.email"
+            ),
+        )
 
     server_kwargs: dict[str, Any] = {}
     if (host_raw := _optional(env_map, "MCP_SERVER_HOST")) is not None:
@@ -137,6 +153,7 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
 
     server_settings = ServerSettings(
         base_url=_require(env_map, "MCP_BASE_URL"),
+        auth_required=auth_required,
         **server_kwargs,
     )
 
