@@ -46,7 +46,7 @@ def ensure_embedding_dimensions(
         return embedding
 
     remediation_hint = (
-        "Set OPENAI_EMBEDDING_DIMENSIONS to the provider's reported vector length"
+        "Set EMBEDDING_DIMENSIONS (preferred) or OPENAI_EMBEDDING_DIMENSIONS to the provider's reported vector length"
         if not (override_dimensions or settings.embedding_dimensions_override)
         else "Update the override to match the embedding service response"
     )
