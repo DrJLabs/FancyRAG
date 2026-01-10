@@ -7,9 +7,9 @@
 __pycache__/
 
 # Tooling lockfiles generated during local runs
-uv.lock
 
 # Local scratch outputs
 .serena/
+.worktrees/
 artifacts/
 reports/

@@ -147,7 +147,7 @@ class SharedOpenAIClient:
         self,
         *,
         messages: Sequence[Mapping[str, str]],
-        temperature: Optional[float] = None,
+        temperature: float = 0.0,
         max_tokens: int = 256,
         **extra_params: Any,
     ) -> ChatResult:

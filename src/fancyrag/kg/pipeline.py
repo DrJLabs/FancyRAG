@@ -996,6 +996,35 @@ def _content_from_payload(payload: Any) -> str:
     return ""
 
 
+def _content_from_responses_payload(payload: Any) -> str:
+    if isinstance(payload, Mapping):
+        output_text = payload.get("output_text")
+    else:
+        output_text = getattr(payload, "output_text", None)
+    text = _coerce_text(output_text)
+    if text:
+        return text
+
+    if isinstance(payload, Mapping):
+        outputs = payload.get("output") or []
+    else:
+        outputs = getattr(payload, "output", None) or []
+    for output in outputs:
+        if isinstance(output, Mapping):
+            contents = output.get("content") or []
+        else:
+            contents = getattr(output, "content", None) or []
+        for item in contents:
+            if isinstance(item, Mapping):
+                item_text = item.get("text") or item.get("content") or item.get("output_text")
+            else:
+                item_text = getattr(item, "text", None) or getattr(item, "content", None) or getattr(item, "output_text", None)
+            text = _coerce_text(item_text)
+            if text:
+                return text
+    return ""
+
+
 def _extract_content(raw_response: Any) -> str:
     """Extract textual content from a chat-completion style response."""
 
@@ -1004,6 +1033,13 @@ def _extract_content(raw_response: Any) -> str:
         payload = raw_response.model_dump()
     elif hasattr(raw_response, "to_dict"):
         payload = raw_response.to_dict()
+
+    text = _content_from_responses_payload(raw_response)
+    if text:
+        return text
+    text = _content_from_responses_payload(payload)
+    if text:
+        return text
 
     if OpenAIChatCompletion is not None:
         if isinstance(raw_response, OpenAIChatCompletion):
@@ -1085,7 +1121,7 @@ class SharedOpenAILLM(LLMInterface):
         """
         super().__init__(
             model_name=settings.chat_model,
-            model_params={"temperature": 0.0, "max_tokens": 512},
+            model_params={"temperature": settings.temperature, "max_tokens": 512},
         )
         self._client = client
 

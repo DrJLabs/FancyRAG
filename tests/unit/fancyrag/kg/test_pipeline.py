@@ -32,6 +32,7 @@ def _stub_settings(monkeypatch):
                 chat_model="gpt-5-mini",
                 embedding_model="text-embedding-3-small",
                 embedding_dimensions=1536,
+                temperature=0.3,
                 max_attempts=3,
             )
         ),
@@ -219,6 +220,20 @@ def test_run_pipeline_validates_chunk_size(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError):
         pipeline.run_pipeline(options)
+
+
+def test_extract_content_prefers_responses_output_text():
+    raw_response = types.SimpleNamespace(output_text="hello from responses")
+    assert pipeline._extract_content(raw_response) == "hello from responses"
+
+
+def test_extract_content_reads_responses_output_list():
+    payload = {
+        "output": [
+            {"content": [{"type": "output_text", "text": "chunked response"}]},
+        ]
+    }
+    assert pipeline._extract_content(payload) == "chunked response"
 
 
 def test_run_pipeline_reuses_cached_splitter_results(monkeypatch, tmp_path):

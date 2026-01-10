@@ -101,6 +101,20 @@ def test_backoff_override_validation():
     assert any(entry["event"] == "openai.settings.backoff_override" for entry in logs)
 
 
+def test_temperature_defaults_and_overrides():
+    settings = OpenAISettings.load({}, actor="pytest")
+    assert settings.temperature == pytest.approx(0.3)
+
+    settings = OpenAISettings.load({"OPENAI_TEMPERATURE": "0.15"}, actor="pytest")
+    assert settings.temperature == pytest.approx(0.15)
+
+
+def test_invalid_temperature_raises():
+    env = {"OPENAI_TEMPERATURE": "cold"}
+    with pytest.raises(ValueError):
+        OpenAISettings.load(env, actor="pytest")
+
+
 def test_invalid_backoff_raises():
     env = {"OPENAI_BACKOFF_SECONDS": "zero"}
     with pytest.raises(ValueError):

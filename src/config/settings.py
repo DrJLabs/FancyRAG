@@ -25,6 +25,7 @@ DEFAULT_EMBEDDING_DIMENSIONS = 1536
 DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 0.5
 DEFAULT_FALLBACK_ENABLED = True
+DEFAULT_TEMPERATURE = 0.3
 
 _ENV_OPENAI_MODEL = "OPENAI_MODEL"
 _ENV_OPENAI_EMBEDDING_MODEL = "OPENAI_EMBEDDING_MODEL"
@@ -36,6 +37,7 @@ _ENV_EMBEDDING_API_KEY = "EMBEDDING_API_KEY"
 _ENV_ACTOR_HINT = "GRAPH_RAG_ACTOR"
 _ENV_OPENAI_MAX_ATTEMPTS = "OPENAI_MAX_ATTEMPTS"
 _ENV_OPENAI_BACKOFF_SECONDS = "OPENAI_BACKOFF_SECONDS"
+_ENV_OPENAI_TEMPERATURE = "OPENAI_TEMPERATURE"
 _ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
 _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
@@ -124,6 +126,7 @@ class OpenAISettings(BaseModel):
     actor: str
     max_attempts: int = Field(default=DEFAULT_MAX_RETRY_ATTEMPTS, gt=0)
     backoff_seconds: float = Field(default=DEFAULT_BACKOFF_SECONDS, gt=0)
+    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0)
     enable_fallback: bool = Field(default=DEFAULT_FALLBACK_ENABLED)
     api_base_url: str | None = None
     allow_insecure_base_url: bool = False
@@ -286,6 +289,36 @@ class OpenAISettings(BaseModel):
                 default_seconds=DEFAULT_BACKOFF_SECONDS,
             )
 
+        temperature_raw = (source.get(_ENV_OPENAI_TEMPERATURE) or "").strip()
+        temperature = DEFAULT_TEMPERATURE
+        if temperature_raw:
+            try:
+                temperature = float(temperature_raw)
+            except ValueError as exc:  # pragma: no cover - invalid atof path
+                logger.error(
+                    "openai.settings.invalid_temperature",
+                    actor=actor_name,
+                    supplied=temperature_raw,
+                )
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_TEMPERATURE} value '{temperature_raw}'. Provide a non-negative number."
+                ) from exc
+            if temperature < 0:
+                logger.error(
+                    "openai.settings.non_positive_temperature",
+                    actor=actor_name,
+                    supplied=temperature_raw,
+                )
+                raise ValueError(
+                    f"{_ENV_OPENAI_TEMPERATURE} must be non-negative when set; received {temperature}."
+                )
+            logger.info(
+                "openai.settings.temperature_override",
+                actor=actor_name,
+                temperature=temperature,
+                default_temperature=DEFAULT_TEMPERATURE,
+            )
+
         fallback_raw = (source.get(_ENV_OPENAI_ENABLE_FALLBACK) or "").strip()
         enable_fallback = DEFAULT_FALLBACK_ENABLED
         if fallback_raw:
@@ -370,6 +403,7 @@ class OpenAISettings(BaseModel):
             actor=actor_name,
             max_attempts=max_attempts,
             backoff_seconds=backoff_seconds,
+            temperature=temperature,
             enable_fallback=enable_fallback,
             api_base_url=api_base_url,
             allow_insecure_base_url=allow_insecure,
@@ -565,6 +599,7 @@ class FancyRAGSettings(BaseModel):
             "EMBEDDING_MODEL": self.openai.embedding_model,
             "OPENAI_MAX_ATTEMPTS": str(self.openai.max_attempts),
             "OPENAI_BACKOFF_SECONDS": str(self.openai.backoff_seconds),
+            "OPENAI_TEMPERATURE": str(self.openai.temperature),
             "OPENAI_ENABLE_FALLBACK": "true" if self.openai.enable_fallback else "false",
         }
         if self.openai.embedding_dimensions_override is not None:
@@ -616,4 +651,5 @@ __all__ = [
     "DEFAULT_MAX_RETRY_ATTEMPTS",
     "DEFAULT_BACKOFF_SECONDS",
     "DEFAULT_FALLBACK_ENABLED",
+    "DEFAULT_TEMPERATURE",
 ]

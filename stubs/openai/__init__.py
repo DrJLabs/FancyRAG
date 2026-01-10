@@ -111,6 +111,34 @@ class _Chat:
         self.completions = _ChatCompletions()
 
 
+class _Responses:
+    """Stubbed responses API interface."""
+
+    def create(
+        self,
+        *,
+        model: str,
+        input: Sequence[Mapping[str, str]],
+        max_output_tokens: int,
+        **_: Any,
+    ) -> Any:
+        last = input[-1].get("content", "") if input else ""
+        content = f"Stubbed response for: {last}".strip()
+        usage = _ChatUsage(prompt_tokens=max(len(input) * 10, 5), completion_tokens=min(max_output_tokens, 12))
+        return SimpleNamespace(
+            id="stub-response",
+            model=model,
+            usage=usage,
+            output_text=content,
+            output=[SimpleNamespace(content=[SimpleNamespace(text=content)])],
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                )
+            ],
+        )
+
+
 class _Embeddings:
     """Stubbed embeddings interface."""
 
@@ -131,6 +159,7 @@ class OpenAI:
     def __init__(self, *, base_url: str | None = None, **_: Any) -> None:
         self.base_url = base_url
         self.chat = _Chat()
+        self.responses = _Responses()
         self.embeddings = _Embeddings()
 
 
