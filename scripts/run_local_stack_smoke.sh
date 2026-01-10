@@ -14,6 +14,9 @@ Usage: scripts/run_local_stack_smoke.sh [--env-output <path>]
 Options:
   --env-output <path>  Relative path for the generated env file
                        (default: artifacts/local_stack/.env.local-stack-smoke).
+
+Notes:
+  - OPENAI_API_KEY is read from the environment, then .env.local or .env if unset.
 USAGE
 }
 
@@ -40,17 +43,63 @@ if [[ "${ENV_OUTPUT}" = /* ]]; then
   exit 1
 fi
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "error: OPENAI_API_KEY must be set to mirror the CI smoke workflow" >&2
-  exit 1
-fi
-
 PYTHON_CMD=${PYTHON_CMD:-python3}
 if ! command -v "${PYTHON_CMD}" >/dev/null 2>&1; then
   PYTHON_CMD=python
 fi
 if ! command -v "${PYTHON_CMD}" >/dev/null 2>&1; then
   echo "error: python interpreter not found (set PYTHON_CMD if needed)" >&2
+  exit 1
+fi
+
+read_openai_key() {
+  local dotenv_path="$1"
+  "${PYTHON_CMD}" - "$dotenv_path" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    sys.exit(1)
+
+for raw_line in path.read_text(encoding="utf-8").splitlines():
+    stripped = raw_line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        continue
+    key, _, remainder = stripped.partition("=")
+    if key.strip() != "OPENAI_API_KEY":
+        continue
+    value = remainder.split("#", 1)[0].strip()
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        value = value[1:-1]
+    if value:
+        print(value)
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  dotenv_candidates=()
+  if [[ -n "${FANCYRAG_DOTENV_PATH:-}" ]]; then
+    dotenv_candidates+=("${FANCYRAG_DOTENV_PATH}")
+  fi
+  dotenv_candidates+=(".env.local" ".env")
+  for candidate in "${dotenv_candidates[@]}"; do
+    if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+      if openai_key=$(read_openai_key "${candidate}"); then
+        OPENAI_API_KEY="${openai_key}"
+        export OPENAI_API_KEY
+        break
+      fi
+    fi
+  done
+fi
+
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "error: OPENAI_API_KEY must be set (export it or add to .env.local/.env)" >&2
   exit 1
 fi
 
