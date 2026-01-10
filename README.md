@@ -45,7 +45,7 @@ If the default host bindings (Neo4j HTTP 22010, Neo4j Bolt 22011, MCP 22012) col
 with other services, override them before starting the stack:
 
 ```bash
-NEO4J_HTTP_PORT=17474 NEO4J_BOLT_PORT=22011 MCP_PUBLISHED_PORT=18080 make up
+NEO4J_HTTP_PORT=17474 NEO4J_BOLT_PORT=17687 MCP_PUBLISHED_PORT=18080 make up
 ```
 
 Configure secrets in `.env.local` before running ingestion. Chat/semantic extraction
