@@ -705,13 +705,11 @@ def _run_semantic_enrichment(
 
         async def _extract_and_process(chunk: TextChunk) -> Neo4jGraph | None:
             async with semaphore:
-                last_error: Exception | None = None
                 attempts = max_retries + 1
                 for attempt in range(attempts):
                     try:
                         graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
                     except (LLMGenerationError, OpenAIClientError) as exc:
-                        last_error = exc
                         if attempt < max_retries:
                             continue
                         if failure_artifacts_enabled:
@@ -725,15 +723,6 @@ def _run_semantic_enrichment(
                         return None
                     await extractor.post_process_chunk(graph, chunk)
                     return graph
-                if last_error and failure_artifacts_enabled:
-                    _write_semantic_failure_artifact(
-                        failure_root=failure_artifacts_root,
-                        ingest_run_key=ingest_run_key,
-                        chunk=chunk,
-                        relative_path=relative_path,
-                        error=last_error,
-                    )
-                return None
 
         tasks = [_extract_and_process(chunk) for chunk in chunk_result.chunks]
         results = await asyncio.gather(*tasks)

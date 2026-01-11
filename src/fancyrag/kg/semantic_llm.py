@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -164,7 +165,7 @@ class StructuredSemanticLLM(LLMInterface):
         message_history: Sequence[Mapping[str, str]] | None = None,
         system_instruction: str | None = None,
     ) -> LLMResponse:
-        return self.invoke(input, message_history, system_instruction)
+        return await asyncio.to_thread(self.invoke, input, message_history, system_instruction)
 
 
 __all__ = ["StructuredSemanticLLM"]
