@@ -144,13 +144,16 @@ class StructuredSemanticLLM(LLMInterface):
                 and text_format.get("type") == "json_schema"
                 and _looks_like_format_error(exc)
             ):
-                fallback = {"format": {"type": "json_object"}}
-                result = self._client.chat_completion(
-                    messages=messages,
-                    temperature=self.model_params.get("temperature", 0.0),
-                    max_tokens=self.model_params.get("max_tokens", 512),
-                    text=fallback,
-                )
+                try:
+                    fallback = {"format": {"type": "json_object"}}
+                    result = self._client.chat_completion(
+                        messages=messages,
+                        temperature=self.model_params.get("temperature", 0.0),
+                        max_tokens=self.model_params.get("max_tokens", 512),
+                        text=fallback,
+                    )
+                except OpenAIClientError as fallback_exc:
+                    raise LLMGenerationError(str(fallback_exc)) from fallback_exc
             else:
                 raise LLMGenerationError(str(exc)) from exc
 
