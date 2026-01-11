@@ -542,7 +542,7 @@ def test_helpers_do_not_touch_environment(monkeypatch, tmp_path):
         shared_client_factory=lambda settings: object(),
         embedder_factory=lambda client, settings: object(),
         llm_factory=lambda client, settings: object(),
-        semantic_llm_factory=lambda client, settings, *, schema: object(),
+        semantic_llm_factory=lambda _client, _settings, *, schema: schema,
         schema_factory=lambda: {"type": "object"},
         splitter_config_factory=lambda **_: types.SimpleNamespace(chunk_size=resolved.chunk_size, chunk_overlap=resolved.chunk_overlap),
         splitter_factory=lambda _config: _StubSplitter(),

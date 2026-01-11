@@ -617,6 +617,15 @@ def _sanitize_run_key(run_key: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", run_key).strip("-") or "unknown"
 
 
+def _sanitize_filename(value: str) -> str:
+    """Return a filesystem-safe filename component."""
+
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
+    if sanitized in {"", ".", ".."}:
+        return "unknown"
+    return sanitized
+
+
 def _write_semantic_failure_artifact(
     *,
     failure_root: Path | None,
@@ -630,19 +639,27 @@ def _write_semantic_failure_artifact(
     if not failure_root or not ingest_run_key:
         return
     safe_run_key = _sanitize_run_key(ingest_run_key)
+    safe_chunk_uid = _sanitize_filename(str(chunk.uid))
     artifact_path = (
-        failure_root / safe_run_key / "semantic_failures" / f"{chunk.uid}.json"
+        failure_root / safe_run_key / "semantic_failures" / f"{safe_chunk_uid}.json"
     )
-    _ensure_directory(artifact_path)
-    payload = scrub_object(
-        {
-            "chunk_uid": chunk.uid,
-            "chunk_index": chunk.index,
-            "relative_path": relative_path,
-            "error": str(error),
-        }
-    )
-    artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        _ensure_directory(artifact_path)
+        payload = scrub_object(
+            {
+                "chunk_uid": chunk.uid,
+                "chunk_index": chunk.index,
+                "relative_path": relative_path,
+                "error": str(error),
+            }
+        )
+        artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception as exc:  # best-effort: never fail semantic processing on artifact writes
+        logger.warning(
+            "kg_build.semantic_failure_artifact_write_failed",
+            path=str(artifact_path),
+            error=str(exc),
+        )
 
 
 def _run_semantic_enrichment(

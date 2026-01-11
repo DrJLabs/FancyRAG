@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.neo4j-qdrant.yml}
+COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.yml}
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ "${COMPOSE_FILE}" = /* ]]; then
   COMPOSE_PATH="${COMPOSE_FILE}"
@@ -25,7 +25,7 @@ Commands:
                        Stop the stack; optionally remove data volumes.
 
 Environment:
-  COMPOSE_FILE         Override compose file path (default: docker-compose.neo4j-qdrant.yml).
+  COMPOSE_FILE         Override compose file path (default: docker-compose.yml).
 USAGE
   exit 1
 }

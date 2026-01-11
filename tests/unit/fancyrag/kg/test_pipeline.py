@@ -300,7 +300,7 @@ def test_semantic_retry_on_format_error(monkeypatch, tmp_path):
         async def extract_for_chunk(self, _schema, _examples, chunk):
             calls.append(chunk.uid)
             if len(calls) == 1:
-                raise pipeline.LLMGenerationError("bad format")
+                raise pipeline.LLMGenerationError("bad format")  # noqa: TRY003
             return pipeline.Neo4jGraph(nodes=[], relationships=[])
 
         async def post_process_chunk(self, _graph, _chunk):
@@ -342,6 +342,34 @@ def test_semantic_retry_on_format_error(monkeypatch, tmp_path):
     assert len(calls) == 2
     assert not list(tmp_path.rglob("*.json"))
 
+
+def test_write_semantic_failure_artifact_sanitizes_filename(tmp_path):
+    chunk = pipeline.TextChunk(text="hello", index=0, metadata=None, uid="bad/../uid")
+
+    pipeline._write_semantic_failure_artifact(
+        failure_root=tmp_path,
+        ingest_run_key="kg:run",
+        chunk=chunk,
+        relative_path="doc.md",
+        error=ValueError("boom"),
+    )
+
+    expected = tmp_path / "kg-run" / "semantic_failures" / "bad-..-uid.json"
+    assert expected.exists()
+
+
+def test_write_semantic_failure_artifact_ignores_io_errors(tmp_path):
+    failure_root = tmp_path / "blocked"
+    failure_root.write_text("not-a-dir", encoding="utf-8")
+    chunk = pipeline.TextChunk(text="hello", index=0, metadata=None, uid="chunk-1")
+
+    pipeline._write_semantic_failure_artifact(
+        failure_root=failure_root,
+        ingest_run_key="kg:run",
+        chunk=chunk,
+        relative_path="doc.md",
+        error=ValueError("boom"),
+    )
 
 def test_extract_content_prefers_responses_output_text():
     raw_response = types.SimpleNamespace(output_text="hello from responses")

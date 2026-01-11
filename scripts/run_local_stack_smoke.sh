@@ -5,7 +5,11 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_OUTPUT="artifacts/local_stack/.env.local-stack-smoke"
-COMPOSE_FILE="${ROOT}/docker-compose.neo4j-qdrant.yml"
+COMPOSE_FILES=("${ROOT}/docker-compose.yml" "${ROOT}/docker-compose.smoke.yml")
+COMPOSE_ARGS=()
+for file in "${COMPOSE_FILES[@]}"; do
+  COMPOSE_ARGS+=("-f" "$file")
+done
 
 usage() {
   cat <<'USAGE'
@@ -115,14 +119,14 @@ ${PYTHON_CMD} scripts/prepare_local_stack_env.py \
   --output "${ENV_OUTPUT}"
 
 cleanup() {
-  docker compose -f "${COMPOSE_FILE}" down --volumes
+  docker compose "${COMPOSE_ARGS[@]}" down --volumes
 }
 trap cleanup EXIT
 
-scripts/check_local_stack.sh --config
-docker compose -f "${COMPOSE_FILE}" up -d --wait neo4j
+COMPOSE_FILE="${COMPOSE_FILES[0]}" scripts/check_local_stack.sh --config
+docker compose "${COMPOSE_ARGS[@]}" up -d --wait neo4j
 
-docker compose -f "${COMPOSE_FILE}" run --rm --no-deps \
+docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps \
   -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
   -e LOCAL_STACK_SKIP_DOCKER_CHECK=1 \
   -e LOCAL_STACK_SKIP_QDRANT=1 \
