@@ -1,5 +1,7 @@
 # local-stack-smoke should not export placeholder embedding envs
 
+Status: Complete
+
 ## Summary
 The local-stack smoke workflow copies `.env.example` to `.env` and exports every
 non-commented value to the CI environment. Placeholder entries such as

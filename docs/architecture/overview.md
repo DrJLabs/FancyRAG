@@ -1,15 +1,15 @@
 # Architecture Overview
 
 ## Technical Summary
-The Neo4j GraphRAG solution runs as a Python 3.12 CLI that orchestrates knowledge graph ingestion, vector synchronization, and retrieval via the official `neo4j-graphrag` library. Version 1 anchors on a project-owned stack: Docker Compose launches Neo4j 5.26.12 (with APOC Core) and Qdrant 1.15.4 on the developer host, while Python scripts create the Neo4j vector index, execute `SimpleKGPipeline`, export embeddings to Qdrant, and query through `GraphRAG` with `QdrantNeo4jRetriever`. See the [Version Matrix](../README.md#version-matrix) for the canonical list of pinned components.
+The Neo4j GraphRAG solution runs as a Python 3.12 CLI that orchestrates knowledge graph ingestion, vector indexing, and retrieval via the official `neo4j-graphrag` library. Version 1 anchors on a project-owned stack: Docker Compose launches Neo4j 5.26.12 (with APOC Core) plus the MCP service from `docker-compose.yml` on the developer host, while Python scripts create the Neo4j vector index and execute `SimpleKGPipeline`. Qdrant export/retrieval remains a legacy optional workflow (via `docker-compose.neo4j-qdrant.yml` and the export scripts) for teams that still need the dual-store path. See the [Version Matrix](../README.md#version-matrix) for the canonical list of pinned components.
 
 ## High-Level Components
-- Docker Compose stack (`docker-compose.neo4j-qdrant.yml`) that provisions Neo4j and Qdrant with persistent volumes and configurable credentials.
+- Docker Compose stack (`docker-compose.yml`) that provisions Neo4j and the MCP service with persistent volumes and configurable credentials. Legacy Qdrant workflows use `docker-compose.neo4j-qdrant.yml`.
 - CLI orchestrator housing subcommands for ingest, vectors, and search operations plus standalone scripts under `scripts/` (`create_vector_index.py`, `kg_build.py`, `export_to_qdrant.py`, `ask_qdrant.py`).
 - Knowledge Graph Builder leveraging `SimpleKGPipeline` to populate Neo4j with Document and Chunk nodes and embeddings.
-- Vector export service that streams embeddings from Neo4j into Qdrant with join payloads.
-- Retrieval engine that joins Qdrant hits with Neo4j entities and delegates answer generation to OpenAI models.
-- Workspace bootstrap script (`scripts/bootstrap.sh`) that provisions the Python 3.12 virtual environment, installs `neo4j-graphrag[experimental,openai,qdrant]`, and validates imports. Run it before executing Compose workflows and activate the virtualenv (`source .venv/bin/activate`) prior to running scripts.
+- Legacy vector export service that streams embeddings from Neo4j into Qdrant with join payloads (optional).
+- Legacy retrieval engine that joins Qdrant hits with Neo4j entities and delegates answer generation to OpenAI models (optional).
+- Workspace bootstrap script (`scripts/bootstrap.sh`) that provisions the Python 3.12 virtual environment, installs `neo4j-graphrag[experimental,openai]` (plus the `qdrant` extra only when needed), and validates imports. Run it before executing Compose workflows and activate the virtualenv (`source .venv/bin/activate`) prior to running scripts.
 
 ## Built-In Tool Playbook
 Always consult the canonical documentation set below before running any GraphRAG tooling (CLI subcommands, bootstrap scripts, or diagnostics helpers). These files are updated whenever workflows change and must be treated as the source of truth:
@@ -37,17 +37,17 @@ graph TD
     CLI[Python CLI]
     GraphRAG[Neo4j GraphRAG]
     Neo4j[(Neo4j DB)]
-    Qdrant[(Qdrant Collection)]
+    Qdrant[(Qdrant Collection (legacy optional))]
     OpenAI[(OpenAI APIs)]
 
     Operator --> Compose
     Operator --> CLI --> GraphRAG
     Compose --> Neo4j
-    Compose --> Qdrant
+    Compose -.-> Qdrant
     GraphRAG --> Neo4j
-    GraphRAG --> Qdrant
+    GraphRAG -.-> Qdrant
     GraphRAG --> OpenAI
-    Qdrant <-->|neo4j_id| Neo4j
+    Qdrant <-.->|neo4j_id| Neo4j
 ```
 
 ## Change Log
@@ -63,19 +63,19 @@ graph TD
 | 2025-10-04 | 0.8     | Documented OpenAI base URL override and sanitisation guardrails | James     |
 
 ## Environment Configuration
-- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-5-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), and local stack defaults (`NEO4J_URI=bolt://localhost:7687`, `NEO4J_USERNAME=neo4j`, `NEO4J_PASSWORD=neo4j`, `QDRANT_URL=http://localhost:6333`). `QDRANT_API_KEY` may remain blank for local usage.
+- Copy `.env.example` to `.env` immediately after running `scripts/bootstrap.sh`. Populate values for `OPENAI_API_KEY`, `OPENAI_MODEL` (baseline `gpt-5-mini` with optional fallback `gpt-4o-mini`), `OPENAI_EMBEDDING_MODEL` (`text-embedding-3-small`), and local stack defaults (`NEO4J_URI=bolt://localhost:7687`, `NEO4J_USERNAME=neo4j`, `NEO4J_PASSWORD=neo4j`). `QDRANT_URL`/`QDRANT_API_KEY` are only required for legacy Qdrant export workflows.
 - The CLI automatically loads variables from `.env` at repository root; override the location by setting `FANCYRAG_DOTENV_PATH` when invoking automation from alternate directories.
 - Optional guardrails: `OPENAI_MAX_ATTEMPTS` (default 3) controls retry ceilings, `OPENAI_BACKOFF_SECONDS` adjusts the initial exponential backoff, and `OPENAI_ENABLE_FALLBACK` toggles whether operators may use the documented fallback chat model. Leave unset to accept defaults.
 - To route traffic through a gateway/self-hosted deployment, set `OPENAI_BASE_URL` to an `https://` endpoint. Local-only `http://` testing requires explicitly setting `OPENAI_ALLOW_INSECURE_BASE_URL=true`; production deployments must remain TLS-only. The shared client and sanitizer mask the custom host in logs/telemetry automatically.
-- Create data directories (`mkdir -p ./.data/neo4j/{data,logs,import} ./.data/qdrant/storage`) before starting the stack to ensure Docker bind-mounts use project-scoped storage.
-- Validate configuration with `docker compose -f docker-compose.neo4j-qdrant.yml config` (or `scripts/check_local_stack.sh --config`) to confirm environment substitution before launching services.
-- Start the stack with `scripts/check_local_stack.sh --up` (equivalent to `docker compose -f docker-compose.neo4j-qdrant.yml up -d`); stop it with `scripts/check_local_stack.sh --down` (adds `--volumes` when you want a clean reset).
+- Create data directories (`mkdir -p ./.data/neo4j/{data,logs,import}`) before starting the stack to ensure Docker bind-mounts use project-scoped storage. Add `./.data/qdrant/storage` only for the legacy Qdrant stack.
+- Validate configuration with `docker compose -f docker-compose.yml config` (or `COMPOSE_FILE=docker-compose.yml scripts/check_local_stack.sh --config`) to confirm environment substitution before launching services. Use `docker-compose.neo4j-qdrant.yml` only for the legacy Qdrant stack.
+- Start the stack with `COMPOSE_FILE=docker-compose.yml scripts/check_local_stack.sh --up` (equivalent to `docker compose -f docker-compose.yml up -d`); stop it with `scripts/check_local_stack.sh --down` (adds `--volumes` when you want a clean reset). Override `COMPOSE_FILE` for the legacy Qdrant stack.
 - Keep `.env` git-ignored; never commit real credentials or paste secrets into shared channels.
 - To target managed services, override the same variables without modifying script code.
 
 ## Workspace Verification
 - After bootstrapping and populating `.env`, validate the environment with `PYTHONPATH=src python3 -m cli.diagnostics workspace --write-report` (or add `--verify` when running `scripts/bootstrap.sh`).
-- The diagnostics command imports `neo4j_graphrag`, `neo4j`, `qdrant_client`, `openai`, `structlog`, and `pytest`, failing fast when dependencies are missing or misconfigured.
+- The diagnostics command imports `neo4j_graphrag`, `neo4j`, `openai`, `structlog`, and `pytest`, failing fast when dependencies are missing or misconfigured. `qdrant_client` is only required for the legacy Qdrant workflow.
 - A structured report is written to `artifacts/environment/versions.json` capturing Python runtime, package versions (via `importlib.metadata`), the SHA-256 of `requirements.lock`, and the current git commit for audit trails.
 - Output is redacted automatically—no environment variables or secrets are persisted—allowing the report to be shared with operators and CI systems.
 - Rerun diagnostics whenever dependencies change (`pip install`/`pip-compile` updates), before pushing Compose updates, or prior to releasing automation changes so drift is detected early.
@@ -88,7 +88,7 @@ graph TD
 ## Minimal Path Workflow
 1. Bootstrap workspace + `.env` (`scripts/bootstrap.sh`, then copy `.env.example`).
 2. Validate compose configuration: `scripts/check_local_stack.sh --config` (wraps `docker compose config`).
-3. Start containers: `scripts/check_local_stack.sh --up` (or run `docker compose -f docker-compose.neo4j-qdrant.yml up -d` directly).
+3. Start containers: `COMPOSE_FILE=docker-compose.yml scripts/check_local_stack.sh --up` (or run `docker compose -f docker-compose.yml up -d` directly). Use `docker-compose.neo4j-qdrant.yml` only for the legacy Qdrant stack.
 4. Wait for health checks to pass (`scripts/check_local_stack.sh --status` polls container health).
 5. Create the vector index (idempotent): `PYTHONPATH=src python3 scripts/create_vector_index.py --index-name chunks_vec --label Chunk --embedding-property embedding --dimensions 1024 --similarity cosine` (match `EMBEDDING_DIMENSIONS` for your embedding model; use 1536 for default `text-embedding-3-small` when no override is set).
 6. Build the minimal knowledge graph: `PYTHONPATH=src python3 scripts/kg_build.py --source docs/samples/pilot.txt --chunk-size 600 --chunk-overlap 100`.
@@ -97,9 +97,9 @@ graph TD
    - Directory ingestion skips non-text/binary files, logs warnings, and records per-chunk metadata (relative path, git commit, SHA-256 checksum, chunk indices) so downstream retrieval can filter by provenance.
    - Every ingestion run executes a QA gate before finalizing Neo4j writes and emits a versioned report (`ingestion-qa-report/v1`) under `artifacts/ingestion/<timestamp>/` (`quality_report.json` + `quality_report.md`). The report captures chunk/token histograms, orphan integrity, and checksum validation results. Override thresholds with `--qa-max-missing-embeddings`, `--qa-max-orphan-chunks`, and `--qa-max-checksum-mismatches`; failing gates roll back newly created chunks/documents and return a non-zero exit code.
    - Run logs capture both ingestion duration and `qa.qa_evaluation_ms`, and reports are scrubbed via the shared sanitizer to avoid leaking secrets or absolute filesystem paths.
-7. Export embeddings: `PYTHONPATH=src python3 scripts/export_to_qdrant.py --collection chunks_main`.
-8. Smoke retrieval: `PYTHONPATH=src python3 scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
-   - The CLI now delegates vector search + context joins to `neo4j_graphrag.retrievers.QdrantNeo4jRetriever`, wiring the Qdrant payload `chunk_id` to Neo4j `Chunk` nodes and returning the same sanitized log payload used by QA telemetry. Override the collection name or join properties via existing CLI/env settings if your deployment stores alternative identifiers.
+7. Legacy only: export embeddings to Qdrant with `PYTHONPATH=src python3 scripts/export_to_qdrant.py --collection chunks_main`.
+8. Legacy only: smoke retrieval via Qdrant with `PYTHONPATH=src python3 scripts/ask_qdrant.py --question "What did Acme launch?" --top-k 5`.
+   - The CLI delegates vector search + context joins to `neo4j_graphrag.retrievers.QdrantNeo4jRetriever` for the legacy stack, wiring the Qdrant payload `chunk_id` to Neo4j `Chunk` nodes and returning the same sanitized log payload used by QA telemetry. Override the collection name or join properties via existing CLI/env settings if your deployment stores alternative identifiers.
 9. Documentation lint guard: `PYTHONPATH=src python3 -m scripts.check_docs` verifies `docs/architecture/overview.md` and `docs/architecture/source-tree.md` still reflect the minimal-path workflow and native retriever usage.
 10. Tear down containers when finished: `scripts/check_local_stack.sh --down --destroy-volumes` (adds `docker compose ... down --volumes` for a clean slate).
 

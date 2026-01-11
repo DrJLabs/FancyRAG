@@ -1,12 +1,15 @@
 # Neo4j GraphRAG Brownfield Architecture
 
 ## Introduction
-- **Scope:** Captures the current state of the local Neo4j + Qdrant evaluation stack described in `docs/prd.md` (version 0.3, updated 2025-10-02). Focus is on the Docker-first "minimal path" workflow that ingests documents into Neo4j, mirrors embeddings into Qdrant, and serves retrieval via the GraphRAG retriever.
+- **Scope:** Captures the legacy Neo4j + Qdrant evaluation stack described in `docs/prd.md` (version 0.3, updated 2025-10-02). The current default stack is Neo4j-only (`docker-compose.yml`), so Qdrant references below are historical and apply only to teams still running the dual-store workflow.
 - **Audience:** Agents implementing Stories 4.x (caching, QA, query helpers) and future service enhancements. Target skill level: senior developer familiar with Python data tooling.
 - **Key Guiding Principle:** Reflect reality. All behaviors below were verified against the code and scripts that ship in this repository as of 2025-10-06.
 
 ## Runtime Components
-- **Docker Compose stack** (`docker-compose.neo4j-qdrant.yml`)
+- **Default Docker Compose stack** (`docker-compose.yml`)
+  - `neo4j` service: Neo4j 5.26.12 with APOC enabled, binds `.data/neo4j/{data,logs,import}` via host mounts and advertises Bolt/HTTP using `NEO4J_*` env overrides.
+  - `mcp` service: MCP server container wired to the Neo4j service for retrieval.
+- **Legacy Docker Compose stack** (`docker-compose.neo4j-qdrant.yml`)
   - `neo4j` service: Neo4j 5.26.12 with APOC enabled, binds `.data/neo4j/{data,logs,import}` via host mounts and advertises Bolt/HTTP using `NEO4J_*` env overrides.
   - `qdrant` service: Qdrant 1.15.4 persisting to `.data/qdrant/storage`; health check polls `/readyz` to guard script execution.
   - `smoke-tests` service: Python 3.12 container wired for CI; runs against the live containers once both health checks pass.
@@ -86,9 +89,9 @@
   - Stories 2.5, 4.3, 4.5 encode post-development QA expectations and should be checked when assessing readiness.
 
 ## Configuration and Secrets
-- `.env` (developer-local) supplies OpenAI, Neo4j, and Qdrant credentials. `FancyRAGSettings` (defined in `src/config/settings.py`) loads these values via Pydantic, emitting actionable `ValueError` messages when required keys are missing or malformed before any network calls execute. Legacy helpers such as `fancyrag.utils.env.ensure_env` now delegate to the typed surface and fall back to raw environment reads only when validation cannot run (e.g., partial test fixtures).
+- `.env` (developer-local) supplies OpenAI and Neo4j credentials. Qdrant credentials are optional and only needed for the legacy dual-store workflow. `FancyRAGSettings` (defined in `src/config/settings.py`) loads these values via Pydantic, emitting actionable `ValueError` messages when required keys are missing or malformed before any network calls execute. Legacy helpers such as `fancyrag.utils.env.ensure_env` now delegate to the typed surface and fall back to raw environment reads only when validation cannot run (e.g., partial test fixtures).
 - `FancyRAGSettings.openai` enforces the chat-model allowlist (`gpt-5-mini` baseline, optional `gpt-4o-mini` fallback), validates embedding overrides, and records base URL overrides with masked logging. Override knobs remain the same (`OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_MAX_ATTEMPTS`, etc.) but are now typed and cached per actor.
-- `FancyRAGSettings.neo4j` and `FancyRAGSettings.qdrant` normalise connection details (URI validation, optional database names, API keys). Docker defaults still map to `bolt://localhost:7687` and `http://localhost:6333`; managed deployments must override the same environment keys, which are now surfaced through typed accessors.
+- `FancyRAGSettings.neo4j` normalises connection details (URI validation, optional database names, API keys). `FancyRAGSettings.qdrant` remains available for legacy workflows. Docker defaults map to `bolt://localhost:7687`; Qdrant defaults (`http://localhost:6333`) apply only when running the legacy stack. Managed deployments must override the same environment keys, which are now surfaced through typed accessors.
 
 ## Observability and Telemetry
 - Structlog instrumentation (backed by `_compat.structlog`) standardizes log fields across scripts. JSON artifacts are scrubbed via `cli.sanitizer.scrub_object` to remove credentials.
@@ -99,7 +102,7 @@
 ## Technical Debt and Constraints (Current Reality)
 - **Dependency sensitivity:** `neo4j_graphrag` optional modules (semantic extractor, writer) must be installed; otherwise the pipeline raises explicit RuntimeErrors. This is acceptable for local smoke but blocks semantic enrichment until dependencies are satisfied.
 - **Hard-coded model allowlist:** Adding new OpenAI models requires code changes plus policy review; short term workaround is limited to gpt-5-mini ↔ gpt-4o-mini fallback.
-- **Manual data cleanup:** `.data/neo4j` and `.data/qdrant` can accumulate gigabytes across runs. Developers must use `check_local_stack.sh --down --destroy-volumes` or delete directories manually.
+- **Manual data cleanup:** `.data/neo4j` (and `.data/qdrant` when running the legacy stack) can accumulate gigabytes across runs. Developers must use `check_local_stack.sh --down --destroy-volumes` or delete directories manually.
 - **Retry surfaces:** Vector index creation retries up to three times with fixed backoff but does not yet randomize jitter; repeated cluster contention could still fail CI runs.
 - **Semantic QA gaps:** When semantic enrichment is enabled the evaluator only checks counts, not content accuracy. Future work may need richer validation or human-in-the-loop review.
 - **Qdrant schema drift:** Export script recreates collections but does not version payload schema; downstream consumers should monitor for field additions.
@@ -113,11 +116,11 @@
 - **Observability:** Instrument ingestion stages with OpenTelemetry spans and metrics, configurable exporters, and documented dashboards for diagnosing performance issues.
 
 ## Upcoming Enhancements & Impact (from PRD FR1–FR5)
-- **FR1 – Compose durability:** Work continues in `docker-compose.neo4j-qdrant.yml` and `scripts/check_local_stack.sh`; future story changes should coordinate with `.data/` volume expectations and health checks.
+- **FR1 – Compose durability (legacy Qdrant stack):** Work continues in `docker-compose.neo4j-qdrant.yml` and `scripts/check_local_stack.sh`; future story changes should coordinate with `.data/` volume expectations and health checks.
 - **FR2 – Python environment:** `scripts/bootstrap.sh`, `requirements.lock`, and `src/config/settings.py` will absorb dependency upgrades to keep GraphRAG extras aligned with OpenAI + Neo4j client versions.
 - **FR3 – Vector index automation:** Enhancements touch `scripts/create_vector_index.py` and `tests/unit/scripts/test_create_vector_index.py`. Respect the retry/backoff guardrails and structured logging contract.
 - **FR4 – KG builder modularization:** Stories updating `src/fancyrag/kg/pipeline.py`, `src/fancyrag/splitters/`, and `src/fancyrag/qa/` must preserve provenance logging (chunk checksums, git commit) and QA gating defaults.
-- **FR5 – Qdrant export & retrieval:** Changes will involve `scripts/export_to_qdrant.py`, `scripts/ask_qdrant.py`, and downstream retriever tests. Keep payload parity with Neo4j metadata to maintain rollback guarantees.
+- **FR5 – Qdrant export & retrieval (legacy):** Changes will involve `scripts/export_to_qdrant.py`, `scripts/ask_qdrant.py`, and downstream retriever tests. Keep payload parity with Neo4j metadata to maintain rollback guarantees.
 
 ## Useful Commands
 ```bash
