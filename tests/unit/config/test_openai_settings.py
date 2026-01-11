@@ -39,6 +39,14 @@ def test_chat_model_allowlist(env, expected_model, is_override):
         assert all(entry["event"] != "openai.chat.override" for entry in logs)
 
 
+def test_semantic_output_defaults():
+    settings = OpenAISettings.load({}, actor="pytest")
+    assert settings.semantic_response_format == "json_schema"
+    assert settings.semantic_schema_strict is True
+    assert settings.semantic_max_retries == 1
+    assert settings.semantic_failure_artifacts is False
+
+
 def test_invalid_chat_model_logs_and_raises():
     env = {"OPENAI_MODEL": "gpt-nonsense"}
     with capture_logs() as logs:

@@ -28,6 +28,10 @@ DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 0.5
 DEFAULT_FALLBACK_ENABLED = True
 DEFAULT_TEMPERATURE = 0.3
+DEFAULT_SEMANTIC_RESPONSE_FORMAT = "json_schema"
+DEFAULT_SEMANTIC_SCHEMA_STRICT = True
+DEFAULT_SEMANTIC_MAX_RETRIES = 1
+DEFAULT_SEMANTIC_FAILURE_ARTIFACTS = False
 
 _ENV_OPENAI_MODEL = "OPENAI_MODEL"
 _ENV_OPENAI_EMBEDDING_MODEL = "OPENAI_EMBEDDING_MODEL"
@@ -43,6 +47,10 @@ _ENV_OPENAI_TEMPERATURE = "OPENAI_TEMPERATURE"
 _ENV_OPENAI_ENABLE_FALLBACK = "OPENAI_ENABLE_FALLBACK"
 _ENV_OPENAI_BASE_URL = "OPENAI_BASE_URL"
 _ENV_OPENAI_ALLOW_INSECURE_BASE_URL = "OPENAI_ALLOW_INSECURE_BASE_URL"
+_ENV_OPENAI_SEMANTIC_RESPONSE_FORMAT = "OPENAI_SEMANTIC_RESPONSE_FORMAT"
+_ENV_OPENAI_SEMANTIC_SCHEMA_STRICT = "OPENAI_SEMANTIC_SCHEMA_STRICT"
+_ENV_OPENAI_SEMANTIC_MAX_RETRIES = "OPENAI_SEMANTIC_MAX_RETRIES"
+_ENV_OPENAI_SEMANTIC_FAILURE_ARTIFACTS = "OPENAI_SEMANTIC_FAILURE_ARTIFACTS"
 
 _VALID_BASE_SCHEMES = frozenset({"http", "https"})
 _ALLOWED_NEO4J_SCHEMES = frozenset({"bolt", "bolt+s", "neo4j", "neo4j+s"})
@@ -128,6 +136,10 @@ class OpenAISettings(BaseModel):
     enable_fallback: bool = Field(default=DEFAULT_FALLBACK_ENABLED)
     api_base_url: str | None = None
     allow_insecure_base_url: bool = False
+    semantic_response_format: str = Field(default=DEFAULT_SEMANTIC_RESPONSE_FORMAT)
+    semantic_schema_strict: bool = Field(default=DEFAULT_SEMANTIC_SCHEMA_STRICT)
+    semantic_max_retries: int = Field(default=DEFAULT_SEMANTIC_MAX_RETRIES, ge=0)
+    semantic_failure_artifacts: bool = Field(default=DEFAULT_SEMANTIC_FAILURE_ARTIFACTS)
 
     @property
     def is_chat_override(self) -> bool:
@@ -342,6 +354,52 @@ class OpenAISettings(BaseModel):
                 f"{_ENV_OPENAI_ENABLE_FALLBACK} is disabled; {requested_chat_model} cannot be used as it is reserved for fallback scenarios."
             )
 
+        semantic_format_raw = (source.get(_ENV_OPENAI_SEMANTIC_RESPONSE_FORMAT) or "").strip()
+        semantic_response_format = DEFAULT_SEMANTIC_RESPONSE_FORMAT
+        if semantic_format_raw:
+            normalized = semantic_format_raw.lower()
+            allowed_formats = {"json_schema", "json_object", "off"}
+            if normalized not in allowed_formats:
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_SEMANTIC_RESPONSE_FORMAT} value '{semantic_format_raw}'. "
+                    f"Use one of: {sorted(allowed_formats)}."
+                )
+            semantic_response_format = normalized
+
+        semantic_schema_strict = DEFAULT_SEMANTIC_SCHEMA_STRICT
+        semantic_schema_raw = (source.get(_ENV_OPENAI_SEMANTIC_SCHEMA_STRICT) or "").strip()
+        if semantic_schema_raw:
+            semantic_schema_strict = _parse_boolean_flag(
+                raw_value=semantic_schema_raw,
+                env_key=_ENV_OPENAI_SEMANTIC_SCHEMA_STRICT,
+                actor_name=actor_name,
+                error_event="openai.semantic.invalid_schema_strict",
+            )
+
+        semantic_max_retries = DEFAULT_SEMANTIC_MAX_RETRIES
+        semantic_retry_raw = (source.get(_ENV_OPENAI_SEMANTIC_MAX_RETRIES) or "").strip()
+        if semantic_retry_raw:
+            try:
+                semantic_max_retries = int(semantic_retry_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid {_ENV_OPENAI_SEMANTIC_MAX_RETRIES} value '{semantic_retry_raw}'. Provide a non-negative integer."
+                ) from exc
+            if semantic_max_retries < 0:
+                raise ValueError(
+                    f"{_ENV_OPENAI_SEMANTIC_MAX_RETRIES} must be a non-negative integer; received {semantic_max_retries}."
+                )
+
+        semantic_failure_artifacts = DEFAULT_SEMANTIC_FAILURE_ARTIFACTS
+        semantic_failure_raw = (source.get(_ENV_OPENAI_SEMANTIC_FAILURE_ARTIFACTS) or "").strip()
+        if semantic_failure_raw:
+            semantic_failure_artifacts = _parse_boolean_flag(
+                raw_value=semantic_failure_raw,
+                env_key=_ENV_OPENAI_SEMANTIC_FAILURE_ARTIFACTS,
+                actor_name=actor_name,
+                error_event="openai.semantic.invalid_failure_artifacts",
+            )
+
         allow_insecure_raw = (source.get(_ENV_OPENAI_ALLOW_INSECURE_BASE_URL) or "").strip()
         allow_insecure = False
         if allow_insecure_raw:
@@ -411,6 +469,10 @@ class OpenAISettings(BaseModel):
             enable_fallback=enable_fallback,
             api_base_url=api_base_url,
             allow_insecure_base_url=allow_insecure,
+            semantic_response_format=semantic_response_format,
+            semantic_schema_strict=semantic_schema_strict,
+            semantic_max_retries=semantic_max_retries,
+            semantic_failure_artifacts=semantic_failure_artifacts,
         )
 
 
@@ -605,6 +667,12 @@ class FancyRAGSettings(BaseModel):
             "OPENAI_BACKOFF_SECONDS": str(self.openai.backoff_seconds),
             "OPENAI_TEMPERATURE": str(self.openai.temperature),
             "OPENAI_ENABLE_FALLBACK": "true" if self.openai.enable_fallback else "false",
+            "OPENAI_SEMANTIC_RESPONSE_FORMAT": self.openai.semantic_response_format,
+            "OPENAI_SEMANTIC_SCHEMA_STRICT": "true" if self.openai.semantic_schema_strict else "false",
+            "OPENAI_SEMANTIC_MAX_RETRIES": str(self.openai.semantic_max_retries),
+            "OPENAI_SEMANTIC_FAILURE_ARTIFACTS": "true"
+            if self.openai.semantic_failure_artifacts
+            else "false",
         }
         if self.openai.embedding_dimensions_override is not None:
             env["OPENAI_EMBEDDING_DIMENSIONS"] = str(self.openai.embedding_dimensions_override)
@@ -656,4 +724,8 @@ __all__ = [
     "DEFAULT_BACKOFF_SECONDS",
     "DEFAULT_FALLBACK_ENABLED",
     "DEFAULT_TEMPERATURE",
+    "DEFAULT_SEMANTIC_RESPONSE_FORMAT",
+    "DEFAULT_SEMANTIC_SCHEMA_STRICT",
+    "DEFAULT_SEMANTIC_MAX_RETRIES",
+    "DEFAULT_SEMANTIC_FAILURE_ARTIFACTS",
 ]

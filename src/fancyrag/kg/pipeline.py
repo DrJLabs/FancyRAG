@@ -96,6 +96,8 @@ from .phases import (
     perform_qa,
     resolve_settings,
 )
+from .semantic_llm import StructuredSemanticLLM
+from .structured_output import build_neo4j_graph_schema
 
 _PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
 
@@ -609,11 +611,45 @@ def _annotate_semantic_graph(
         relationship.properties = props
 
 
+def _sanitize_run_key(run_key: str) -> str:
+    """Return a filesystem-safe representation of an ingest run key."""
+
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", run_key).strip("-") or "unknown"
+
+
+def _write_semantic_failure_artifact(
+    *,
+    failure_root: Path | None,
+    ingest_run_key: str | None,
+    chunk: TextChunk,
+    relative_path: str,
+    error: Exception,
+) -> None:
+    """Persist a sanitized semantic failure artifact for later inspection."""
+
+    if not failure_root or not ingest_run_key:
+        return
+    safe_run_key = _sanitize_run_key(ingest_run_key)
+    artifact_path = (
+        failure_root / safe_run_key / "semantic_failures" / f"{chunk.uid}.json"
+    )
+    _ensure_directory(artifact_path)
+    payload = scrub_object(
+        {
+            "chunk_uid": chunk.uid,
+            "chunk_index": chunk.index,
+            "relative_path": relative_path,
+            "error": str(error),
+        }
+    )
+    artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def _run_semantic_enrichment(
     *,
     driver,
     database: str | None,
-    llm: SharedOpenAILLM,
+    llm: LLMInterface,
     chunk_result: TextChunks,
     chunk_metadata: Sequence[ChunkMetadata],
     relative_path: str,
@@ -621,6 +657,9 @@ def _run_semantic_enrichment(
     document_checksum: str,
     ingest_run_key: str | None,
     max_concurrency: int,
+    max_retries: int,
+    failure_artifacts_enabled: bool,
+    failure_artifacts_root: Path | None,
 ) -> SemanticEnrichmentStats:
     """Execute semantic entity extraction for the provided chunks and persist results."""
 
@@ -649,12 +688,35 @@ def _run_semantic_enrichment(
 
         async def _extract_and_process(chunk: TextChunk) -> Neo4jGraph | None:
             async with semaphore:
-                try:
-                    graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
-                except (LLMGenerationError, OpenAIClientError):
-                    return None
-                await extractor.post_process_chunk(graph, chunk)
-                return graph
+                last_error: Exception | None = None
+                attempts = max_retries + 1
+                for attempt in range(attempts):
+                    try:
+                        graph = await extractor.extract_for_chunk(DEFAULT_SCHEMA, "", chunk)
+                    except (LLMGenerationError, OpenAIClientError) as exc:
+                        last_error = exc
+                        if attempt < max_retries:
+                            continue
+                        if failure_artifacts_enabled:
+                            _write_semantic_failure_artifact(
+                                failure_root=failure_artifacts_root,
+                                ingest_run_key=ingest_run_key,
+                                chunk=chunk,
+                                relative_path=relative_path,
+                                error=exc,
+                            )
+                        return None
+                    await extractor.post_process_chunk(graph, chunk)
+                    return graph
+                if last_error and failure_artifacts_enabled:
+                    _write_semantic_failure_artifact(
+                        failure_root=failure_artifacts_root,
+                        ingest_run_key=ingest_run_key,
+                        chunk=chunk,
+                        relative_path=relative_path,
+                        error=last_error,
+                    )
+                return None
 
         tasks = [_extract_and_process(chunk) for chunk in chunk_result.chunks]
         results = await asyncio.gather(*tasks)
@@ -1336,6 +1398,8 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
         shared_client_factory=SharedOpenAIClient,
         embedder_factory=SharedOpenAIEmbedder,
         llm_factory=SharedOpenAILLM,
+        semantic_llm_factory=StructuredSemanticLLM,
+        schema_factory=build_neo4j_graph_schema,
         splitter_config_factory=CachingSplitterConfig,
         splitter_factory=build_caching_splitter,
     )
@@ -1369,6 +1433,7 @@ def run_pipeline(options: PipelineOptions) -> dict[str, Any]:
                     auth=auth,
                     driver=driver,
                     clients=clients,
+                    semantic_settings=openai_settings,
                     git_commit=git_commit,
                     reset_database=reset_pending,
                     execute_pipeline=_execute_pipeline,
