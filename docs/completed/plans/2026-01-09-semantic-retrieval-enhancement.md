@@ -184,4 +184,4 @@ git commit -m "docs: record semantic retrieval verification"
 
 ---
 
-Plan complete and saved to `docs/plans/2026-01-09-semantic-retrieval-enhancement.md`.
+Plan complete and saved to `docs/completed/plans/2026-01-09-semantic-retrieval-enhancement.md`.

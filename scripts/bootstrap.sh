@@ -11,12 +11,11 @@ CUSTOM_PYTHON_BIN="${BOOTSTRAP_PYTHON_BIN:-}"
 # Test hook: allow CI/tests to bypass local interpreter check when shimmed python is provided.
 ASSUME_PY312="${BOOTSTRAP_ASSUME_PY312:-0}"
 PACKAGES=(
-  "neo4j-graphrag[openai,qdrant]"
+  "neo4j-graphrag[experimental,openai]"
   "neo4j>=5,<6"
   "openai>=1,<2"
   "pydantic>=2,<3"
   "prometheus-client>=0.23,<1"
-  "qdrant-client>=1.10"
   "structlog>=24,<25"
   "pytest>=8,<9"
 )
@@ -26,7 +25,6 @@ neo4j-graphrag==0.9.0
 neo4j==5.23.0
 openai==1.40.3
 prometheus-client==0.23.1
-qdrant-client==1.10.4
 structlog==24.1.0
 pytest==8.3.2
 pydantic==2.11.9

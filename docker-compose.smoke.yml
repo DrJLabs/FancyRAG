@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:5.18
+    image: neo4j:5.26.12
     environment:
       NEO4J_AUTH: "${NEO4J_AUTH:-neo4j/password}"
       NEO4J_PLUGINS: '["apoc"]'
@@ -136,12 +136,13 @@ services:
     volumes:
       - .:/workspace
     entrypoint: ["bash", "-lc"]
-    command: >-
-      python -m pip install --upgrade --quiet pip &&
-      python -m pip install --quiet uv &&
-      uv pip install --system ".[dev]" &&
-      python scripts/wait_for_bolt.py &&
-      pytest -q tests/smoke/test_stack.py
+    command:
+      - >-
+        python -m pip install --upgrade --quiet pip &&
+        python -m pip install --quiet uv &&
+        uv pip install --system ".[dev]" &&
+        python scripts/wait_for_bolt.py &&
+        pytest -q tests/smoke/test_stack.py
     networks:
       - rag-net
 

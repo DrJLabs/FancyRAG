@@ -61,6 +61,20 @@ EMBEDDING_MODEL=<local embedding model name>
 Local embeddings require `EMBEDDING_API_BASE_URL`; the pipeline fails fast if it is
 missing. If the local endpoint uses HTTP, set `OPENAI_ALLOW_INSECURE_BASE_URL=true`.
 
+Semantic extraction uses structured output by default. You can control the response
+format and retry behavior with these env vars:
+
+```ini
+# json_schema (default), json_object, or off
+OPENAI_SEMANTIC_RESPONSE_FORMAT=json_schema
+# enforce strict JSON schema validation (default true)
+OPENAI_SEMANTIC_SCHEMA_STRICT=true
+# retry count for semantic extraction format errors (default 1)
+OPENAI_SEMANTIC_MAX_RETRIES=1
+# write sanitized semantic failure artifacts (default false)
+OPENAI_SEMANTIC_FAILURE_ARTIFACTS=false
+```
+
 If you are using OpenAI project-scoped keys (`sk-proj-...`), also capture the project
 identifier issued by OpenAI:
 

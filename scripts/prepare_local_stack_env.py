@@ -15,6 +15,7 @@ DEFAULT_NEO4J_USERNAME = "neo4j"
 EXPORT_ALLOWLIST = {
     "EMBEDDING_API_BASE_URL",
     "EMBEDDING_API_KEY",
+    "NEO4J_AUTH",
     "NEO4J_DATABASE",
     "NEO4J_PASSWORD",
     "NEO4J_URI",
@@ -58,12 +59,16 @@ def _sanitize_placeholder(
     if not parsed:
         return line
     key, value = parsed
+    if key == "NEO4J_PASSWORD":
+        if value.startswith("YOUR_") or not value:
+            return f"{key}={DEFAULT_NEO4J_PASSWORD}"
+        return line
+    if key == "NEO4J_AUTH":
+        if "YOUR_" in value or not value:
+            return f"{key}={neo4j_username}/{neo4j_password}"
+        return line
     if not value.startswith("YOUR_"):
         return line
-    if key == "NEO4J_PASSWORD":
-        return f"{key}={DEFAULT_NEO4J_PASSWORD}"
-    if key == "NEO4J_AUTH":
-        return f"{key}={neo4j_username}/{neo4j_password}"
     return f"{key}="
 
 

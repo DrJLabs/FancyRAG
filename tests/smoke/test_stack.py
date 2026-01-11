@@ -72,20 +72,20 @@ async def _invoke_search_async(base_url: str, token: str) -> tuple[dict[str, Any
         write_stream,
         _get_session_id,
     ):
-        session = ClientSession(read_stream, write_stream)
-        await session.initialize()
-        await session.list_tools()
-        start_time = time.perf_counter()
-        result = await session.call_tool("search", _SEARCH_PAYLOAD)
-        latency = time.perf_counter() - start_time
-        if result.isError:
-            raise AssertionError(f"search tool returned error: {result}")
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            await session.list_tools()
+            start_time = time.perf_counter()
+            result = await session.call_tool("search", _SEARCH_PAYLOAD)
+            latency = time.perf_counter() - start_time
+            if result.isError:
+                raise AssertionError(f"search tool returned error: {result}")
 
-        if result.structuredContent is not None:
-            return result.structuredContent, latency
+            if result.structuredContent is not None:
+                return result.structuredContent, latency
 
-        items = [item.text for item in result.content if hasattr(item, "text")]
-        return {"results": items}, latency
+            items = [item.text for item in result.content if hasattr(item, "text")]
+            return {"results": items}, latency
 
 
 def _invoke_search(base_url: str, token: str) -> tuple[dict[str, Any], float]:

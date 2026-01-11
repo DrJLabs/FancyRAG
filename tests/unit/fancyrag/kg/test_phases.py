@@ -112,6 +112,14 @@ def test_build_clients_invokes_factories():
         calls["llm"] = (client, settings_obj)
         return "llm"
 
+    def semantic_llm_factory(client, settings_obj, *, schema):
+        calls["semantic_llm"] = (client, settings_obj, schema)
+        return "semantic-llm"
+
+    def schema_factory():
+        calls["schema"] = {"type": "object"}
+        return calls["schema"]
+
     def splitter_config_factory(chunk_size, chunk_overlap):
         calls["splitter_config"] = (chunk_size, chunk_overlap)
         return types.SimpleNamespace(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -127,6 +135,8 @@ def test_build_clients_invokes_factories():
         shared_client_factory=shared_client_factory,
         embedder_factory=embedder_factory,
         llm_factory=llm_factory,
+        semantic_llm_factory=semantic_llm_factory,
+        schema_factory=schema_factory,
         splitter_config_factory=splitter_config_factory,
         splitter_factory=splitter_factory,
     )
@@ -135,6 +145,7 @@ def test_build_clients_invokes_factories():
     assert bundle.shared_client == "shared-client"
     assert bundle.embedder == "embedder"
     assert bundle.llm == "llm"
+    assert bundle.semantic_llm == "semantic-llm"
     assert bundle.splitter == "splitter"
     assert calls["splitter_config"] == (256, 32)
 
@@ -207,12 +218,13 @@ def test_ingest_source_with_semantic_enrichment(monkeypatch, tmp_path):
         text="hello world",
         checksum="abc123",
     )
-    options = types.SimpleNamespace(database="neo4j")
+    options = types.SimpleNamespace(database="neo4j", qa_report_dir=tmp_path)
     splitter = _StubSplitter()
     clients = phases.ClientBundle(
         shared_client="client",
         embedder="embedder",
         llm="llm",
+        semantic_llm="semantic-llm",
         splitter=splitter,
     )
 
@@ -245,6 +257,10 @@ def test_ingest_source_with_semantic_enrichment(monkeypatch, tmp_path):
         auth=("neo4j", "secret"),
         driver="driver",
         clients=clients,
+        semantic_settings=types.SimpleNamespace(
+            semantic_max_retries=1,
+            semantic_failure_artifacts=False,
+        ),
         git_commit="sha",
         reset_database=True,
         execute_pipeline=execute_pipeline,
@@ -274,12 +290,13 @@ def test_ingest_source_without_semantic(monkeypatch, tmp_path):
         text="hello world",
         checksum="abc123",
     )
-    options = types.SimpleNamespace(database=None)
+    options = types.SimpleNamespace(database=None, qa_report_dir=tmp_path)
     splitter = _StubSplitter()
     clients = phases.ClientBundle(
         shared_client="client",
         embedder="embedder",
         llm="llm",
+        semantic_llm="semantic-llm",
         splitter=splitter,
     )
 
@@ -290,6 +307,10 @@ def test_ingest_source_without_semantic(monkeypatch, tmp_path):
         auth=("neo4j", "secret"),
         driver="driver",
         clients=clients,
+        semantic_settings=types.SimpleNamespace(
+            semantic_max_retries=0,
+            semantic_failure_artifacts=False,
+        ),
         git_commit=None,
         reset_database=False,
         execute_pipeline=lambda **_: "run-id",
@@ -521,6 +542,8 @@ def test_helpers_do_not_touch_environment(monkeypatch, tmp_path):
         shared_client_factory=lambda settings: object(),
         embedder_factory=lambda client, settings: object(),
         llm_factory=lambda client, settings: object(),
+        semantic_llm_factory=lambda _client, _settings, *, schema: schema,
+        schema_factory=lambda: {"type": "object"},
         splitter_config_factory=lambda **_: types.SimpleNamespace(chunk_size=resolved.chunk_size, chunk_overlap=resolved.chunk_overlap),
         splitter_factory=lambda _config: _StubSplitter(),
     )
@@ -535,11 +558,15 @@ def test_helpers_do_not_touch_environment(monkeypatch, tmp_path):
 
     artifacts = phases.ingest_source(
         spec=spec,
-        options=types.SimpleNamespace(database=None),
+        options=types.SimpleNamespace(database=None, qa_report_dir=tmp_path),
         uri="bolt://localhost:7687",
         auth=("neo4j", "secret"),
         driver="driver",
         clients=bundle,
+        semantic_settings=types.SimpleNamespace(
+            semantic_max_retries=0,
+            semantic_failure_artifacts=False,
+        ),
         git_commit=None,
         reset_database=False,
         execute_pipeline=lambda **_: "run-id",

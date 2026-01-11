@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import fancyrag.kg.pipeline as pipeline
+from fancyrag.kg.semantic_llm import StructuredSemanticLLM
 from fancyrag.splitters import CachingFixedSizeSplitter
 
 
@@ -107,6 +108,43 @@ def _stub_pipeline_dependencies(monkeypatch):
         "build_caching_splitter",
         lambda *_a, **_k: DummySplitter(),
     )
+
+
+def test_build_clients_includes_semantic_llm():
+    schema = {"type": "object"}
+
+    def fake_shared_client(_settings):
+        return object()
+
+    def fake_embedder(_client, _settings):
+        return object()
+
+    def fake_llm(_client, _settings):
+        return object()
+
+    def fake_semantic_llm(_client, _settings, *, schema):
+        return f"semantic-{schema['type']}"
+
+    def fake_splitter_config(*, chunk_size, chunk_overlap):
+        return types.SimpleNamespace(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    def fake_splitter(_config):
+        return object()
+
+    bundle = pipeline.build_clients(
+        settings=types.SimpleNamespace(),
+        chunk_size=800,
+        chunk_overlap=120,
+        shared_client_factory=fake_shared_client,
+        embedder_factory=fake_embedder,
+        llm_factory=fake_llm,
+        semantic_llm_factory=fake_semantic_llm,
+        schema_factory=lambda: schema,
+        splitter_config_factory=fake_splitter_config,
+        splitter_factory=fake_splitter,
+    )
+
+    assert bundle.semantic_llm == "semantic-object"
 
 
 def test_shared_client_base_url(monkeypatch, tmp_path, capsys):
@@ -221,6 +259,117 @@ def test_run_pipeline_validates_chunk_size(monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         pipeline.run_pipeline(options)
 
+
+def test_semantic_llm_uses_json_schema_format():
+    class FakeClient:
+        def __init__(self) -> None:
+            self.last_params = None
+
+        def chat_completion(self, **params):
+            self.last_params = params
+            return types.SimpleNamespace(raw_response={"output_text": "{}"})
+
+    settings = types.SimpleNamespace(
+        chat_model="gpt-5-mini",
+        temperature=0.0,
+        semantic_response_format="json_schema",
+        semantic_schema_strict=True,
+        semantic_max_retries=1,
+        semantic_failure_artifacts=False,
+    )
+    schema = {"type": "object"}
+    client = FakeClient()
+
+    llm = StructuredSemanticLLM(client, settings, schema=schema)
+    llm.invoke("prompt")
+
+    assert client.last_params is not None
+    fmt = client.last_params["text"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["schema"] == schema
+    assert fmt["strict"] is True
+
+
+def test_semantic_retry_on_format_error(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    class DummyExtractor:
+        def __init__(self, *_, **__):
+            pass
+
+        async def extract_for_chunk(self, _schema, _examples, chunk):
+            calls.append(chunk.uid)
+            if len(calls) == 1:
+                raise pipeline.LLMGenerationError("bad format")  # noqa: TRY003
+            return pipeline.Neo4jGraph(nodes=[], relationships=[])
+
+        async def post_process_chunk(self, _graph, _chunk):
+            return None
+
+        def combine_chunk_graphs(self, _lexical_graph, _chunk_graphs):
+            return pipeline.Neo4jGraph(nodes=[], relationships=[])
+
+    monkeypatch.setattr(pipeline, "LLMEntityRelationExtractor", DummyExtractor)
+
+    chunk = pipeline.TextChunk(text="hello", index=0, metadata=None, uid="chunk-1")
+    chunk_result = pipeline.TextChunks(chunks=[chunk])
+    chunk_meta = pipeline.ChunkMetadata(
+        uid="chunk-1",
+        sequence=0,
+        index=0,
+        checksum="chk",
+        relative_path="doc.md",
+        git_commit=None,
+    )
+
+    stats = pipeline._run_semantic_enrichment(
+        driver="driver",
+        database=None,
+        llm=object(),
+        chunk_result=chunk_result,
+        chunk_metadata=[chunk_meta],
+        relative_path="doc.md",
+        git_commit=None,
+        document_checksum="checksum",
+        ingest_run_key="kg-build:123",
+        max_concurrency=1,
+        max_retries=1,
+        failure_artifacts_enabled=True,
+        failure_artifacts_root=tmp_path,
+    )
+
+    assert stats.chunk_failures == 0
+    assert len(calls) == 2
+    assert not list(tmp_path.rglob("*.json"))
+
+
+def test_write_semantic_failure_artifact_sanitizes_filename(tmp_path):
+    chunk = pipeline.TextChunk(text="hello", index=0, metadata=None, uid="bad/../uid")
+
+    pipeline._write_semantic_failure_artifact(
+        failure_root=tmp_path,
+        ingest_run_key="kg:run",
+        chunk=chunk,
+        relative_path="doc.md",
+        error=ValueError("boom"),
+    )
+
+    expected = tmp_path / "kg-run" / "semantic_failures" / "bad-..-uid.json"
+    assert expected.exists()
+
+
+def test_write_semantic_failure_artifact_ignores_io_errors(tmp_path):
+    failure_root = tmp_path / "blocked"
+    failure_root.write_text("not-a-dir", encoding="utf-8")
+    chunk = pipeline.TextChunk(text="hello", index=0, metadata=None, uid="chunk-1")
+
+    pipeline._write_semantic_failure_artifact(
+        failure_root=failure_root,
+        ingest_run_key="kg:run",
+        chunk=chunk,
+        relative_path="doc.md",
+        error=ValueError("boom"),
+    )
 
 def test_extract_content_prefers_responses_output_text():
     raw_response = types.SimpleNamespace(output_text="hello from responses")

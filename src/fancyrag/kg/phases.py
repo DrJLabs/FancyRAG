@@ -35,6 +35,7 @@ class ClientBundle:
     shared_client: Any
     embedder: Any
     llm: Any
+    semantic_llm: Any
     splitter: Any
 
 
@@ -184,6 +185,8 @@ def build_clients(
     shared_client_factory: Callable[[Any], Any],
     embedder_factory: Callable[[Any, Any], Any],
     llm_factory: Callable[[Any, Any], Any],
+    semantic_llm_factory: Callable[..., Any],
+    schema_factory: Callable[[], dict[str, Any]],
     splitter_config_factory: Callable[..., Any],
     splitter_factory: Callable[[Any], Any],
 ) -> ClientBundle:
@@ -198,12 +201,15 @@ def build_clients(
     shared_client = shared_client_factory(settings)
     embedder = embedder_factory(shared_client, settings)
     llm = llm_factory(shared_client, settings)
+    semantic_schema = schema_factory()
+    semantic_llm = semantic_llm_factory(shared_client, settings, schema=semantic_schema)
     splitter_config = splitter_config_factory(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     splitter = splitter_factory(splitter_config)
     return ClientBundle(
         shared_client=shared_client,
         embedder=embedder,
         llm=llm,
+        semantic_llm=semantic_llm,
         splitter=splitter,
     )
 
@@ -216,6 +222,7 @@ def ingest_source(
     auth: tuple[str, str],
     driver: Any,
     clients: ClientBundle,
+    semantic_settings: Any,
     git_commit: str | None,
     reset_database: bool,
     execute_pipeline: Callable[..., str | None],
@@ -312,10 +319,14 @@ def ingest_source(
         ]
 
         if semantic_enabled:
+            semantic_max_retries = getattr(semantic_settings, "semantic_max_retries", 0)
+            semantic_failure_artifacts = bool(
+                getattr(semantic_settings, "semantic_failure_artifacts", False)
+            )
             stats = run_semantic_enrichment(
                 driver=driver,
                 database=options.database,
-                llm=clients.llm,
+                llm=clients.semantic_llm,
                 chunk_result=chunk_result,
                 chunk_metadata=chunk_metadata,
                 relative_path=spec.relative_path,
@@ -323,6 +334,9 @@ def ingest_source(
                 document_checksum=spec.checksum,
                 ingest_run_key=ingest_run_key,
                 max_concurrency=semantic_max_concurrency,
+                max_retries=semantic_max_retries,
+                failure_artifacts_enabled=semantic_failure_artifacts,
+                failure_artifacts_root=options.qa_report_dir,
             )
             semantic_stats.chunks_processed = getattr(stats, "chunks_processed", 0)
             semantic_stats.chunk_failures = getattr(stats, "chunk_failures", 0)

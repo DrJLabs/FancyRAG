@@ -201,7 +201,8 @@ This document summarizes the comprehensive unit tests generated for the FancyRAG
 
 ### Manual Verification Notes
 
-- Semantic retrieval end-to-end validation not run locally (requires Neo4j + embedding backend + MCP server).
+- Semantic retrieval end-to-end validation: quick ingest with semantic enabled succeeded (QA PASS). Command: `EMBEDDING_API_BASE_URL=http://localhost:20010/v1 NEO4J_URI=bolt://localhost:22011 FANCYRAG_DOTENV_PATH=.env.local uv run python scripts/kg_build.py --source-dir docs/samples/quick_ingest --profile markdown --enable-semantic --log-path reports/devops/semantic-retrieval-verification/qa_run_20260110_205850.log` (log: `reports/devops/semantic-retrieval-verification/qa_run_20260110_205850.log`; QA warnings about metrics parameter missing).
+- Unit tests: `uv run pytest tests/unit/config/test_openai_settings.py tests/unit/fancyrag/kg/test_pipeline.py tests/unit/fancyrag/kg/test_phases.py tests/unit/cli/test_openai_client.py -q` (127 passed).
 - Configuration: ~50 tests
 - Embeddings: ~15 tests
 - Logging: ~18 tests
