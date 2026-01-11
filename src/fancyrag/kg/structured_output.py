@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from neo4j_graphrag.experimental.components.types import Neo4jGraph
-
 
 def _strict_schema(schema: Any) -> Any:
     """Recursively set additionalProperties=false on object schemas with explicit properties."""
@@ -26,6 +24,13 @@ def _strict_schema(schema: Any) -> Any:
 
 def build_neo4j_graph_schema() -> dict[str, Any]:
     """Return a strict JSON schema for Neo4jGraph structured output."""
+
+    try:
+        from neo4j_graphrag.experimental.components.types import Neo4jGraph
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "neo4j_graphrag is required for structured semantic output"
+        ) from exc
 
     schema = Neo4jGraph.model_json_schema()
     return _strict_schema(schema)

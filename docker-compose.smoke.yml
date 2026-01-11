@@ -136,12 +136,13 @@ services:
     volumes:
       - .:/workspace
     entrypoint: ["bash", "-lc"]
-    command: >-
-      python -m pip install --upgrade --quiet pip &&
-      python -m pip install --quiet uv &&
-      uv pip install --system ".[dev]" &&
-      python scripts/wait_for_bolt.py &&
-      pytest -q tests/smoke/test_stack.py
+    command:
+      - >-
+        python -m pip install --upgrade --quiet pip &&
+        python -m pip install --quiet uv &&
+        uv pip install --system ".[dev]" &&
+        python scripts/wait_for_bolt.py &&
+        pytest -q tests/smoke/test_stack.py
     networks:
       - rag-net
 

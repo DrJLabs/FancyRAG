@@ -3,14 +3,16 @@ name: local-stack-smoke
 on:
   push:
     paths:
-      - docker-compose.neo4j-qdrant.yml
+      - docker-compose.yml
+      - docker-compose.smoke.yml
       - scripts/check_local_stack.sh
       - tests/integration/local_stack/**
       - docs/architecture/overview.md
       - .github/workflows/local-stack-smoke.yml
   pull_request:
     paths:
-      - docker-compose.neo4j-qdrant.yml
+      - docker-compose.yml
+      - docker-compose.smoke.yml
       - scripts/check_local_stack.sh
       - tests/integration/local_stack/**
       - docs/architecture/overview.md
@@ -44,27 +46,21 @@ jobs:
             echo 'Missing NEO4J_PASSWORD in .env' >&2
             exit 1
           fi
+          echo "MCP_ENV_FILE=.env" >> "$GITHUB_ENV"
 
       - name: Validate compose configuration
         run: scripts/check_local_stack.sh --config
 
       - name: Start local stack services
-        run: docker compose -f docker-compose.neo4j-qdrant.yml up -d --wait neo4j
+        run: docker compose -f docker-compose.yml -f docker-compose.smoke.yml up -d --wait neo4j embedding-stub mcp
 
       - name: Run smoke tests inside compose
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          docker compose -f docker-compose.neo4j-qdrant.yml run --rm --no-deps \
-            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-            -e LOCAL_STACK_SKIP_DOCKER_CHECK=1 \
-            -e LOCAL_STACK_SKIP_QDRANT=1 \
-            smoke-tests bash -lc "set -euo pipefail; pip install --upgrade pip >/dev/null; pip install --no-cache-dir -r requirements.lock; pytest tests/integration/local_stack/test_minimal_path_smoke.py"
+        run: docker compose -f docker-compose.yml -f docker-compose.smoke.yml run --rm --no-deps smoke-tests
 
       - name: Collect service logs
         if: failure()
-        run: docker compose -f docker-compose.neo4j-qdrant.yml logs neo4j qdrant
+        run: docker compose -f docker-compose.yml -f docker-compose.smoke.yml logs neo4j embedding-stub mcp
 
       - name: Tear down stack
         if: always()
-        run: docker compose -f docker-compose.neo4j-qdrant.yml down --volumes
+        run: docker compose -f docker-compose.yml -f docker-compose.smoke.yml down --volumes

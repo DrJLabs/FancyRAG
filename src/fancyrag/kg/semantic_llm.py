@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from neo4j_graphrag.exceptions import LLMGenerationError
-from neo4j_graphrag.llm.base import LLMInterface
-from neo4j_graphrag.llm.types import LLMResponse
+try:
+    from neo4j_graphrag.exceptions import LLMGenerationError
+    from neo4j_graphrag.llm.base import LLMInterface
+    from neo4j_graphrag.llm.types import LLMResponse
+except ModuleNotFoundError:  # pragma: no cover - minimal environments only
+    class LLMGenerationError(RuntimeError):
+        """Fallback LLM error used when neo4j_graphrag is unavailable."""
+
+
+    class LLMInterface:  # type: ignore[no-redef]
+        """Minimal LLM interface placeholder for structured semantic output."""
+
+        def __init__(
+            self,
+            *_args,
+            model_name: str | None = None,
+            model_params: Mapping[str, Any] | None = None,
+            **_kwargs,
+        ) -> None:
+            self.model_name = model_name
+            self.model_params = dict(model_params or {})
+
+
+    @dataclass
+    class LLMResponse:  # type: ignore[no-redef]
+        """Fallback response container when neo4j_graphrag is unavailable."""
+
+        content: str | None = None
 
 from cli.openai_client import OpenAIClientError, SharedOpenAIClient
 

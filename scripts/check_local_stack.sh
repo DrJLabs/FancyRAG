@@ -12,6 +12,18 @@ else
 fi
 SCRIPT_NAME=$(basename "$0")
 
+# default_mcp_env_file ensures MCP_ENV_FILE points at .env when .env.local is missing.
+default_mcp_env_file() {
+  if [[ -n "${MCP_ENV_FILE:-}" ]]; then
+    return
+  fi
+  local env_local="${PROJECT_ROOT}/.env.local"
+  local env_file="${PROJECT_ROOT}/.env"
+  if [[ ! -f "${env_local}" && -f "${env_file}" ]]; then
+    export MCP_ENV_FILE=".env"
+  fi
+}
+
 # usage prints the script usage help text describing commands and options, then exits with status 1.
 usage() {
   cat <<USAGE
@@ -171,6 +183,7 @@ main() {
 
   require_command docker
   ensure_compose_file
+  default_mcp_env_file
 
   case "$1" in
     --config)
