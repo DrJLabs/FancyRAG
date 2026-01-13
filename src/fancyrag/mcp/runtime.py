@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
@@ -13,6 +14,7 @@ from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from neo4j import GraphDatabase, RoutingControl
 from neo4j import Driver
+from neo4j.exceptions import DriverError, Neo4jError
 from neo4j.graph import Node
 from neo4j_graphrag.retrievers import HybridCypherRetriever
 from starlette.requests import Request
@@ -124,7 +126,7 @@ def _vector_scores(
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Exception as error:
+    except (DriverError, Neo4jError) as error:
         logger.warning(
             "scores.vector.failed",
             extra={"error": type(error).__name__},
@@ -153,7 +155,7 @@ def _fulltext_scores(
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Exception as error:
+    except (DriverError, Neo4jError) as error:
         logger.warning(
             "scores.fulltext.failed",
             extra={"error": type(error).__name__},
@@ -241,7 +243,7 @@ def fetch_sync(state: ServerState, element_id: str) -> Dict[str, Any]:
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Exception as error:
+    except (DriverError, Neo4jError) as error:
         logger.error(
             "fetch.failed",
             extra={"element_id": element_id, "error": type(error).__name__},
@@ -282,6 +284,19 @@ def build_server(
             required_scopes=state.config.oauth.required_scopes,
         )
 
+    if provider is not None:
+        original_get_resource_url = getattr(provider, "_get_resource_url", None)
+
+        def _safe_get_resource_url(path: str) -> str | None:
+            if callable(original_get_resource_url):
+                try:
+                    return original_get_resource_url(path)
+                except Exception:
+                    return None
+            return None
+
+        setattr(provider, "_get_resource_url", _safe_get_resource_url)
+
     server = FastMCP(name="FancyRAG Hybrid MCP", auth=provider)
 
     def _auth_error(
@@ -290,9 +305,15 @@ def build_server(
         headers: Dict[str, str] = {}
         parts = [f'error="{error}"', f'error_description="{description}"']
         if provider:
-            resource_metadata_url = provider._get_resource_url(  # type: ignore[attr-defined]
-                "/.well-known/oauth-protected-resource"
-            )
+            resource_metadata_url = None
+            get_resource_url = getattr(provider, "_get_resource_url", None)
+            if callable(get_resource_url):
+                try:
+                    resource_metadata_url = get_resource_url(
+                        "/.well-known/oauth-protected-resource"
+                    )
+                except Exception:
+                    resource_metadata_url = None
             if resource_metadata_url:
                 parts.append(f'resource_metadata="{resource_metadata_url}"')
         headers["www-authenticate"] = f"Bearer {', '.join(parts)}"
@@ -323,13 +344,19 @@ def build_server(
     def _bad_request(message: str) -> JSONResponse:
         return JSONResponse({"error": message}, status_code=400)
 
-    @server.custom_route("/mcp/search", methods=["POST"], name="mcp_search")
+    def _route(suffix: str) -> str:
+        base = state.config.server.path.rstrip("/")
+        if not base:
+            return f"/{suffix.lstrip('/')}"
+        return f"{base}/{suffix.lstrip('/')}"
+
+    @server.custom_route(_route("search"), methods=["POST"], name="mcp_search")
     async def http_search(request: Request) -> JSONResponse:
         if auth_error := _require_auth(request):
             return auth_error
         try:
             payload = await request.json()
-        except Exception:
+        except json.JSONDecodeError:
             return _bad_request("Invalid JSON body")
         if not isinstance(payload, dict):
             return _bad_request("Invalid JSON body")
@@ -338,9 +365,9 @@ def build_server(
             return _bad_request("query is required")
         top_k = payload.get("top_k", 5)
         effective_ratio = payload.get("effective_search_ratio", 1)
-        if isinstance(top_k, bool) or not isinstance(top_k, int):
+        if type(top_k) is not int:
             return _bad_request("top_k must be an integer")
-        if isinstance(effective_ratio, bool) or not isinstance(effective_ratio, int):
+        if type(effective_ratio) is not int:
             return _bad_request("effective_search_ratio must be an integer")
         if top_k <= 0:
             return _bad_request("top_k must be greater than zero")
@@ -351,13 +378,13 @@ def build_server(
         )
         return JSONResponse(result)
 
-    @server.custom_route("/mcp/fetch", methods=["POST"], name="mcp_fetch")
+    @server.custom_route(_route("fetch"), methods=["POST"], name="mcp_fetch")
     async def http_fetch(request: Request) -> JSONResponse:
         if auth_error := _require_auth(request):
             return auth_error
         try:
             payload = await request.json()
-        except Exception:
+        except json.JSONDecodeError:
             return _bad_request("Invalid JSON body")
         if not isinstance(payload, dict):
             return _bad_request("Invalid JSON body")

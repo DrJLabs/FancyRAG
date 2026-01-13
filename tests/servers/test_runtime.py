@@ -2,6 +2,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from fancyrag.config import (
@@ -366,6 +367,87 @@ def test_http_search_and_fetch_routes_return_contract(base_config):
         assert "embedding" not in fetched.get("metadata", {})
 
 
+def test_http_routes_respect_server_path(base_config):
+    config = base_config.model_copy(deep=True)
+    config.server.auth_required = False
+    config.oauth = None
+    config.server.path = "/api/mcp"
+
+    records = [
+        {"node": FakeNode("1", text="Doc 1", embedding=[0.1]), "score": 0.9, "text": "Doc 1"},
+    ]
+    metadata = {"query_vector": [0.11, 0.22]}
+
+    driver = StubDriver(
+        {
+            runtime.VECTOR_SCORE_QUERY: ([{"element_id": "1", "score": 0.9}], None, None),
+            runtime.FULLTEXT_SCORE_QUERY: ([{"element_id": "1", "score": 1.0}], None, None),
+            runtime.FETCH_NODE_QUERY: (
+                [{"node": FakeNode("1", text="Doc 1", embedding=[0.1]), "labels": ["Chunk"]}],
+                None,
+                None,
+            ),
+        }
+    )
+    state = _state_with(driver, FakeRetriever(records, metadata), config)
+    server = runtime.build_server(state)
+    app = server.http_app(path=config.server.path, stateless_http=True, json_response=True)
+
+    with TestClient(app) as client:
+        response = client.post("/api/mcp/search", json={"query": "graph"})
+        assert response.status_code == 200
+
+
+def test_http_auth_error_handles_missing_resource_url(base_config):
+    records = [
+        {"node": FakeNode("1", text="Doc 1", embedding=[0.1]), "score": 0.9, "text": "Doc 1"},
+    ]
+    metadata = {"query_vector": [0.11, 0.22]}
+
+    driver = StubDriver(
+        {
+            runtime.VECTOR_SCORE_QUERY: ([{"element_id": "1", "score": 0.9}], None, None),
+            runtime.FULLTEXT_SCORE_QUERY: ([{"element_id": "1", "score": 1.0}], None, None),
+        }
+    )
+    state = _state_with(driver, FakeRetriever(records, metadata), base_config)
+
+    class BrokenResourceProvider(StubAuthProvider):
+        def _get_resource_url(self, *_args, **_kwargs):
+            raise AttributeError("missing resource url")
+
+    provider = BrokenResourceProvider(token="valid-token")  # test uses dummy token  # noqa: S106
+    server = runtime.build_server(state, auth_provider=provider)
+    app = server.http_app(path=base_config.server.path, stateless_http=True, json_response=True)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/mcp/search", json={"query": "graph"})
+        assert response.status_code == 401
+
+
+def test_http_search_json_runtime_error_surfaces(base_config, monkeypatch):
+    config = base_config.model_copy(deep=True)
+    config.server.auth_required = False
+    config.oauth = None
+
+    state = _state_with(StubDriver({}), FakeRetriever([], {}), config)
+    server = runtime.build_server(state)
+    app = server.http_app(path=config.server.path, stateless_http=True, json_response=True)
+
+    async def boom(_self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(Request, "json", boom, raising=False)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/mcp/search",
+            data="{}",
+            headers={"content-type": "application/json"},
+        )
+        assert response.status_code == 500
+
+
 def test_search_latency_within_budget(base_config):
     records = [
         {"node": FakeNode("1", text="Doc", embedding=[0.1]), "score": 0.9, "text": "Doc"},
@@ -481,6 +563,19 @@ def test_vector_scores_neo4j_error(base_config) -> None:
     assert result == {}
 
 
+def test_vector_scores_propagates_non_neo4j_error(base_config) -> None:
+    from fancyrag.mcp.runtime import _vector_scores
+
+    class FailingDriver:
+        def execute_query(self, *_, **__):
+            raise ValueError("boom")
+
+    state = _state_with(FailingDriver(), FakeRetriever([], {}), base_config)
+
+    with pytest.raises(ValueError, match="boom"):
+        _vector_scores(state, [0.1, 0.2], top_k=5, ratio=1)
+
+
 def test_fulltext_scores_empty_query(base_config) -> None:
     from fancyrag.mcp.runtime import _fulltext_scores
 
@@ -506,6 +601,19 @@ def test_fulltext_scores_neo4j_error(base_config) -> None:
     result = _fulltext_scores(state, "test query", top_k=5)
 
     assert result == {}
+
+
+def test_fulltext_scores_propagates_non_neo4j_error(base_config) -> None:
+    from fancyrag.mcp.runtime import _fulltext_scores
+
+    class FailingDriver:
+        def execute_query(self, *_, **__):
+            raise ValueError("boom")
+
+    state = _state_with(FailingDriver(), FakeRetriever([], {}), base_config)
+
+    with pytest.raises(ValueError, match="boom"):
+        _fulltext_scores(state, "test query", top_k=5)
 
 
 def test_search_sync_no_query_vector(base_config) -> None:
@@ -575,6 +683,17 @@ def test_fetch_sync_gracefully_handles_neo4j_error(base_config) -> None:
         "element_id": "42",
         "error": "Database query failed: TransientError",
     }
+
+
+def test_fetch_sync_propagates_non_neo4j_error(base_config) -> None:
+    class FailingDriver:
+        def execute_query(self, *_, **__):
+            raise ValueError("boom")
+
+    state = _state_with(FailingDriver(), FakeRetriever([], {}), base_config)
+
+    with pytest.raises(ValueError, match="boom"):
+        runtime.fetch_sync(state, "42")
 
 
 @pytest.mark.asyncio
