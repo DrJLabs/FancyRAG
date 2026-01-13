@@ -291,7 +291,7 @@ def build_server(
             if callable(original_get_resource_url):
                 try:
                     return original_get_resource_url(path)
-                except Exception:
+                except AttributeError:
                     return None
             return None
 
