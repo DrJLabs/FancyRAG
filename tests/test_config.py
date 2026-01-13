@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from fancryrag.config import ConfigurationError, load_config
+from fancyrag.config import ConfigurationError, load_config
 
 
 ANY_INTERFACE = "0.0.0.0"  # noqa: S104 - intentional for test expectations
@@ -17,6 +17,8 @@ def query_file(tmp_path: Path) -> Path:
 
 
 def _set_required_env(monkeypatch: pytest.MonkeyPatch, query_path: Path) -> None:
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "password")

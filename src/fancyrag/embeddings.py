@@ -6,8 +6,24 @@ import logging
 import time
 from typing import Any
 
-from openai import OpenAIError
 from neo4j_graphrag.embeddings.openai import OpenAIEmbeddings
+try:  # pragma: no cover - exercised when openai is installed
+    from openai import APIConnectionError, APITimeoutError, OpenAIError, RateLimitError
+except ImportError:  # pragma: no cover - defensive fallback for missing openai
+    class OpenAIError(Exception):
+        """Fallback OpenAIError for environments without openai installed."""
+
+    class APIConnectionError(OpenAIError):
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            super().__init__("Connection error")
+
+    class APITimeoutError(OpenAIError):
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            super().__init__("Timeout error")
+
+    class RateLimitError(OpenAIError):
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            super().__init__("Rate limit error")
 
 _EMBEDDING_FAILURE_MSG = "Embedding request failed without raising an exception"
 
@@ -59,7 +75,7 @@ class RetryingOpenAIEmbeddings(OpenAIEmbeddings):
                     raise OpenAIError("OpenAI API returned empty data list")
                 embedding: list[float] = response.data[0].embedding
                 return embedding
-            except OpenAIError as error:  # pragma: no cover - depends on network failures
+            except (APIConnectionError, APITimeoutError, RateLimitError) as error:  # pragma: no cover - depends on network failures
                 last_error = error
                 latency_ms = (time.perf_counter() - start) * 1000
                 logger.warning(

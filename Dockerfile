@@ -24,6 +24,7 @@ RUN uv sync --frozen
 COPY src ./src
 COPY servers ./servers
 COPY queries ./queries
+COPY scripts/config ./scripts/config
 COPY tools ./tools
 COPY README.md ./
 

@@ -1,4 +1,4 @@
-.PHONY: up down index fulltext-index ingest counts logs smoke smoke-logs scan-image
+.PHONY: up down index index-recreate fulltext-index ingest counts logs smoke smoke-logs scan-image
 
 PROJECT_NAME ?= fancryrag
 SMOKE_PROJECT_NAME ?= fancryrag-smoke-$(shell date +%s)
@@ -14,9 +14,12 @@ down:
 logs:
 	docker compose logs -f neo4j mcp
 
-index:
+index: up
+	uv run python scripts/create_vector_index.py
+
+index-recreate: up
 	docker compose exec neo4j cypher-shell -u $${NEO4J_USERNAME:-neo4j} -p $${NEO4J_PASSWORD:-password} \
-		"DROP INDEX text_embeddings IF EXISTS; CALL db.index.vector.createNodeIndex('text_embeddings','Chunk','embedding',$${EMBEDDING_DIMENSIONS:-1024},'cosine');"
+		"DROP INDEX text_embeddings IF EXISTS; CREATE VECTOR INDEX text_embeddings IF NOT EXISTS FOR (n:Chunk) ON (n.embedding) OPTIONS {indexConfig: {\`vector.dimensions\`: $${EMBEDDING_DIMENSIONS:-1024}, \`vector.similarity_function\`: 'cosine'}};"
 
 # Run the Python helper to create or verify the full-text index.
 fulltext-index: up

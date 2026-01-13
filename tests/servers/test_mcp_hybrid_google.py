@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fancryrag.config import ConfigurationError
+from fancyrag.config import ConfigurationError
 
 
 @pytest.fixture
@@ -47,11 +47,11 @@ def test_main_returns_zero_on_success(mock_environment: Path, monkeypatch: pytes
 
     mock_state = MagicMock()
     mock_state.driver.close = MagicMock()
-    monkeypatch.setattr("servers.mcp_hybrid_google.create_state", lambda _: mock_state)
+    monkeypatch.setattr("servers.mcp_hybrid_google.create_state", lambda *_args, **_kwargs: mock_state)
 
     mock_server = MagicMock()
     mock_server.run = MagicMock()
-    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda _: mock_server)
+    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda *_args, **_kwargs: mock_server)
 
     result = mcp_hybrid_google.main()
 
@@ -165,11 +165,11 @@ def test_main_loads_dotenv_with_correct_parameters(mock_environment: Path, monke
     monkeypatch.setattr("servers.mcp_hybrid_google.load_config", lambda: MagicMock())
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.create_state",
-        lambda _: MagicMock(driver=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(driver=MagicMock()),
     )
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.build_server",
-        lambda _: MagicMock(run=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(run=MagicMock()),
     )
 
     mcp_hybrid_google.main()
@@ -183,12 +183,8 @@ def test_main_creates_state_with_loaded_config(mock_environment: Path, monkeypat
     """Test that create_state is called with the loaded config."""
     _ = mock_environment
     from servers import mcp_hybrid_google
-    from fancryrag.config import AppConfig
-
-    mock_config = MagicMock(spec=AppConfig)
-    mock_config.server.host = "localhost"
-    mock_config.server.port = 8080
-    mock_config.server.path = "/mcp"
+    mock_config = MagicMock()
+    mock_config.server = MagicMock(host="localhost", port=8080, path="/mcp")
 
     create_state_calls = []
 
@@ -206,7 +202,7 @@ def test_main_creates_state_with_loaded_config(mock_environment: Path, monkeypat
     monkeypatch.setattr("servers.mcp_hybrid_google.create_state", mock_create_state)
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.build_server",
-        lambda _: MagicMock(run=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(run=MagicMock()),
     )
 
     mcp_hybrid_google.main()
@@ -225,7 +221,7 @@ def test_main_builds_server_with_created_state(mock_environment: Path, monkeypat
 
     build_server_calls = []
 
-    def mock_build_server(state):
+    def mock_build_server(state, **_kwargs):
         build_server_calls.append(state)
         return MagicMock(run=MagicMock())
 
@@ -234,7 +230,7 @@ def test_main_builds_server_with_created_state(mock_environment: Path, monkeypat
         "servers.mcp_hybrid_google.load_dotenv",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr("servers.mcp_hybrid_google.create_state", lambda _: mock_state)
+    monkeypatch.setattr("servers.mcp_hybrid_google.create_state", lambda *_args, **_kwargs: mock_state)
     monkeypatch.setattr("servers.mcp_hybrid_google.build_server", mock_build_server)
 
     mcp_hybrid_google.main()
@@ -247,9 +243,9 @@ def test_main_calls_server_run_with_correct_parameters(mock_environment: Path, m
     """Test that server.run is called with correct parameters from config."""
     _ = mock_environment
     from servers import mcp_hybrid_google
-    from fancryrag.config import AppConfig, ServerSettings
+    from fancyrag.config import ServerSettings
 
-    mock_config = MagicMock(spec=AppConfig)
+    mock_config = MagicMock()
     mock_config.server = ServerSettings(
         host="192.168.1.1",
         port=9999,
@@ -273,9 +269,9 @@ def test_main_calls_server_run_with_correct_parameters(mock_environment: Path, m
     monkeypatch.setattr("servers.mcp_hybrid_google.load_config", lambda: mock_config)
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.create_state",
-        lambda _: MagicMock(driver=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(driver=MagicMock()),
     )
-    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda _: mock_server)
+    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda *_args, **_kwargs: mock_server)
 
     mcp_hybrid_google.main()
 
@@ -314,9 +310,9 @@ def test_main_logs_startup_info(mock_environment: Path, monkeypatch: pytest.Monk
     """Test that startup info is logged before server.run."""
     _ = mock_environment
     from servers import mcp_hybrid_google
-    from fancryrag.config import AppConfig, ServerSettings
+    from fancyrag.config import ServerSettings
 
-    mock_config = MagicMock(spec=AppConfig)
+    mock_config = MagicMock()
     mock_config.server = ServerSettings(
         host="0.0.0.0",  # noqa: B106
         port=8080,
@@ -342,9 +338,9 @@ def test_main_logs_startup_info(mock_environment: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr("servers.mcp_hybrid_google.load_config", lambda: mock_config)
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.create_state",
-        lambda _: MagicMock(driver=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(driver=MagicMock()),
     )
-    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda _: mock_server)
+    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda *_args, **_kwargs: mock_server)
 
     mcp_hybrid_google.main()
 
@@ -374,10 +370,10 @@ def test_main_atexit_cleanup_closes_driver(mock_environment: Path, monkeypatch: 
     mock_driver = MagicMock()
     mock_state = MagicMock(driver=mock_driver)
 
-    monkeypatch.setattr("servers.mcp_hybrid_google.create_state", lambda _: mock_state)
+    monkeypatch.setattr("servers.mcp_hybrid_google.create_state", lambda *_args, **_kwargs: mock_state)
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.build_server",
-        lambda _: MagicMock(run=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(run=MagicMock()),
     )
 
     mcp_hybrid_google.main()
@@ -434,9 +430,9 @@ def test_main_default_server_configuration(mock_environment: Path, monkeypatch: 
     )
     monkeypatch.setattr(
         "servers.mcp_hybrid_google.create_state",
-        lambda _: MagicMock(driver=MagicMock()),
+        lambda *_args, **_kwargs: MagicMock(driver=MagicMock()),
     )
-    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda _: mock_server)
+    monkeypatch.setattr("servers.mcp_hybrid_google.build_server", lambda *_args, **_kwargs: mock_server)
 
     mcp_hybrid_google.main()
 

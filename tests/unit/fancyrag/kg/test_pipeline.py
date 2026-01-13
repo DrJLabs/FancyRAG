@@ -32,7 +32,7 @@ def _stub_settings(monkeypatch):
             load=lambda actor: types.SimpleNamespace(
                 chat_model="gpt-5-mini",
                 embedding_model="text-embedding-3-small",
-                embedding_dimensions=1536,
+                embedding_dimensions=1024,
                 temperature=0.3,
                 max_attempts=3,
             )

@@ -121,9 +121,25 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
     if (model_raw := _optional(env_map, "EMBEDDING_MODEL")) is not None:
         embedding_kwargs["model"] = model_raw
     if (timeout_raw := _optional(env_map, "EMBEDDING_TIMEOUT_SECONDS")) is not None:
-        embedding_kwargs["timeout_seconds"] = timeout_raw
+        try:
+            timeout_seconds = float(timeout_raw)
+        except ValueError as exc:
+            raise ConfigurationError(
+                "Invalid numeric value for EMBEDDING_TIMEOUT_SECONDS"
+            ) from exc
+        if timeout_seconds <= 0:
+            raise ConfigurationError("EMBEDDING_TIMEOUT_SECONDS must be greater than 0")
+        embedding_kwargs["timeout_seconds"] = timeout_seconds
     if (retries_raw := _optional(env_map, "EMBEDDING_MAX_RETRIES")) is not None:
-        embedding_kwargs["max_retries"] = retries_raw
+        try:
+            max_retries = int(float(retries_raw))
+        except ValueError as exc:
+            raise ConfigurationError(
+                "Invalid numeric value for EMBEDDING_MAX_RETRIES"
+            ) from exc
+        if max_retries <= 0:
+            raise ConfigurationError("EMBEDDING_MAX_RETRIES must be greater than 0")
+        embedding_kwargs["max_retries"] = max_retries
 
     embedding_settings = EmbeddingSettings(
         base_url=_require(env_map, "EMBEDDING_API_BASE_URL"),
@@ -134,20 +150,23 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
     auth_required = _parse_bool(env_map, "MCP_AUTH_REQUIRED", default=True)
     oauth_settings: OAuthSettings | None = None
     if auth_required:
-        scopes_raw = _optional(env_map, "GOOGLE_OAUTH_REQUIRED_SCOPES")
+        scopes_raw = env_map.get("GOOGLE_OAUTH_REQUIRED_SCOPES")
+        if scopes_raw is None:
+            scopes_raw = "openid,https://www.googleapis.com/auth/userinfo.email"
         oauth_settings = OAuthSettings(
             client_id=_require(env_map, "GOOGLE_OAUTH_CLIENT_ID"),
             client_secret=_require(env_map, "GOOGLE_OAUTH_CLIENT_SECRET"),
-            required_scopes=_parse_scopes(
-                scopes_raw or "openid,https://www.googleapis.com/auth/userinfo.email"
-            ),
+            required_scopes=_parse_scopes(scopes_raw),
         )
 
     server_kwargs: dict[str, Any] = {}
     if (host_raw := _optional(env_map, "MCP_SERVER_HOST")) is not None:
         server_kwargs["host"] = host_raw
     if (port_raw := _optional(env_map, "MCP_SERVER_PORT")) is not None:
-        server_kwargs["port"] = port_raw
+        try:
+            server_kwargs["port"] = int(port_raw)
+        except ValueError as exc:
+            raise ConfigurationError("MCP_SERVER_PORT must be a valid integer") from exc
     if (path_raw := _optional(env_map, "MCP_SERVER_PATH")) is not None:
         server_kwargs["path"] = path_raw
 

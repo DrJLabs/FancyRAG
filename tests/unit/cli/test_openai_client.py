@@ -152,7 +152,9 @@ class SequencedRateLimitClient(StubOpenAIClient):
 
 
 def _make_client(env: dict[str, str], *, client) -> SharedOpenAIClient:
-    settings = OpenAISettings.load(env, actor="pytest")
+    configured = env.copy()
+    configured.setdefault("OPENAI_EMBEDDING_DIMENSIONS", "1536")
+    settings = OpenAISettings.load(configured, actor="pytest")
     return SharedOpenAIClient(
         settings,
         client=client,

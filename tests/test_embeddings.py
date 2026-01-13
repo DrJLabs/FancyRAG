@@ -3,26 +3,23 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from httpx import Request
+from openai import APIConnectionError, OpenAIError
 
-from fancryrag.embeddings import RetryingOpenAIEmbeddings
+from fancyrag.embeddings import RetryingOpenAIEmbeddings
 from neo4j_graphrag.embeddings.openai import OpenAIEmbeddings
-
-
-class TransientFailure(RuntimeError):
-    """Exception for transient failure in stub create calls."""
-    def __init__(self):
-        super().__init__("transient failure")
 
 
 class StubEmbeddingsAPI:
     def __init__(self, *, succeed_on: int = 1):
         self.calls: list[dict[str, object]] = []
         self._succeed_on = succeed_on
+        self._request = Request("POST", "http://embeddings.local/v1/embeddings")
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
         if len(self.calls) < self._succeed_on:
-            raise TransientFailure()
+            raise APIConnectionError(message="connection error", request=self._request)
         return SimpleNamespace(data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])])
 
 
@@ -41,7 +38,7 @@ def test_retrying_embeddings_respects_configuration(monkeypatch: pytest.MonkeyPa
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -75,7 +72,7 @@ def test_retrying_embeddings_raises_after_max_attempts(monkeypatch: pytest.Monke
         max_retries=2,
     )
 
-    with pytest.raises(RuntimeError, match="transient failure"):
+    with pytest.raises(APIConnectionError):
         embedder.embed_query("fail")
 
     assert len(api.calls) == 2
@@ -89,7 +86,7 @@ def test_retrying_embeddings_first_attempt_success(monkeypatch: pytest.MonkeyPat
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -113,7 +110,7 @@ def test_retrying_embeddings_third_attempt_success(monkeypatch: pytest.MonkeyPat
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -140,7 +137,7 @@ def test_retrying_embeddings_custom_backoff(monkeypatch: pytest.MonkeyPatch) -> 
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -166,7 +163,7 @@ def test_retrying_embeddings_backoff_caps_at_five_seconds(monkeypatch: pytest.Mo
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -205,6 +202,34 @@ def test_retrying_embeddings_passes_kwargs_to_api(monkeypatch: pytest.MonkeyPatc
 
     assert result == [0.1, 0.2, 0.3]
     assert api.calls[0]["dimensions"] == 512
+
+
+def test_retrying_embeddings_empty_data_no_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    class EmptyEmbeddingsAPI:
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(data=[])
+
+    captured_kwargs: dict[str, object] = {}
+    api = EmptyEmbeddingsAPI()
+    client = SimpleNamespace(embeddings=api)
+    _patch_openai_client(monkeypatch, client, captured_kwargs)
+
+    embedder = RetryingOpenAIEmbeddings(
+        model="test-model",
+        base_url="http://embeddings.local",
+        api_key="secret",
+        timeout_seconds=5.0,
+        max_retries=3,
+    )
+
+    with pytest.raises(OpenAIError, match="empty data list"):
+        embedder.embed_query("test query")
+
+    assert len(api.calls) == 1
 
 
 def test_retrying_embeddings_uses_configured_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -246,7 +271,7 @@ def test_retrying_embeddings_default_backoff(monkeypatch: pytest.MonkeyPatch) ->
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -273,10 +298,10 @@ def test_retrying_embeddings_raises_original_exception(monkeypatch: pytest.Monke
         max_retries=1,
     )
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(APIConnectionError) as exc_info:
         embedder.embed_query("test")
 
-    assert "transient failure" in str(exc_info.value)
+    assert "connection error" in str(exc_info.value)
 
 
 def test_retrying_embeddings_multiple_queries_independent(monkeypatch: pytest.MonkeyPatch) -> None:
