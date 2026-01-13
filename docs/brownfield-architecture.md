@@ -46,7 +46,7 @@
   - Relationships: `(:Document)-[:HAS_CHUNK]->(:Chunk)` created for every chunk. The ingestion pipeline ensures orphan chunks are deleted during rollback.
   - Semantic enrichment (optional) writes additional entity/relationship nodes tagged with `ingest_run_key`; QA thresholds default to zero to fail the run on any anomaly.
 - **Vector Index**
-  - `scripts/create_vector_index.py` targets label `Chunk`, property `embedding`, similarity `cosine`, with default 1536 dimensions. Validation mismatches raise `VectorIndexMismatchError` prompting manual remediation.
+  - `scripts/create_vector_index.py` targets label `Chunk`, property `embedding`, similarity `cosine`, with default 1024 dimensions. Validation mismatches raise `VectorIndexMismatchError` prompting manual remediation.
 - **Qdrant Collection**
   - Export script ensures `chunks_main` collection exists (or recreates it with `--recreate-collection`). Point IDs default to the chunk's numeric index, falling back to UID strings when absent.
   - Payload mirrors Neo4j provenance fields (source path, git commit, checksum) for cross-store validation.

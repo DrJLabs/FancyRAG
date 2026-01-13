@@ -19,7 +19,7 @@ index: up
 
 index-recreate: up
 	docker compose exec neo4j cypher-shell -u $${NEO4J_USERNAME:-neo4j} -p $${NEO4J_PASSWORD:-password} \
-		"DROP INDEX text_embeddings IF EXISTS; CALL db.index.vector.createNodeIndex('text_embeddings','Chunk','embedding',$${EMBEDDING_DIMENSIONS:-1536},'cosine');"
+		"DROP INDEX text_embeddings IF EXISTS; CALL db.index.vector.createNodeIndex('text_embeddings','Chunk','embedding',$${EMBEDDING_DIMENSIONS:-1024},'cosine');"
 
 # Run the Python helper to create or verify the full-text index.
 fulltext-index: up

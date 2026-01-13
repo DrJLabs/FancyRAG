@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cli import diagnostics, openai_client
 
 
@@ -21,6 +23,7 @@ class HappyClient:
         Creates a `chat` namespace exposing `completions.create` and an `embeddings` namespace exposing `create`, both bound to the instance's internal handlers, and initializes call counters under `self.calls` for "chat" and "embedding".
         """
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
+        self.responses = SimpleNamespace(create=self._responses)
         self.embeddings = SimpleNamespace(create=self._embedding)
         self.calls = {"chat": 0, "embedding": 0}
 
@@ -41,6 +44,9 @@ class HappyClient:
             choices=[SimpleNamespace(finish_reason="stop")],
         )
 
+    def _responses(self, **kwargs):
+        return self._chat(**kwargs)
+
     def _embedding(self, **kwargs):
         """
         Create a fake embedding response and record that an embedding call occurred.
@@ -57,6 +63,11 @@ class HappyClient:
             data=[SimpleNamespace(embedding=[0.0] * 1536)],
             usage=SimpleNamespace(total_tokens=8),
         )
+
+
+@pytest.fixture(autouse=True)
+def _set_openai_embedding_dimensions(monkeypatch):
+    monkeypatch.setenv("OPENAI_EMBEDDING_DIMENSIONS", "1536")
 
 
 def _read_json(path: Path) -> dict:

@@ -63,6 +63,18 @@ class _ChatCompletions:
         )()
 
 
+class _Responses:
+    def create(self, **_):
+        return type(
+            "Response",
+            (),
+            {
+                "usage": _Usage(prompt_tokens=9, completion_tokens=3),
+                "choices": [type("Choice", (), {"finish_reason": "stop"})()],
+            },
+        )()
+
+
 class _Embeddings:
     def create(self, **_):
         return type(
@@ -79,7 +91,7 @@ class OpenAI:
     def __init__(self, *_, **__):
         self.chat = type("Chat", (), {"completions": _ChatCompletions()})()
         self.embeddings = _Embeddings()
-        self.responses = []
+        self.responses = _Responses()
 
 """,
         encoding="utf-8",
@@ -131,6 +143,7 @@ def _run_probe(repo: Path, extra_env: dict[str, str] | None = None, arguments: l
         [str(repo / "src"), str(repo / "stubs"), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
     env.setdefault("GRAPH_RAG_ACTOR", "integration-test")
+    env.setdefault("OPENAI_EMBEDDING_DIMENSIONS", "1536")
     if extra_env:
         env.update(extra_env)
     args = [

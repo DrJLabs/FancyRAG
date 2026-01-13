@@ -12,7 +12,7 @@ import platform
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
@@ -385,7 +385,9 @@ def run_openai_probe(
         )
         return _record_failure(failure)
 
-    settings = replace(settings, max_attempts=max_attempts, backoff_seconds=base_delay)
+    settings = settings.model_copy(
+        update={"max_attempts": max_attempts, "backoff_seconds": base_delay}
+    )
 
     if skip_live:
         report = {
@@ -410,6 +412,7 @@ def run_openai_probe(
                 shared_client = SharedOpenAIClient(
                     settings,
                     client=candidate,
+                    embedding_client=candidate,
                     metrics=metrics,
                     sleep_fn=sleep_fn,
                 )

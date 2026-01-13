@@ -121,7 +121,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
 
 
-def _match_record(name: str, label: str, prop: str, *, dimensions: int = 1536, similarity: str = "cosine") -> FakeRecord:
+def _match_record(name: str, label: str, prop: str, *, dimensions: int = 1024, similarity: str = "cosine") -> FakeRecord:
     return FakeRecord(
         {
             "name": name,
@@ -152,7 +152,7 @@ def test_creates_index_when_missing(tmp_path, monkeypatch: pytest.MonkeyPatch, e
         assert name == "chunks_vec"
         assert label == "Chunk"
         assert embedding_property == "embedding"
-        assert dimensions == 1536
+        assert dimensions == 1024
         assert similarity_fn == "cosine"
         assert neo4j_database is None
 
@@ -190,7 +190,7 @@ def test_skips_when_existing_matches(tmp_path, monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_mismatch_raises(monkeypatch: pytest.MonkeyPatch, env) -> None:
-    monkeypatch.setattr(civ, "retrieve_vector_index_info", lambda *_args, **_kwargs: _match_record("chunks_vec", "Chunk", "embedding", dimensions=1024))
+    monkeypatch.setattr(civ, "retrieve_vector_index_info", lambda *_args, **_kwargs: _match_record("chunks_vec", "Chunk", "embedding", dimensions=1536))
     monkeypatch.setattr(civ.GraphDatabase, "driver", lambda uri, auth: FakeDriver())
 
     with pytest.raises(civ.VectorIndexMismatchError):
@@ -591,7 +591,7 @@ def test_match_record_default_parameters() -> None:
     assert data["name"] == "test_name"
     assert data["labelsOrTypes"] == ["test_label"]
     assert data["properties"] == ["test_prop"]
-    assert data["options"]["indexConfig"]["vector.dimensions"] == 1536
+    assert data["options"]["indexConfig"]["vector.dimensions"] == 1024
     assert data["options"]["indexConfig"]["vector.similarity_function"] == "cosine"
 
 
