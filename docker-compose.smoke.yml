@@ -97,6 +97,7 @@ services:
       EMBEDDING_API_BASE_URL: http://embedding-stub:8000/v1
       EMBEDDING_API_KEY: dummy-key
       EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_DIMENSIONS: "3"
       EMBEDDING_TIMEOUT_SECONDS: "${EMBEDDING_TIMEOUT_SECONDS:-5}"
       EMBEDDING_MAX_RETRIES: "${EMBEDDING_MAX_RETRIES:-1}"
       GOOGLE_OAUTH_CLIENT_ID: test-client
@@ -138,6 +139,9 @@ services:
     entrypoint: ["bash", "-lc"]
     command:
       - >-
+        apt-get update &&
+        apt-get install -y --no-install-recommends git &&
+        rm -rf /var/lib/apt/lists/* &&
         python -m pip install --upgrade --quiet pip &&
         python -m pip install --quiet uv &&
         uv pip install --system ".[dev]" &&

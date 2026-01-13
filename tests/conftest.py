@@ -21,6 +21,7 @@ def _ensure_path(path: Path) -> None:
         sys.path.insert(0, str(path))
 
 
+_ensure_path(ROOT_DIR)
 _ensure_path(SRC_DIR)
 load_project_dotenv()
 

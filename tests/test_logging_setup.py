@@ -8,7 +8,7 @@ from io import StringIO
 
 import pytest
 
-from fancryrag.logging_setup import JsonFormatter, configure_logging
+from fancyrag.logging_setup import JsonFormatter, configure_logging
 
 _TEST_EXCEPTION_MESSAGE = "Test exception"
 

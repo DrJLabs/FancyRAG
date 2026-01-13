@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from starlette.testclient import TestClient
 
-from fancryrag.config import (
+from fancyrag.config import (
     AppConfig,
     EmbeddingSettings,
     IndexSettings,
@@ -13,7 +13,7 @@ from fancryrag.config import (
     QuerySettings,
     ServerSettings,
 )
-from fancryrag.mcp import runtime
+from fancyrag.mcp import runtime
 from fastmcp.server.auth.auth import AccessToken, AuthProvider
 
 
@@ -315,6 +315,57 @@ def test_stateless_http_allows_requests_when_auth_disabled(base_config):
         assert response.status_code == 200
 
 
+def test_http_search_and_fetch_routes_return_contract(base_config):
+    config = base_config.model_copy(deep=True)
+    config.server.auth_required = False
+    config.oauth = None
+
+    records = [
+        {"node": FakeNode("1", text="Doc 1", embedding=[0.1]), "score": 0.9, "text": "Doc 1"},
+    ]
+    metadata = {"query_vector": [0.11, 0.22]}
+
+    driver = StubDriver(
+        {
+            runtime.VECTOR_SCORE_QUERY: ([{"element_id": "1", "score": 0.9}], None, None),
+            runtime.FULLTEXT_SCORE_QUERY: ([{"element_id": "1", "score": 1.0}], None, None),
+            runtime.FETCH_NODE_QUERY: (
+                [{"node": FakeNode("1", text="Doc 1", embedding=[0.1]), "labels": ["Chunk"]}],
+                None,
+                None,
+            ),
+        }
+    )
+    state = _state_with(driver, FakeRetriever(records, metadata), config)
+    server = runtime.build_server(state)
+    app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
+
+    headers = {"content-type": "application/json"}
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp/search",
+            headers=headers,
+            json={"query": "graph", "top_k": 1, "effective_search_ratio": 1},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["query"] == "graph"
+        assert payload["top_k"] == 1
+        assert payload["effective_search_ratio"] == 1
+        assert payload["results"]
+        result = payload["results"][0]
+        assert "embedding" not in result["metadata"]
+
+        element_id = result["metadata"]["element_id"]
+        fetch = client.post("/mcp/fetch", headers=headers, json={"element_id": element_id})
+        assert fetch.status_code == 200
+        fetched = fetch.json()
+        assert fetched["found"] is True
+        assert fetched["element_id"] == element_id
+        assert "embedding" not in fetched.get("metadata", {})
+
+
 def test_search_latency_within_budget(base_config):
     records = [
         {"node": FakeNode("1", text="Doc", embedding=[0.1]), "score": 0.9, "text": "Doc"},
@@ -338,7 +389,7 @@ def test_search_latency_within_budget(base_config):
 
 
 def test_normalize_scores_empty_records() -> None:
-    from fancryrag.mcp.runtime import _normalize_scores
+    from fancyrag.mcp.runtime import _normalize_scores
 
     result = _normalize_scores([])
 
@@ -346,7 +397,7 @@ def test_normalize_scores_empty_records() -> None:
 
 
 def test_normalize_scores_single_record() -> None:
-    from fancryrag.mcp.runtime import _normalize_scores
+    from fancyrag.mcp.runtime import _normalize_scores
 
     records = [{"element_id": "1", "score": 0.5}]
     result = _normalize_scores(records)
@@ -355,7 +406,7 @@ def test_normalize_scores_single_record() -> None:
 
 
 def test_normalize_scores_multiple_records() -> None:
-    from fancryrag.mcp.runtime import _normalize_scores
+    from fancyrag.mcp.runtime import _normalize_scores
 
     records = [
         {"element_id": "1", "score": 0.5},
@@ -370,7 +421,7 @@ def test_normalize_scores_multiple_records() -> None:
 
 
 def test_normalize_scores_zero_max_score() -> None:
-    from fancryrag.mcp.runtime import _normalize_scores
+    from fancyrag.mcp.runtime import _normalize_scores
 
     records = [
         {"element_id": "1", "score": 0.0},
@@ -383,7 +434,7 @@ def test_normalize_scores_zero_max_score() -> None:
 
 
 def test_node_metadata_extraction(base_config) -> None:
-    from fancryrag.mcp.runtime import _node_metadata
+    from fancyrag.mcp.runtime import _node_metadata
 
     _ = base_config
     node = FakeNode("42", text="Test", embedding=[0.1, 0.2])
@@ -396,7 +447,7 @@ def test_node_metadata_extraction(base_config) -> None:
 
 
 def test_node_metadata_none_node() -> None:
-    from fancryrag.mcp.runtime import _node_metadata
+    from fancyrag.mcp.runtime import _node_metadata
 
     metadata = _node_metadata(None)
 
@@ -404,7 +455,7 @@ def test_node_metadata_none_node() -> None:
 
 
 def test_vector_scores_empty_vector(base_config) -> None:
-    from fancryrag.mcp.runtime import _vector_scores
+    from fancyrag.mcp.runtime import _vector_scores
 
     driver = StubDriver({})
     state = _state_with(driver, FakeRetriever([], {}), base_config)
@@ -416,7 +467,7 @@ def test_vector_scores_empty_vector(base_config) -> None:
 
 
 def test_vector_scores_neo4j_error(base_config) -> None:
-    from fancryrag.mcp.runtime import _vector_scores
+    from fancyrag.mcp.runtime import _vector_scores
     from neo4j.exceptions import ServiceUnavailable
 
     class FailingDriver:
@@ -431,7 +482,7 @@ def test_vector_scores_neo4j_error(base_config) -> None:
 
 
 def test_fulltext_scores_empty_query(base_config) -> None:
-    from fancryrag.mcp.runtime import _fulltext_scores
+    from fancyrag.mcp.runtime import _fulltext_scores
 
     driver = StubDriver({})
     state = _state_with(driver, FakeRetriever([], {}), base_config)
@@ -443,7 +494,7 @@ def test_fulltext_scores_empty_query(base_config) -> None:
 
 
 def test_fulltext_scores_neo4j_error(base_config) -> None:
-    from fancryrag.mcp.runtime import _fulltext_scores
+    from fancyrag.mcp.runtime import _fulltext_scores
     from neo4j.exceptions import ClientError
 
     class FailingDriver:
@@ -605,9 +656,9 @@ def test_create_state_initializes_driver_and_retriever(base_config, monkeypatch)
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr("fancryrag.mcp.runtime.GraphDatabase.driver", MockDriver)
-    monkeypatch.setattr("fancryrag.mcp.runtime.HybridCypherRetriever", MockRetriever)
-    monkeypatch.setattr("fancryrag.mcp.runtime.RetryingOpenAIEmbeddings", lambda *_, **__: "embedder")
+    monkeypatch.setattr("fancyrag.mcp.runtime.GraphDatabase.driver", MockDriver)
+    monkeypatch.setattr("fancyrag.mcp.runtime.HybridCypherRetriever", MockRetriever)
+    monkeypatch.setattr("fancyrag.mcp.runtime.RetryingOpenAIEmbeddings", lambda *_, **__: "embedder")
 
     state = runtime.create_state(base_config)
 
@@ -627,7 +678,7 @@ def test_build_server_with_custom_auth_provider(base_config) -> None:
 
 
 def test_node_metadata_handles_node_without_items_method(base_config) -> None:
-    from fancryrag.mcp.runtime import _node_metadata
+    from fancyrag.mcp.runtime import _node_metadata
 
     _ = base_config
 

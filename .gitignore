@@ -5,6 +5,7 @@
 .venv/
 *.egg-info/
 __pycache__/
+build/
 
 # Local scratch outputs
 .serena/

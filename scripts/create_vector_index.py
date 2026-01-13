@@ -2,9 +2,9 @@
 """Create or validate the Neo4j vector index used by the minimal path workflow.
 
 Replaces the Story 2.4 stub with production-ready behaviour that connects to
-Neo4j using shared environment settings, idempotently provisions the
-``chunks_vec`` index (by default), and emits structured JSON logs compatible
-with local smoke automation.
+Neo4j using shared environment settings, idempotently provisions the configured
+vector index, and emits structured JSON logs compatible with local smoke
+automation.
 """
 
 from __future__ import annotations
@@ -136,7 +136,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create or validate the Neo4j vector index used by the minimal path workflow.")
     parser.add_argument(
         "--index-name",
-        default=os.environ.get("NEO4J_VECTOR_INDEX", DEFAULT_INDEX_NAME),
+        default=os.environ.get("INDEX_NAME")
+        or os.environ.get("NEO4J_VECTOR_INDEX", DEFAULT_INDEX_NAME),
         help="Vector index name (default: %(default)s)",
     )
     parser.add_argument(

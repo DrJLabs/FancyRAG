@@ -10,14 +10,16 @@ from typing import Any, Dict, Iterable, List
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
 from fastmcp.server.auth.providers.google import GoogleProvider
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from neo4j import GraphDatabase, RoutingControl
 from neo4j import Driver
-from neo4j.exceptions import Neo4jError
 from neo4j.graph import Node
 from neo4j_graphrag.retrievers import HybridCypherRetriever
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
-from fancryrag.config import AppConfig
-from fancryrag.embeddings import RetryingOpenAIEmbeddings
+from fancyrag.config import AppConfig
+from fancyrag.embeddings import RetryingOpenAIEmbeddings
 
 
 logger = logging.getLogger(__name__)
@@ -122,7 +124,7 @@ def _vector_scores(
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Neo4jError as error:
+    except Exception as error:
         logger.warning(
             "scores.vector.failed",
             extra={"error": type(error).__name__},
@@ -151,7 +153,7 @@ def _fulltext_scores(
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Neo4jError as error:
+    except Exception as error:
         logger.warning(
             "scores.fulltext.failed",
             extra={"error": type(error).__name__},
@@ -239,7 +241,7 @@ def fetch_sync(state: ServerState, element_id: str) -> Dict[str, Any]:
             database_=state.config.neo4j.database,
             routing_=RoutingControl.READ,
         )
-    except Neo4jError as error:
+    except Exception as error:
         logger.error(
             "fetch.failed",
             extra={"element_id": element_id, "error": type(error).__name__},
@@ -281,6 +283,89 @@ def build_server(
         )
 
     server = FastMCP(name="FancyRAG Hybrid MCP", auth=provider)
+
+    def _auth_error(
+        status_code: int, error: str, description: str
+    ) -> JSONResponse:
+        headers: Dict[str, str] = {}
+        parts = [f'error="{error}"', f'error_description="{description}"']
+        if provider:
+            resource_metadata_url = provider._get_resource_url(  # type: ignore[attr-defined]
+                "/.well-known/oauth-protected-resource"
+            )
+            if resource_metadata_url:
+                parts.append(f'resource_metadata="{resource_metadata_url}"')
+        headers["www-authenticate"] = f"Bearer {', '.join(parts)}"
+        return JSONResponse(
+            {"error": error, "error_description": description},
+            status_code=status_code,
+            headers=headers,
+        )
+
+    def _require_auth(request: Request) -> JSONResponse | None:
+        if not state.config.server.auth_required:
+            return None
+        if provider is None:
+            return _auth_error(401, "invalid_token", "Authentication required")
+        user = request.scope.get("user")
+        if not isinstance(user, AuthenticatedUser):
+            return _auth_error(401, "invalid_token", "Authentication required")
+        auth = request.scope.get("auth")
+        for required_scope in provider.required_scopes:
+            if auth is None or required_scope not in auth.scopes:
+                return _auth_error(
+                    403,
+                    "insufficient_scope",
+                    f"Required scope: {required_scope}",
+                )
+        return None
+
+    def _bad_request(message: str) -> JSONResponse:
+        return JSONResponse({"error": message}, status_code=400)
+
+    @server.custom_route("/mcp/search", methods=["POST"], name="mcp_search")
+    async def http_search(request: Request) -> JSONResponse:
+        if auth_error := _require_auth(request):
+            return auth_error
+        try:
+            payload = await request.json()
+        except Exception:
+            return _bad_request("Invalid JSON body")
+        if not isinstance(payload, dict):
+            return _bad_request("Invalid JSON body")
+        query = payload.get("query")
+        if not isinstance(query, str) or not query:
+            return _bad_request("query is required")
+        top_k = payload.get("top_k", 5)
+        effective_ratio = payload.get("effective_search_ratio", 1)
+        if isinstance(top_k, bool) or not isinstance(top_k, int):
+            return _bad_request("top_k must be an integer")
+        if isinstance(effective_ratio, bool) or not isinstance(effective_ratio, int):
+            return _bad_request("effective_search_ratio must be an integer")
+        if top_k <= 0:
+            return _bad_request("top_k must be greater than zero")
+        if effective_ratio <= 0:
+            return _bad_request("effective_search_ratio must be greater than zero")
+        result = await asyncio.to_thread(
+            search_sync, state, query, top_k, effective_ratio
+        )
+        return JSONResponse(result)
+
+    @server.custom_route("/mcp/fetch", methods=["POST"], name="mcp_fetch")
+    async def http_fetch(request: Request) -> JSONResponse:
+        if auth_error := _require_auth(request):
+            return auth_error
+        try:
+            payload = await request.json()
+        except Exception:
+            return _bad_request("Invalid JSON body")
+        if not isinstance(payload, dict):
+            return _bad_request("Invalid JSON body")
+        element_id = payload.get("element_id")
+        if not isinstance(element_id, str) or not element_id:
+            return _bad_request("element_id is required")
+        result = await asyncio.to_thread(fetch_sync, state, element_id)
+        return JSONResponse(result)
 
     @server.tool
     async def search(

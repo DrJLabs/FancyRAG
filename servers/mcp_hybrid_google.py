@@ -12,16 +12,16 @@ from dotenv import load_dotenv
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.responses import JSONResponse
 
-from fancryrag.config import ConfigurationError, load_config
-from fancryrag.logging_setup import configure_logging
-from fancryrag.mcp.runtime import build_server, create_state
+from fancyrag.config import ConfigurationError, load_config
+from fancyrag.logging_setup import configure_logging
+from fancyrag.mcp.runtime import build_server, create_state
 
 
 def main() -> int:
     configure_logging()
     load_dotenv(".env.local", override=False)
 
-    logger = logging.getLogger("fancryrag.server")
+    logger = logging.getLogger("fancyrag.server")
 
     try:
         config = load_config()

@@ -19,7 +19,7 @@ from neo4j_graphrag.indexes import (
 )
 
 
-LOGGER = logging.getLogger("fancryrag.fulltext_index")
+LOGGER = logging.getLogger("fancyrag.fulltext_index")
 
 
 class ConfigurationError(RuntimeError):

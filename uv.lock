@@ -591,7 +591,7 @@ dev = [
 requires-dist = [
     { name = "fastmcp", specifier = ">=0.3.0" },
     { name = "neo4j", specifier = ">=5.18,<6" },
-    { name = "neo4j-graphrag", extras = ["experimental", "openai"] },
+    { name = "neo4j-graphrag", extras = ["experimental", "openai"], git = "https://github.com/neo4j/neo4j-graphrag-python?rev=9e6b58827caa642539c8cb15dcde36c3e4d6d2c6" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
     { name = "prometheus-client", specifier = ">=0.23,<1" },
     { name = "pydantic", specifier = ">=2.7,<3" },
@@ -1615,23 +1615,19 @@ wheels = [
 
 [[package]]
 name = "neo4j-graphrag"
-version = "1.12.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.11.0"
+source = { git = "https://github.com/neo4j/neo4j-graphrag-python?rev=9e6b58827caa642539c8cb15dcde36c3e4d6d2c6#9e6b58827caa642539c8cb15dcde36c3e4d6d2c6" }
 dependencies = [
     { name = "fsspec" },
     { name = "json-repair" },
     { name = "neo4j" },
-    { name = "numpy", marker = "python_full_version < '3.15'" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
     { name = "pydantic" },
     { name = "pypdf" },
     { name = "pyyaml" },
-    { name = "scipy", marker = "python_full_version < '3.15'" },
+    { name = "scipy", marker = "python_full_version < '3.14'" },
     { name = "tenacity" },
     { name = "types-pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/73/f1/d03400f0154581b5c353be1d0829c6949bd88348f91e1902ed99878822c3/neo4j_graphrag-1.12.0.tar.gz", hash = "sha256:17625c403907e38be65d465354d1d19ff466b30a4449ffe93f9a6d5b5578d974", size = 1292917, upload-time = "2026-01-08T16:06:23.916Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/03/1513675b26b6713592c76eec505edfe9733147efc0e3a5a9b3e01321ba0d/neo4j_graphrag-1.12.0-py3-none-any.whl", hash = "sha256:4c44030d15f00a5fc540eb02666523b7f301652e70250953f6c79b35ee5b95d4", size = 207961, upload-time = "2026-01-08T16:06:22.523Z" },
 ]
 
 [package.optional-dependencies]
@@ -2743,7 +2739,7 @@ name = "scipy"
 version = "1.16.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4c/3b/546a6f0bfe791bbb7f8d591613454d15097e53f906308ec6f7c1ce588e8e/scipy-1.16.2.tar.gz", hash = "sha256:af029b153d243a80afb6eabe40b0a07f8e35c9adc269c019f364ad747f826a6b", size = 30580599, upload-time = "2025-09-11T17:48:08.271Z" }
 wheels = [

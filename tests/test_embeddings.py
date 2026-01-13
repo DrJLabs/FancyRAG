@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fancryrag.embeddings import RetryingOpenAIEmbeddings
+from fancyrag.embeddings import RetryingOpenAIEmbeddings
 from neo4j_graphrag.embeddings.openai import OpenAIEmbeddings
 
 
@@ -41,7 +41,7 @@ def test_retrying_embeddings_respects_configuration(monkeypatch: pytest.MonkeyPa
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -89,7 +89,7 @@ def test_retrying_embeddings_first_attempt_success(monkeypatch: pytest.MonkeyPat
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -113,7 +113,7 @@ def test_retrying_embeddings_third_attempt_success(monkeypatch: pytest.MonkeyPat
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -140,7 +140,7 @@ def test_retrying_embeddings_custom_backoff(monkeypatch: pytest.MonkeyPatch) -> 
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -166,7 +166,7 @@ def test_retrying_embeddings_backoff_caps_at_five_seconds(monkeypatch: pytest.Mo
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
@@ -246,7 +246,7 @@ def test_retrying_embeddings_default_backoff(monkeypatch: pytest.MonkeyPatch) ->
     _patch_openai_client(monkeypatch, client, captured_kwargs)
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr("fancryrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
+    monkeypatch.setattr("fancyrag.embeddings.time.sleep", lambda value: sleep_calls.append(value))
 
     embedder = RetryingOpenAIEmbeddings(
         model="test-model",
