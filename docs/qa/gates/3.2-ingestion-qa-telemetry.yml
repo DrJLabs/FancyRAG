@@ -1,0 +1,20 @@
+schema: 1
+story: '3.2'
+gate: PASS
+status_reason: 'QA gating rolls back on anomalies; reports sanitized and instrumented for runtime monitoring.'
+reviewer: 'Quinn'
+updated: '2025-10-02T07:10:00Z'
+top_issues:
+  - id: 'PERF-001'
+    severity: low
+    finding: 'Runtime baseline for QA telemetry on large corpora not yet recorded.'
+    suggested_action: 'Benchmark QA-enabled ingestion on representative dataset and document expected duration envelope.'
+tests_reviewed:
+  - 'tests/unit/scripts/test_kg_build.py'
+  - 'tests/unit/scripts/test_export_to_qdrant.py'
+risks_identified:
+  - 'docs/qa/assessments/3.2-risk-20251002.md'
+trace:
+  - 'docs/qa/assessments/3.2-trace-20251002.md'
+waiver:
+  active: false

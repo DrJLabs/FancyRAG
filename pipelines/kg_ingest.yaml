@@ -1,0 +1,94 @@
+version_: 1
+template_: none
+
+neo4j_config:
+  params_:
+    uri:
+      resolver_: ENV
+      var_: NEO4J_URI
+    user:
+      resolver_: ENV
+      var_: NEO4J_USERNAME
+    password:
+      resolver_: ENV
+      var_: NEO4J_PASSWORD
+
+llm_config:
+  class_: OpenAILLM
+  params_:
+    api_key:
+      resolver_: ENV
+      var_: OPENAI_API_KEY
+    project:
+      resolver_: ENV
+      var_: OPENAI_PROJECT
+    model_name: gpt-4o-mini
+    model_params:
+      temperature: 0
+
+embedder_config:
+  class_: OpenAIEmbeddings
+  params_:
+    model: local-embedding-768
+    base_url:
+      resolver_: ENV
+      var_: EMBEDDING_API_BASE_URL
+    api_key:
+      resolver_: ENV
+      var_: EMBEDDING_API_KEY
+
+component_config:
+  splitter:
+    class_: neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter.FixedSizeSplitter
+    params_:
+      chunk_size: 600
+      chunk_overlap: 120
+      approximate: true
+  embedder:
+    class_: neo4j_graphrag.experimental.components.embedder.TextChunkEmbedder
+    params_:
+      embedder:
+        resolver_: CONFIG_KEY
+        key_: embedder_config.default
+  extractor:
+    class_: neo4j_graphrag.experimental.components.entity_relation_extractor.LLMEntityRelationExtractor
+    params_:
+      llm:
+        resolver_: CONFIG_KEY
+        key_: llm_config.default
+      max_concurrency: 4
+  writer:
+    class_: neo4j_graphrag.experimental.components.kg_writer.Neo4jWriter
+    params_:
+      driver:
+        resolver_: CONFIG_KEY
+        key_: neo4j_config.default
+      neo4j_database:
+        resolver_: ENV
+        var_: NEO4J_DATABASE
+  resolver_exact:
+    class_: neo4j_graphrag.experimental.components.resolver.SinglePropertyExactMatchResolver
+    params_:
+      driver:
+        resolver_: CONFIG_KEY
+        key_: neo4j_config.default
+      neo4j_database:
+        resolver_: ENV
+        var_: NEO4J_DATABASE
+
+connection_config:
+  - start: splitter
+    end: embedder
+    input_config:
+      text_chunks: splitter
+  - start: embedder
+    end: extractor
+    input_config:
+      chunks: embedder
+  - start: extractor
+    end: writer
+    input_config:
+      graph: extractor
+  - start: writer
+    end: resolver_exact
+    input_config: {}

@@ -1,0 +1,95 @@
+schema: 1
+story: "5.5"
+story_title: "RAG Evaluation Harness"
+gate: "CONCERNS"
+status_reason: "Pre-implementation QA gate drafted to define evidence expectations and CI thresholds before Story 5.5 delivery."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-06T00:00:00-04:00"
+quality_score: 0
+expires: "2025-10-31T00:00:00-04:00"
+waiver: { active: false }
+top_issues:
+  - id: "TEST-501"
+    severity: high
+    summary: "Baseline precision/recall/faithfulness thresholds must be agreed with QA before CI enforcement."
+  - id: "REQ-502"
+    severity: medium
+    summary: "Ensure evaluation scorecards are artefacted under artifacts/local_stack/evaluation/<timestamp>/."
+
+evidence:
+  tests_expected:
+    - "PYTHONPATH=src pytest tests/integration/local_stack/test_minimal_path_smoke.py::test_rag_evaluation_baseline (to be added)."
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/evaluation/test_scorecard_serialisation.py (to be added)."
+  metrics_targets:
+    precision: ">= 0.80 (preset-specific floor — capture actual values when baseline finalised)."
+    recall: ">= 0.75"
+    faithfulness: ">= 0.85"
+    correctness: ">= 0.80"
+  docs_required:
+    - "docs/stories/5.5.rag-evaluation.md"
+    - "docs/brownfield-architecture.md#rag-evaluation-harness"
+    - "artifacts/local_stack/evaluation/<timestamp>/metrics.json (sample attached in story)."
+  trace:
+    ac_expected: [1, 2, 3, 4]
+    notes: "Populate with final QA trace once Story 5.5 completes."
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 1
+    low: 0
+  highest:
+    id: "RAG-EVAL-THRESHOLD"
+    score: high
+    title: "Unvetted thresholds may cause false positives/negatives in CI."
+  recommendations:
+    must_fix:
+      - "Document metric deltas vs. previous runs and get QA sign-off before enabling CI failures."
+    monitor:
+      - "Track evaluation runtime cost to avoid CI timeouts."
+
+test_design:
+  scenarios_total: 0
+  by_level:
+    unit: 0
+    integration: 0
+    e2e: 0
+  by_priority:
+    p0: 0
+    p1: 0
+    p2: 0
+    p3: 0
+  coverage_gaps:
+    - "Add unit coverage for scorecard serialisation/deserialisation."
+    - "Add integration coverage comparing evaluation outputs against baseline fixture."
+
+nfr_validation:
+  security:
+    status: PENDING
+    notes: "Confirm evaluation artefacts redact sensitive prompts."
+  performance:
+    status: PENDING
+    notes: "Capture evaluation runtime budget and ensure automation meets CI SLA."
+  reliability:
+    status: PENDING
+    notes: "Verify retries/backoff around evaluation API calls."
+  maintainability:
+    status: PENDING
+    notes: "Ensure preset-driven query lists live alongside typed settings."
+
+recommendations:
+  immediate:
+    - action: "QA to define baseline query set and approve metric floors before code freeze."
+      refs:
+        - docs/prd.md#story-55-integrate-rag-evaluation-harness
+        - docs/brownfield-architecture.md#rag-evaluation-harness
+  future:
+    - action: "Consider logging per-question breakdowns to simplify post-failure triage."
+
+references:
+  risk_profile: null
+  test_design: null
+  story: docs/stories/5.5.rag-evaluation.md
+  trace: null
+  nfr_assessment: null

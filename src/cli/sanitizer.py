@@ -1,0 +1,215 @@
+"""Reusable sanitization helpers for CLI diagnostics artifacts and logs."""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any, Iterable, Mapping
+from urllib.parse import urlparse
+
+__all__ = [
+    "SECRET_ENV_KEYS",
+    "SECRET_PATTERNS",
+    "SENSITIVE_KEY_NAMES",
+    "mask_base_url",
+    "sanitize_text",
+    "scrub_object",
+]
+
+
+SECRET_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "QDRANT_API_KEY",
+        "NEO4J_PASSWORD",
+        "NEO4J_BOLT_PASSWORD",
+        "NEO4J_AUTH",
+        "OPENAI_BASE_URL",
+    }
+)
+
+
+SENSITIVE_KEY_PATTERN = r"(?:api[_-]?key|authorization|bearer|token|secret|password|access[_-]?token|refresh[_-]?token)"
+SENSITIVE_NAME_TOKENS: tuple[str, ...] = ("token", "secret", "password")
+SENSITIVE_KEY_SUFFIX_PATTERN = re.compile(r"(?i)(?:^|[_-])key(?:$|[_-])")
+
+
+SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"sk-[A-Za-z0-9]{4,}"),
+    re.compile(
+        rf"(?i)"  # case insensitive
+        rf"\"?{SENSITIVE_KEY_PATTERN}\"?"  # optional quotes around key name
+        rf"\s*[:=]\s*"  # key/value separator
+        rf"['\"]?(?:Bearer\s+)?[A-Za-z0-9._-]{{4,}}['\"]?"  # sanitized value with optional quotes/Bearer prefix
+    ),
+    re.compile(r"(?i)(bearer)\s+[A-Za-z0-9._-]{10,}"),
+    re.compile(r"(?i)(basic)\s+[A-Za-z0-9+/=]{10,}"),
+)
+
+
+SENSITIVE_KEY_NAMES: frozenset[str] = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer",
+        "token",
+        "secret",
+        "password",
+        "access_token",
+        "refresh_token",
+        "x-openai-client",
+        "openai-organization",
+    }
+)
+
+def mask_base_url(value: str | None) -> str | None:
+    """Return a redacted representation of a base URL for logging and telemetry."""
+
+    if not value:
+        return None
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return "***"
+
+    if not parsed.netloc:
+        return "***"
+
+    scheme = parsed.scheme or "https"
+    suffix = parsed.path.rstrip("/") if parsed.path else ""
+    masked = f"{scheme}://***"
+    if suffix:
+        masked = f"{masked}{suffix}"
+    return masked
+
+
+def _is_sensitive_name(name: str) -> bool:
+    """Return True if a mapping or environment key name should be considered sensitive."""
+
+    lower = name.lower()
+    if lower in SENSITIVE_KEY_NAMES:
+        return True
+    if SENSITIVE_KEY_SUFFIX_PATTERN.search(name):
+        return True
+    tokens = re.split(r"[_\-\s]+|(?<=[a-z0-9])(?=[A-Z])", name)
+    for token in tokens:
+        lowered = token.lower()
+        if not lowered:
+            continue
+        if lowered in SENSITIVE_NAME_TOKENS or lowered == "key":
+            return True
+    return False
+
+
+def sanitize_text(text: Any, *, extra_patterns: Iterable[re.Pattern[str]] | None = None) -> Any:
+    """
+    Redact secret values and regex pattern matches from a text string by replacing them with "***".
+
+    Parameters:
+        text (Any): Input text to sanitize; non-string values are returned unchanged.
+        extra_patterns (Iterable[re.Pattern[str]] | None): Optional compiled regular expressions whose matches will also be redacted.
+
+    Returns:
+        Any: A sanitized copy of `text` when it is a string; otherwise the original object is returned unchanged.
+    """
+    if isinstance(text, (bytes, bytearray)):
+        try:
+            text = text.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            text = text.decode("utf-8", errors="replace")
+    elif not isinstance(text, str):
+        return text
+
+    sanitized = text
+    values_to_mask: set[str] = set()
+    min_length = 4
+
+    for key in SECRET_ENV_KEYS:
+        value = os.environ.get(key)
+        if value and len(value) >= min_length:
+            values_to_mask.add(value)
+
+    for key, value in os.environ.items():
+        if not value or len(value) < min_length:
+            continue
+        if _is_sensitive_name(key):
+            values_to_mask.add(value)
+        if key == "OPENAI_BASE_URL":
+            parsed = urlparse(value)
+            if parsed.netloc:
+                values_to_mask.add(parsed.netloc)
+
+    for value in sorted(values_to_mask, key=len, reverse=True):
+        sanitized = sanitized.replace(value, "***")
+    for pattern in SECRET_PATTERNS:
+        sanitized = pattern.sub("***", sanitized)
+    if extra_patterns:
+        for pattern in extra_patterns:
+            sanitized = pattern.sub("***", sanitized)
+    return sanitized
+
+
+def scrub_object(obj: Any, *, visited: set[int] | None = None) -> Any:
+    """Deeply sanitize arbitrary objects for safe JSON/file serialization."""
+
+    if isinstance(obj, str):
+        return sanitize_text(obj)
+    if visited is None:
+        visited = set()
+
+    if isinstance(obj, Mapping):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            result: dict[Any, Any] = {}
+            for key, value in obj.items():
+                if isinstance(key, str) and _is_sensitive_name(key):
+                    result[key] = "***" if value is not None else value
+                else:
+                    result[key] = scrub_object(value, visited=visited)
+            return result
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, list):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            return [scrub_object(item, visited=visited) for item in obj]
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, tuple):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            return tuple(scrub_object(item, visited=visited) for item in obj)
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, set):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            sanitized_items = [scrub_object(item, visited=visited) for item in obj]
+            return sorted(sanitized_items, key=lambda item: repr(item))
+        finally:
+            visited.remove(obj_id)
+    elif isinstance(obj, frozenset):
+        obj_id = id(obj)
+        if obj_id in visited:
+            return "<circular>"
+        visited.add(obj_id)
+        try:
+            sanitized_items = [scrub_object(item, visited=visited) for item in obj]
+            return tuple(sorted(sanitized_items, key=lambda item: repr(item)))
+        finally:
+            visited.remove(obj_id)
+    return obj

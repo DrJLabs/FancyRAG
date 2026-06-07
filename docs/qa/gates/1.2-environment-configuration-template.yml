@@ -1,0 +1,16 @@
+schema: 1
+story: '1.2'
+gate: PASS
+status_reason: 'Env template, documentation, and guard tests verified; all QA artifacts green.'
+reviewer: 'Quinn'
+updated: '2025-09-25T06:55:00Z'
+top_issues: []
+waiver:
+  active: false
+artifacts:
+  risk: docs/qa/assessments/1.2-risk-20250925.md
+  test_design: docs/qa/assessments/1.2-test-design-20250925.md
+  trace: docs/qa/assessments/1.2-trace-20250925.md
+  nfr: docs/qa/assessments/1.2-nfr-20250925.md
+evidence:
+  - 'pytest'

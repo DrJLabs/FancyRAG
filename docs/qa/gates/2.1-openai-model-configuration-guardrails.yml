@@ -1,0 +1,9 @@
+schema: 1
+story: '2.1'
+gate: PASS
+status_reason: 'Telemetry guardrails implemented with enforceable Grafana thresholds; ready for downstream integration.'
+reviewer: 'Quinn'
+updated: '2025-09-25T20:55:00Z'
+top_issues: []
+waiver:
+  active: false

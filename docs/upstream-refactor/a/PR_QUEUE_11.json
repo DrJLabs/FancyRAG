@@ -1,0 +1,382 @@
+{
+  "metadata": {
+    "generated_at": "2026-01-12T23:59:00Z",
+    "canonical_shas": {
+      "fancyrag": {
+        "repo": "DrJLabs/FancyRAG",
+        "sha": "0ff7b46717da4310b1626b0756551b7bd175d81b"
+      },
+      "upstream": {
+        "repo": "neo4j/neo4j-graphrag-python",
+        "sha": "9e6b58827caa642539c8cb15dcde36c3e4d6d2c6"
+      }
+    }
+  },
+  "prs": [
+    {
+      "pr_id": "PR-01",
+      "title": "Baseline Alignment & Stabilization",
+      "intent": "Establish consistent baseline for refactor (resolve conflicts, unify settings, and eliminate namespace drift).",
+      "files_touched": [
+        "pyproject.toml",
+        "uv.lock",
+        "src/fancryrag/** (move/rename) → src/fancyrag/**",
+        "src/fancryrag/__init__.py (temporary compat alias)",
+        "servers/mcp_hybrid_google.py",
+        "scripts/** (as needed for import fixes)",
+        ".env.example",
+        "Makefile",
+        "scripts/create_vector_index.py",
+        "docker-compose.yml",
+        "docker-compose.smoke.yml"
+      ],
+      "task_ids": [
+        "DR09-T01",
+        "DR09-T02",
+        "DR09-T03"
+      ],
+      "acceptance_criteria": [
+        "GraphRAG dependency is pinned to canonical upstream SHA 9e6b58827caa642539c8cb15dcde36c3e4d6d2c6; uv run python -c \"import neo4j_graphrag\" succeeds.",
+        "fancyrag import works; fancryrag import continues to work via shim during transition.",
+        "Embedding dimension defaults are consistent across .env.example, Makefile, and scripts/create_vector_index.py and smoke stack remains deterministic.",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.8.1–B.8.3 (health/search/fetch contract checks)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)"
+      ],
+      "risks": [
+        "Upstream Baseline Mismatch",
+        "Module Name Inconsistency",
+        "Embedding Dimension Mismatch"
+      ],
+      "rollback_plan": "Revert PR; changes are isolated (dependency/naming/config defaults) and have no data migrations.",
+      "merge_gates": [
+        "[ ] DR_08 minimum gate completed with evidence in PR description",
+        "[ ] `make smoke` passes",
+        "[ ] `fancyrag` import works; `fancryrag` compat import works (temporary)",
+        "[ ] Index scripts run successfully (or fail fast only on intentional mismatch)",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-02",
+      "title": "Decouple QA from Pipeline",
+      "intent": "Ensure QA evaluation and rollback work independently of ingestion implementation by reconstructing QA scope from Neo4j instead of pipeline in-memory state.",
+      "files_touched": [
+        "src/fancyrag/db/neo4j_queries.py",
+        "src/fancyrag/qa/evaluator.py",
+        "src/fancyrag/qa/report.py",
+        "src/fancyrag/kg/** (run-key tagging normalization)",
+        "tests/**"
+      ],
+      "task_ids": [
+        "DR09-T04",
+        "DR09-T05",
+        "DR09-T06"
+      ],
+      "acceptance_criteria": [
+        "QA can run using only ingest_run_key (or equivalent run identifier) and produces reports with the same top-level schema as baseline.",
+        "QA artifacts are present and scrubbed (no obvious secret patterns).",
+        "Rollback remains run-scoped (no collateral deletes).",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.5.3 (Neo4j verification queries)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)",
+        "DR_08 B.6.2 QA artifact presence + scrubbing scan"
+      ],
+      "risks": [
+        "QA Coupled to Pipeline",
+        "Implicit Schema Invariants",
+        "Security regression"
+      ],
+      "rollback_plan": "Revert PR (QA refactor only); no persistent data changes required.",
+      "merge_gates": [
+        "[ ] DR_08 minimum gate completed with evidence in PR description",
+        "[ ] DR_08 B.6.2 confirms QA artifacts exist and are scrubbed",
+        "[ ] If rollback code touched: negative rollback scenario documented (or UNVERIFIED harness steps executed)",
+        "[ ] `make smoke` passes",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-03",
+      "title": "Consolidate Ingestion Path",
+      "intent": "Remove dual ingestion pathways and enforce a single, unified entry point for KG building (script-based pipeline as the canonical path).",
+      "files_touched": [
+        "Makefile",
+        "scripts/kg_build.py",
+        "README.md",
+        "tools/run_pipeline.py (deprecate then remove)",
+        "pipelines/kg_ingest.yaml (deprecate then remove)",
+        "docs/** (as needed)"
+      ],
+      "task_ids": [
+        "DR09-T07",
+        "DR09-T08",
+        "DR09-T09",
+        "DR09-T10"
+      ],
+      "acceptance_criteria": [
+        "make ingest uses scripts/kg_build.py (no YAML runner invocation).",
+        "Legacy YAML ingestion artifacts are removed (or at least deprecated and no longer referenced).",
+        "Any YAML-only behaviors (e.g., resolvers) are either implemented in code or explicitly documented as dropped.",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.5.3 (Neo4j verification queries)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)"
+      ],
+      "risks": [
+        "Dual Ingestion Path Drift",
+        "Dropped Pipeline Feature",
+        "Pipeline Config Mismatch"
+      ],
+      "rollback_plan": "Restore removed files and revert Makefile changes (version control); re-enable prior ingest target if required.",
+      "merge_gates": [
+        "[ ] DR_08 minimum gate completed with evidence in PR description",
+        "[ ] `make ingest` runs the script-based pipeline",
+        "[ ] `git grep -n \"run_pipeline.py\\|kg_ingest.yaml\"` returns no live references (or only in deprecation notes)",
+        "[ ] `make smoke` passes",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-04",
+      "title": "Integrate Upstream LLM & Embeddings",
+      "intent": "Replace custom OpenAI client/embeddings implementations with upstream `OpenAILLM` + `OpenAIEmbeddings`, remove redundant telemetry and retry layers, and preserve scrubbing.",
+      "files_touched": [
+        "src/cli/openai_client.py",
+        "src/cli/telemetry.py (remove)",
+        "src/cli/sanitizer.py",
+        "src/fancyrag/embeddings.py (NOTE: may have been src/fancryrag/embeddings.py pre-PR1 rename)",
+        "src/fancyrag/mcp/runtime.py (embedder construction if used in retrieval runtime)",
+        "src/fancyrag/config.py and/or src/config/settings.py",
+        "tests/**"
+      ],
+      "task_ids": [
+        "DR09-T11",
+        "DR09-T12",
+        "DR09-T13",
+        "DR09-T14"
+      ],
+      "acceptance_criteria": [
+        "Ingestion and retrieval still function with OpenAI keys (or smoke stub mode), and embeddings are stored with the expected dimension.",
+        "Custom telemetry is removed without breaking runtime or tests.",
+        "Secret scrubbing remains effective (QA artifacts and any structured logs).",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.5.3 (Neo4j verification queries)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)",
+        "DR_08 B.6.2 QA artifact presence + scrubbing scan"
+      ],
+      "risks": [
+        "Double Rate-Limiting Delay",
+        "LLM Integration Variance",
+        "Security regression"
+      ],
+      "rollback_plan": "Keep a backup branch containing the old OpenAI client/embeddings logic; revert PR to restore old behavior if upstream integration breaks.",
+      "merge_gates": [
+        "[ ] DR_08 minimum gate completed with evidence in PR description",
+        "[ ] `make smoke` passes",
+        "[ ] If MCP touched: contract checks (DR_08 B.8.1–B.8.3) pass",
+        "[ ] No secret patterns in artifacts/logs (DR_08 B.6.2/B.10.2)",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-05",
+      "title": "Adopt Upstream Pipeline Orchestration",
+      "intent": "Replace FancyRAG’s custom KG pipeline orchestration with upstream experimental pipeline APIs behind a stable FancyRAG interface, ensuring schema invariants and QA gating remain intact.",
+      "files_touched": [
+        "scripts/kg_build.py",
+        "src/fancyrag/cli/kg_build_main.py",
+        "src/fancyrag/kg/upstream_backend.py (new)",
+        "src/fancyrag/kg/pipeline.py (deprecated then removed)",
+        "src/fancyrag/kg/phases.py (deprecated then removed)",
+        "src/fancyrag/db/neo4j_queries.py (schema invariant helpers, rollback support)",
+        "src/fancyrag/qa/evaluator.py (optional invariant checks)",
+        "tests/**"
+      ],
+      "task_ids": [
+        "DR09-T15",
+        "DR09-T16",
+        "DR09-T17",
+        "DR09-T18"
+      ],
+      "acceptance_criteria": [
+        "Upstream backend is implemented and can run on a fixture corpus.",
+        "Default ingestion backend switches to upstream (while preserving a fallback to the prior backend during transition).",
+        "Schema invariants hold after ingestion (Document/Chunk/HAS_CHUNK links; missing embeddings = 0 for real ingestion).",
+        "QA runs post-ingestion and remains run-scoped and safe.",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.5.3 (Neo4j verification queries)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)",
+        "DR_08 B.6.2 QA artifact presence + scrubbing scan",
+        "DR_08 full gate (recommended/required for PR5/PR6/PR7)"
+      ],
+      "risks": [
+        "Missing Graph Links",
+        "Implicit Schema Invariants",
+        "Dropped Pipeline Feature",
+        "Upstream Version Drift"
+      ],
+      "rollback_plan": "Keep the old pipeline accessible behind a fallback flag during transition; if severe issues arise, revert PR to last stable.",
+      "merge_gates": [
+        "[ ] Full gate executed (DR_08 minimum + ingestion + QA + contract checks)",
+        "[ ] Schema invariants verified (Document/Chunk/HAS_CHUNK; missing embeddings)",
+        "[ ] QA and rollback remain run-scoped (no collateral deletes)",
+        "[ ] `make smoke` passes",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-06",
+      "title": "Align Retrieval with Upstream API",
+      "intent": "Integrate upstream retrieval semantics while preserving FancyRAG’s MCP external API and response schema (including score breakdown and semantic context fields).",
+      "files_touched": [
+        "src/fancyrag/mcp/runtime.py",
+        "queries/hybrid_retrieval.cypher (remove or treat as locked contract artifact; decision required)",
+        "tests/smoke/test_stack.py and/or tests/contract/test_mcp_contract.py"
+      ],
+      "task_ids": [
+        "DR09-T19",
+        "DR09-T20",
+        "DR09-T21"
+      ],
+      "acceptance_criteria": [
+        "/mcp/search returns identical JSON structure (field presence and types) as baseline, including score, score_vector, score_fulltext, semantic_nodes, semantic_relationships.",
+        "/mcp/fetch works for an element_id returned by search and never returns embeddings in metadata.",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.8.1–B.8.3 (health/search/fetch contract checks)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)",
+        "DR_08 full gate (recommended/required for PR5/PR6/PR7)"
+      ],
+      "risks": [
+        "Result Format Regression",
+        "Undefined Search Error Handling",
+        "OAuth Misconfiguration"
+      ],
+      "rollback_plan": "Reinstate the previous search method (restore original Cypher query and scoring logic) if upstream approach cannot meet contract needs.",
+      "merge_gates": [
+        "[ ] Contract tests added and passing (DR_08 B.8.1–B.8.3 and automated tests)",
+        "[ ] `make smoke` passes",
+        "[ ] No schema drift in `/mcp/search` or `/mcp/fetch`",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-07",
+      "title": "Hardening & Policy Compliance",
+      "intent": "Close remaining contract ambiguities and operational risks: explicit HTTP error semantics, fulltext index drift detection, config consolidation, and automated schema invariant checks.",
+      "files_touched": [
+        "src/fancyrag/mcp/runtime.py",
+        "scripts/create_fulltext_index.py",
+        "src/fancyrag/config.py",
+        "src/config/settings.py",
+        "src/config/utils.py",
+        "tests/**"
+      ],
+      "task_ids": [
+        "DR09-T22",
+        "DR09-T23",
+        "DR09-T24",
+        "DR09-T25"
+      ],
+      "acceptance_criteria": [
+        "Invalid MCP inputs return explicit HTTP 400 with a stable, non-secret-leaking error body.",
+        "Fulltext index script detects mismatches and fails fast (and optionally supports an explicit recreate flag).",
+        "Config definitions are consolidated to a single source of truth while preserving env var compatibility.",
+        "Schema invariants are enforced by automated checks (QA and/or tests).",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke",
+        "DR_08 B.8.1–B.8.3 (health/search/fetch contract checks)"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)",
+        "DR_08 full gate (recommended/required for PR5/PR6/PR7)"
+      ],
+      "risks": [
+        "Undefined Search Error Handling",
+        "Index Drift (Fulltext)",
+        "Duplicate Config Definitions",
+        "Implicit Schema Invariants"
+      ],
+      "rollback_plan": "Localized changes; revert PR or selectively revert specific hardening commits if needed.",
+      "merge_gates": [
+        "[ ] Contract error semantics validated (`top_k=0` yields 400; no secrets leaked)",
+        "[ ] Fulltext index mismatch detection verified",
+        "[ ] Config consolidation verified (no duplicate `Neo4jSettings` definitions)",
+        "[ ] `make smoke` passes",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    },
+    {
+      "pr_id": "PR-08",
+      "title": "Final Cleanup & Documentation",
+      "intent": "Remove remaining dead code and finalize documentation, upgrade notes, and CI verification gates.",
+      "files_touched": [
+        "Deprecated code paths/files identified during PRs 1–7 (repo-wide sweep)",
+        "README.md",
+        "CHANGELOG.md or docs/upgrade.md",
+        ".github/workflows/verify.yml (new)",
+        "docs/**"
+      ],
+      "task_ids": [
+        "DR09-T26",
+        "DR09-T27",
+        "DR09-T28"
+      ],
+      "acceptance_criteria": [
+        "No references remain to removed legacy components (e.g., YAML runner, removed telemetry classes) outside changelog/history.",
+        "Docs reflect the current operational reality (ingest, index, smoke, MCP contract).",
+        "CI gate exists that runs at least the DR_08 minimum verification set per PR.",
+        "make smoke exits 0."
+      ],
+      "tests": [
+        "make smoke"
+      ],
+      "verification_steps": [
+        "DR_08 minimum gate (A.1, A.2, B.2, B.3, B.6.1, B.11)"
+      ],
+      "risks": [
+        "Legacy Feature Drift / Doc drift",
+        "Upstream Version Drift"
+      ],
+      "rollback_plan": "N/A for docs-only changes; for cleanup, revert if an unexpected reference removal breaks runtime.",
+      "merge_gates": [
+        "[ ] Repo-wide grep sweep for removed symbols shows no live references",
+        "[ ] Docs updated; README follows Makefile targets and DR_08 commands",
+        "[ ] CI workflow added and runs smoke/contract checks",
+        "[ ] `make smoke` passes",
+        "[ ] No stop-the-line criteria triggered"
+      ]
+    }
+  ]
+}

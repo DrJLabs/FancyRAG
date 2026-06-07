@@ -1,0 +1,105 @@
+schema: 1
+story: "5.6"
+story_title: "Observability with OpenTelemetry"
+gate: "CONCERNS"
+status_reason: "Pre-implementation QA gate capturing telemetry evidence requirements and acceptance thresholds."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-06T00:00:00-04:00"
+quality_score: 0
+expires: "2025-10-31T00:00:00-04:00"
+waiver: { active: false }
+top_issues:
+  - id: "REL-OTEL-SPAN-COVERAGE"
+    severity: high
+    summary: "Define mandatory spans/metrics prior to merge to avoid instrumentation gaps."
+  - id: "SEC-OTEL-EXPORTER-REDACTION"
+    severity: medium
+    summary: "Ensure OTLP exporter defaults do not leak credentials in logs."
+
+evidence:
+  tests_expected:
+    - "PYTHONPATH=src pytest tests/unit/fancyrag/telemetry/test_span_emission.py (to be added)."
+    - "PYTHONPATH=src pytest tests/integration/local_stack/test_minimal_path_smoke.py::test_observability_console_exporter (to be added)."
+  telemetry_requirements:
+    must_emit_spans:
+      - "settings.load"
+      - "pipeline.discover_sources"
+      - "pipeline.embeddings"
+      - "pipeline.graph_writes"
+      - "pipeline.qa"
+      - "pipeline.evaluation"
+    metrics:
+      - "pipeline.latency_ms (histogram)"
+      - "pipeline.throughput_docs_per_minute (gauge)"
+      - "cache.hit_ratio (gauge)"
+    exporters:
+      console: "Enabled by default; include sample output in story evidence."
+      otlp: "Verified via env-driven smoke pointing at local Jaeger (docker)."
+  docs_required:
+    - "docs/stories/5.6.observability.md"
+    - "docs/brownfield-architecture.md#observability--telemetry"
+    - "README.md (troubleshooting section update)"
+  trace:
+    ac_expected: [1, 2, 3, 4]
+    notes: "Populate with final QA trace on completion."
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 1
+    medium: 1
+    low: 0
+  highest:
+    id: "OTEL-COVERAGE"
+    score: high
+    title: "Failure to emit spans consistently undermines debugging signal."
+  recommendations:
+    must_fix:
+      - "Add regression guard ensuring span names/attributes remain stable; integrate with lint/test pipeline."
+    monitor:
+      - "Track telemetry overhead in CI to ensure acceptable runtime."
+
+test_design:
+  scenarios_total: 0
+  by_level:
+    unit: 0
+    integration: 0
+    e2e: 0
+  by_priority:
+    p0: 0
+    p1: 0
+    p2: 0
+    p3: 0
+  coverage_gaps:
+    - "Add integration test verifying OTLP exporter configuration via env variables."
+    - "Add unit test confirming telemetry can be disabled without side-effects."
+
+nfr_validation:
+  security:
+    status: PENDING
+    notes: "Redact API keys from span attributes and logs."
+  performance:
+    status: PENDING
+    notes: "Benchmark telemetry-enabled pipeline against baseline — document permissible overhead."
+  reliability:
+    status: PENDING
+    notes: "Ensure exporter failures fail-open and log actionable warnings."
+  maintainability:
+    status: PENDING
+    notes: "Centralise instrumentation definitions to avoid duplication."
+
+recommendations:
+  immediate:
+    - action: "Coordinate with QA on acceptable telemetry overhead (<10% runtime increase) before enabling CI enforcement."
+      refs:
+        - docs/prd.md#story-56-instrument-observability-with-opentelemetry
+        - docs/brownfield-architecture.md#observability--telemetry
+  future:
+    - action: "Plan follow-up to stream spans to managed observability backend once local testing stabilises."
+
+references:
+  risk_profile: null
+  test_design: null
+  story: docs/stories/5.6.observability.md
+  trace: null
+  nfr_assessment: null

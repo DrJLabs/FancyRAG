@@ -1,0 +1,50 @@
+schema: 1
+story: '1.2'
+story_title: 'Hybrid MCP Server'
+gate: PASS
+status_reason: 'Stateless HTTP auth regression and latency smoke resolved prior concerns; story meets QA bar.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-10-09T21:30:00Z'
+quality_score: 100
+expires: '2025-10-30T21:30:00Z'
+top_issues: []
+waiver:
+  active: false
+evidence:
+  tests_reviewed: 9
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3]
+    ac_gaps: []
+trace:
+  totals:
+    requirements: 3
+    full: 3
+    partial: 0
+    none: 0
+  planning_ref: 'n/a'
+  uncovered: []
+  notes: 'See docs/qa/assessments/epic-1.2-trace-20251009.md'
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: 'Stateless HTTP regression asserts 401 without bearer token and successful auth when present.'
+  performance:
+    status: PASS
+    notes: 'Latency smoke keeps hybrid search under the ≤1.5s SLA.'
+  reliability:
+    status: PASS
+    notes: 'Startup verifies Neo4j connectivity and fetch/search handle empty results with structured logging.'
+  maintainability:
+    status: PASS
+    notes: 'Modular code, updated documentation, and comprehensive regression coverage for config/runtime helpers.'
+recommendations:
+  immediate:
+    - action: 'Integrate latency and auth smokes into CI to preserve coverage as the dataset grows.'
+      refs:
+        - 'tests/servers/test_runtime.py'
+  future:
+    - action: 'Add observability assertions ensuring sensitive fields remain redacted and telemetry emitted.'
+      refs:
+        - 'src/fancryrag/logging_setup.py'

@@ -1,0 +1,72 @@
+schema: 1
+story: "4.7"
+story_title: "Schema and Environment Utilities"
+gate: "PASS"
+status_reason: "Schema/env helpers verified with unit + integration coverage; documentation aligns with delivered modules."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-05T17:30:00-04:00"
+quality_score: 95
+expires: "2025-10-19T00:00:00-04:00"
+waiver: { active: false }
+top_issues:
+  - id: "DOC-CHECKLIST"
+    severity: low
+    title: "Story testing checklist still shows minimal-path smoke unchecked"
+    recommendation: "Update story testing checklist to reflect the executed integration smoke run."
+    suggested_owner: dev
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 0
+    low: 2
+  highest:
+    id: "TECH-076"
+    score: 3
+    title: "Import-time schema load depends on packaged JSON"
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Add schema override regression in Story 4.8"
+
+evidence:
+  tests_reviewed:
+    - "PYTHONPATH=src:. pytest tests/unit/fancyrag/config/test_schema.py tests/unit/fancyrag/test_env_utils.py tests/unit/scripts/test_export_to_qdrant.py tests/unit/scripts/test_create_vector_index.py tests/unit/scripts/test_ask_qdrant.py tests/unit/fancyrag/kg/test_pipeline.py"
+    - "PYTHONPATH=src:. pytest tests/unit/scripts/test_kg_build.py"
+    - "PYTHONPATH=src:. LOCAL_STACK_SKIP_DOCKER_CHECK=1 pytest tests/integration/local_stack/test_minimal_path_smoke.py -rs"
+  risks_identified:
+    - "Schema override scenarios remain to be covered in Story 4.8"
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+    notes: docs/qa/assessments/4.7-trace-20251005.md
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "bootstrap_environment enforces required secrets; no new exposure paths identified."
+  performance:
+    status: PASS
+    notes: "Helpers perform one-time filesystem reads; no runtime regressions."
+  reliability:
+    status: PASS
+    notes: "Unit suites plus minimal-path smoke confirm `.env` bootstrap stability (2025-10-05)."
+  maintainability:
+    status: PASS
+    notes: "Modules now isolated with focused tests and doc updates."
+
+recommendations:
+  immediate:
+    - "Update story testing checklist to tick the executed minimal-path smoke."
+  future:
+    - "Add schema override regression test once Story 4.8 expands coverage."
+    - "Keep minimal-path smoke in weekly rotation with LOCAL_STACK_SKIP_DOCKER_CHECK=1."
+
+references:
+  risk_profile: docs/qa/assessments/4.7-risk-20251005.md
+  test_design: docs/qa/assessments/4.7-test-design-20251005.md
+  trace: docs/qa/assessments/4.7-trace-20251005.md
+  nfr_assessment: docs/qa/assessments/4.7-nfr-20251005.md
+  review: docs/qa/assessments/4.7-review-20251005.md
+  story: docs/stories/4.7.schema-and-env.md

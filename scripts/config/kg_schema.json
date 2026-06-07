@@ -1,0 +1,22 @@
+{
+  "node_types": [
+    {"label": "Document", "additional_properties": true},
+    {"label": "Chunk", "additional_properties": true},
+    {"label": "Company", "additional_properties": true},
+    {"label": "Product", "additional_properties": true},
+    {"label": "Operator", "additional_properties": true}
+  ],
+  "relationship_types": [
+    {"label": "HAS_CHUNK", "additional_properties": true},
+    {"label": "LAUNCHED", "additional_properties": true},
+    {"label": "INGESTED_BY", "additional_properties": true}
+  ],
+  "patterns": [
+    ["Document", "HAS_CHUNK", "Chunk"],
+    ["Company", "LAUNCHED", "Product"],
+    ["Chunk", "INGESTED_BY", "Operator"]
+  ],
+  "additional_node_types": false,
+  "additional_relationship_types": false,
+  "additional_patterns": false
+}

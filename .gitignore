@@ -13,3 +13,11 @@ docs/build/
 .venv
 .tox/
 .plans
+*.sed-tmp
+*.egg-info/
+build/
+.serena/
+.worktrees/
+.data/
+artifacts/
+reports/

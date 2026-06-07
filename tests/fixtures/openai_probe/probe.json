@@ -1,0 +1,35 @@
+{
+  "actor": "openai-probe",
+  "artifacts": {
+    "metrics": "artifacts/openai/metrics.prom",
+    "report": "artifacts/openai/probe.json"
+  },
+  "chat": {
+    "completion_tokens": 3,
+    "fallback_used": true,
+    "finish_reason": "stop",
+    "latency_ms": 0.0,
+    "model": "gpt-4o-mini",
+    "prompt_tokens": 9,
+    "status": "success"
+  },
+  "embedding": {
+    "expected_dimensions": 1536,
+    "latency_ms": 0.0,
+    "model": "text-embedding-3-small",
+    "status": "success",
+    "tokens_consumed": 7,
+    "vector_length": 1536
+  },
+  "generated_at": "<timestamp>",
+  "settings": {
+    "backoff_seconds": 0.5,
+    "chat_model": "gpt-4o-mini",
+    "chat_override": true,
+    "embedding_dimensions": 1536,
+    "embedding_model": "text-embedding-3-small",
+    "fallback_enabled": true,
+    "max_attempts": 3
+  },
+  "status": "success"
+}
